@@ -1,4 +1,4 @@
-import type { AppSettings, ExperimentalFlags } from '../../../types'
+import type { BackendSettings, ExperimentalFlags } from '../../../types'
 
 export type RunExperimentalFlags = ExperimentalFlags
 
@@ -11,7 +11,7 @@ function isRunExperimentalFlags(value: any): value is RunExperimentalFlags {
   )
 }
 
-export function getRunExperimentalFlagsFromSettings(settings: AppSettings | null): RunExperimentalFlags {
+export function getRunExperimentalFlagsFromSettings(settings: BackendSettings | null): RunExperimentalFlags {
   return {
     runtimeThinkingCorrectionEnabled: settings?.experimental?.runtimeThinkingCorrectionEnabled !== false,
     taskFinishGuardEnabled: settings?.experimental?.taskFinishGuardEnabled !== false,
@@ -21,7 +21,7 @@ export function getRunExperimentalFlagsFromSettings(settings: AppSettings | null
 
 export function resolveRunExperimentalFlags(
   context: any,
-  settings: AppSettings | null
+  settings: BackendSettings | null
 ): RunExperimentalFlags {
   if (isRunExperimentalFlags(context?.lockedExperimentalFlags)) {
     return context.lockedExperimentalFlags

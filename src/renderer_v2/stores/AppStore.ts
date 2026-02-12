@@ -172,6 +172,17 @@ export class AppStore {
     return this.terminalTabs.find((t) => t.id === this.activeTerminalId) ?? null
   }
 
+  private async fetchCombinedSettings(): Promise<AppSettings> {
+    const [backendSettings, uiSettings] = await Promise.all([
+      window.gyshell.settings.get(),
+      window.gyshell.uiSettings.get()
+    ])
+    return {
+      ...backendSettings,
+      ...uiSettings
+    }
+  }
+
   openSettings(): void {
     this.view = 'settings'
   }
@@ -252,7 +263,7 @@ export class AppStore {
         this.settings = { ...this.settings, language: lang }
       }
     })
-    await window.gyshell.settings.set({ language: lang })
+    await window.gyshell.uiSettings.set({ language: lang })
   }
 
   async setTerminalSettings(terminal: Partial<AppSettings['terminal']>): Promise<void> {
@@ -267,7 +278,7 @@ export class AppStore {
       }
     })
     if (nextTerminal) {
-      await window.gyshell.settings.set({ terminal: nextTerminal })
+      await window.gyshell.uiSettings.set({ terminal: nextTerminal })
     }
   }
 
@@ -284,12 +295,19 @@ export class AppStore {
     })
 
     try {
-      await window.gyshell.settings.set({ themeId })
+      await window.gyshell.uiSettings.set({ themeId })
     } catch (err) {
       console.error('Failed to persist themeId', err)
       // best-effort rollback by reloading
       try {
-        const settings = await window.gyshell.settings.get()
+        const [backendSettings, uiSettings] = await Promise.all([
+          window.gyshell.settings.get(),
+          window.gyshell.uiSettings.get()
+        ])
+        const settings = {
+          ...backendSettings,
+          ...uiSettings
+        }
         const t = resolveTheme(settings.themeId, this.customThemes)
         applyAppThemeFromTerminalScheme(t.terminal)
         runInAction(() => {
@@ -420,7 +438,7 @@ export class AppStore {
 
   async setSkillEnabled(name: string, enabled: boolean): Promise<void> {
     const enabledSkills = await window.gyshell.skills.setEnabled(name, enabled)
-    const settings = await window.gyshell.settings.get()
+    const settings = await this.fetchCombinedSettings()
     runInAction(() => {
       this.settings = settings
       this.skills = this.skills.map(s => ({
@@ -507,10 +525,15 @@ export class AppStore {
   async bootstrap(): Promise<void> {
     if (this.isBootstrapped) return
     try {
-      const [settings, customThemes] = await Promise.all([
+      const [backendSettings, uiSettings, customThemes] = await Promise.all([
         window.gyshell.settings.get(),
+        window.gyshell.uiSettings.get(),
         window.gyshell.themes.getCustom()
       ])
+      const settings = {
+        ...backendSettings,
+        ...uiSettings
+      }
       const theme = resolveTheme(settings.themeId, customThemes)
       applyAppThemeFromTerminalScheme(theme.terminal)
       const xtermTheme = toXtermTheme(theme.terminal, { transparentBackground: true })
@@ -636,7 +659,7 @@ export class AppStore {
   }
 
   async saveSshConnection(entry: AppSettings['connections']['ssh'][number]): Promise<void> {
-    const current = this.settings ?? (await window.gyshell.settings.get())
+    const current = this.settings ?? (await this.fetchCombinedSettings())
     const plainEntry = toJS(entry)
     const list = current.connections.ssh.slice().map((x) => toJS(x))
     const nextList = upsertById(list, plainEntry)
@@ -653,7 +676,7 @@ export class AppStore {
   }
 
   async deleteSshConnection(id: string): Promise<void> {
-    const current = this.settings ?? (await window.gyshell.settings.get())
+    const current = this.settings ?? (await this.fetchCombinedSettings())
     const list = removeById(current.connections.ssh, id).map((x) => toJS(x))
     const nextConnections = { ...toJS(current.connections), ssh: list }
     runInAction(() => {
@@ -665,7 +688,7 @@ export class AppStore {
   }
 
   async saveModel(model: ModelDefinition): Promise<void> {
-    const current = this.settings ?? (await window.gyshell.settings.get())
+    const current = this.settings ?? (await this.fetchCombinedSettings())
     const items = current.models.items.slice().map((x) => toJS(x))
     const modelSnapshot = toJS(model)
     const plainModel: ModelDefinition = {
@@ -715,7 +738,7 @@ export class AppStore {
   }
 
   async deleteModel(id: string): Promise<void> {
-    const current = this.settings ?? (await window.gyshell.settings.get())
+    const current = this.settings ?? (await this.fetchCombinedSettings())
     const items = removeById(current.models.items, id).map((x) => toJS(x))
     const nextModels = { ...toJS(current.models), items }
 
@@ -728,7 +751,7 @@ export class AppStore {
   }
 
   async saveProfile(profile: AppSettings['models']['profiles'][number]): Promise<void> {
-    const current = this.settings ?? (await window.gyshell.settings.get())
+    const current = this.settings ?? (await this.fetchCombinedSettings())
     const profiles = current.models.profiles.slice().map((x) => toJS(x))
     const plainProfile = toJS(profile)
     const nextProfiles = upsertById(profiles, plainProfile)
@@ -744,7 +767,7 @@ export class AppStore {
   }
 
   async deleteProfile(id: string): Promise<void> {
-    const current = this.settings ?? (await window.gyshell.settings.get())
+    const current = this.settings ?? (await this.fetchCombinedSettings())
     const profiles = removeById(current.models.profiles, id).map((x) => toJS(x))
     // If active profile is deleted, reset to first available or default
     let activeProfileId = current.models.activeProfileId
@@ -763,7 +786,7 @@ export class AppStore {
   }
 
   async setActiveProfile(id: string): Promise<void> {
-    const current = this.settings ?? (await window.gyshell.settings.get())
+    const current = this.settings ?? (await this.fetchCombinedSettings())
     const nextModels = { ...toJS(current.models), activeProfileId: id }
 
     runInAction(() => {
@@ -775,7 +798,7 @@ export class AppStore {
   }
 
   async saveProxy(entry: ProxyEntry): Promise<void> {
-    const current = this.settings ?? (await window.gyshell.settings.get())
+    const current = this.settings ?? (await this.fetchCombinedSettings())
     const plainEntry = toJS(entry)
     const list = current.connections.proxies.slice().map((x) => toJS(x))
     const nextList = upsertById(list, plainEntry)
@@ -790,7 +813,7 @@ export class AppStore {
   }
 
   async deleteProxy(id: string): Promise<void> {
-    const current = this.settings ?? (await window.gyshell.settings.get())
+    const current = this.settings ?? (await this.fetchCombinedSettings())
     const list = removeById(current.connections.proxies, id).map((x) => toJS(x))
     const nextConnections = { ...toJS(current.connections), proxies: list }
     runInAction(() => {
@@ -802,7 +825,7 @@ export class AppStore {
   }
 
   async saveTunnel(entry: TunnelEntry): Promise<void> {
-    const current = this.settings ?? (await window.gyshell.settings.get())
+    const current = this.settings ?? (await this.fetchCombinedSettings())
     const plainEntry = toJS(entry)
     const list = current.connections.tunnels.slice().map((x) => toJS(x))
     const nextList = upsertById(list, plainEntry)
@@ -817,7 +840,7 @@ export class AppStore {
   }
 
   async deleteTunnel(id: string): Promise<void> {
-    const current = this.settings ?? (await window.gyshell.settings.get())
+    const current = this.settings ?? (await this.fetchCombinedSettings())
     const list = removeById(current.connections.tunnels, id).map((x) => toJS(x))
     const nextConnections = { ...toJS(current.connections), tunnels: list }
     runInAction(() => {

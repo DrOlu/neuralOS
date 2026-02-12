@@ -141,7 +141,14 @@ GyShell 针对终端交互的细微差别进行了底层优化：
   ```bash
     npm run dev
   ```
-4. **Production Build / 构建生产环境应用**
+4. **Build standalone backend / 构建独立后端**
+  ```bash
+    npm run build:backend
+  ```
+  ```bash
+    npm run start:backend
+  ```
+5. **Production Build / 构建生产环境应用**
   - **macOS**: `npm run dist:mac`
     - **Windows**: `npm run dist:win`
 

@@ -8,12 +8,13 @@ import type { CommandPolicyService } from '../CommandPolicy/CommandPolicyService
 import type { TempFileService } from '../TempFileService'
 import type { SkillService } from '../SkillService'
 import type { SettingsService } from '../SettingsService'
+import type { UiSettingsService } from '../UiSettingsService'
 import type { ModelCapabilityService } from '../ModelCapabilityService'
 import type { McpToolService } from '../McpToolService'
 import type { ThemeService } from '../ThemeService'
 import type { VersionService } from '../VersionService'
 import { BUILTIN_TOOL_INFO } from '../AgentHelper/tools'
-import { resolveTheme } from '../../../renderer_v2/theme/themes'
+import { resolveTheme } from '../../../shared/theme/themes'
 
 export class ElectronGatewayIpcAdapter {
   constructor(
@@ -25,11 +26,27 @@ export class ElectronGatewayIpcAdapter {
     private tempFileService: TempFileService,
     private skillService: SkillService,
     private settingsService: SettingsService,
+    private uiSettingsService: UiSettingsService,
     private modelCapabilityService: ModelCapabilityService,
     private mcpToolService: McpToolService,
     private themeService: ThemeService,
     private versionService: VersionService
   ) {}
+
+  private updateWindowsThemeIfNeeded(beforeThemeId?: string, afterThemeId?: string): void {
+    if (process.platform !== 'win32') return
+    if (beforeThemeId === afterThemeId) return
+    const theme = resolveTheme(afterThemeId, this.themeService.getCustomThemes())
+    const bg = theme.terminal.background
+    const fg = theme.terminal.foreground
+    const windows = BrowserWindow.getAllWindows()
+    windows.forEach((win) => {
+      if (typeof win.setTitleBarOverlay === 'function') {
+        win.setTitleBarOverlay({ color: bg, symbolColor: fg, height: 38 })
+        win.setBackgroundColor(bg)
+      }
+    })
+  }
 
   registerHandlers(): void {
     // Agent runtime
@@ -198,23 +215,20 @@ export class ElectronGatewayIpcAdapter {
     })
 
     ipcMain.handle('settings:set', async (_: any, settings: any) => {
-      const before = this.settingsService.getSettings()
       this.settingsService.setSettings(settings)
       const currentSettings = this.settingsService.getSettings()
       this.agentService.updateSettings(currentSettings)
+    })
 
-      if (process.platform === 'win32' && before.themeId !== currentSettings.themeId) {
-        const theme = resolveTheme(currentSettings.themeId, this.themeService.getCustomThemes())
-        const bg = theme.terminal.background
-        const fg = theme.terminal.foreground
-        const windows = BrowserWindow.getAllWindows()
-        windows.forEach((win) => {
-          if (typeof win.setTitleBarOverlay === 'function') {
-            win.setTitleBarOverlay({ color: bg, symbolColor: fg, height: 38 })
-            win.setBackgroundColor(bg)
-          }
-        })
-      }
+    ipcMain.handle('ui-settings:get', async () => {
+      return this.uiSettingsService.getSettings()
+    })
+
+    ipcMain.handle('ui-settings:set', async (_: any, settings: any) => {
+      const before = this.uiSettingsService.getSettings()
+      this.uiSettingsService.setSettings(settings)
+      const after = this.uiSettingsService.getSettings()
+      this.updateWindowsThemeIfNeeded(before.themeId, after.themeId)
     })
 
     ipcMain.handle('models:probe', async (_evt: any, model: any) => {

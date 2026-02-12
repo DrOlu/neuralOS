@@ -1,6 +1,7 @@
 import { app, BrowserWindow, screen, shell } from 'electron'
 import { join } from 'path'
 import { SettingsService } from './services/SettingsService'
+import { UiSettingsService } from './services/UiSettingsService'
 import { TerminalService } from './services/TerminalService'
 import { AgentService_v2 } from './services/AgentService_v2'
 import { CommandPolicyService } from './services/CommandPolicy/CommandPolicyService'
@@ -16,9 +17,11 @@ import { ElectronWindowTransport } from './services/Gateway/ElectronWindowTransp
 import { WebSocketGatewayAdapter } from './services/Gateway/WebSocketGatewayAdapter'
 import { TempFileService } from './services/TempFileService'
 import { VersionService } from './services/VersionService'
+import { ElectronAppSettingsMigrationService } from './services/settings/ElectronAppSettingsMigrationService'
 
 let mainWindow: BrowserWindow | null = null
 let settingsService: SettingsService
+let uiSettingsService: UiSettingsService
 let terminalService: TerminalService
 let agentService: AgentService_v2
 let commandPolicyService: CommandPolicyService
@@ -33,6 +36,7 @@ let webSocketGatewayAdapter: WebSocketGatewayAdapter | null = null
 
 function createWindow(): void {
   const settings = settingsService.getSettings()
+  const uiSettings = uiSettingsService.getSettings()
   const savedWindow = settings.layout?.window
 
   let width = 800
@@ -54,7 +58,7 @@ function createWindow(): void {
   }
 
   const platformWindowOptions = getPlatformBrowserWindowOptions(
-    settingsService.getSettings().themeId,
+    uiSettings.themeId,
     themeService.getCustomThemes()
   )
 
@@ -126,8 +130,13 @@ function createWindow(): void {
 }
 
 app.whenReady().then(async () => {
+  // Run Electron-only data migrations before services consume persisted state.
+  const settingsMigrationService = new ElectronAppSettingsMigrationService()
+  settingsMigrationService.run()
+
   // Initialize services
   settingsService = new SettingsService()
+  uiSettingsService = new UiSettingsService()
   terminalService = new TerminalService()
   commandPolicyService = new CommandPolicyService()
   mcpToolService = new McpToolService()
@@ -163,6 +172,7 @@ app.whenReady().then(async () => {
     tempFileService,
     skillService,
     settingsService,
+    uiSettingsService,
     modelCapabilityService,
     mcpToolService,
     themeService,

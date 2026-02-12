@@ -1,12 +1,14 @@
-export type AppSettings = Awaited<ReturnType<Window['gyshell']['settings']['get']>>
+export type BackendSettings = Awaited<ReturnType<Window['gyshell']['settings']['get']>>
+export type UiSettings = Awaited<ReturnType<Window['gyshell']['uiSettings']['get']>>
+export type AppSettings = BackendSettings & UiSettings
 export type TerminalConfig = Parameters<Window['gyshell']['terminal']['createTab']>[0]
 
 export type TerminalId = string
 
 export type TerminalTabType = TerminalConfig['type']
 
-export type ProxyEntry = AppSettings['connections']['proxies'][number]
-export type TunnelEntry = AppSettings['connections']['tunnels'][number]
+export type ProxyEntry = BackendSettings['connections']['proxies'][number]
+export type TunnelEntry = BackendSettings['connections']['tunnels'][number]
 
 export enum PortForwardType {
   Local = 'Local',
@@ -14,5 +16,5 @@ export enum PortForwardType {
   Dynamic = 'Dynamic'
 }
 
-export type AppLanguage = AppSettings['language']
-export type ModelDefinition = AppSettings['models']['items'][number]
+export type AppLanguage = UiSettings['language']
+export type ModelDefinition = BackendSettings['models']['items'][number]

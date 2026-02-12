@@ -1,0 +1,18 @@
+export interface GyBackendEndpoint {
+  host: string
+  port: number
+}
+
+export interface GyBackendNodeInfo {
+  id: string
+  name: string
+  endpoint: GyBackendEndpoint
+}
+
+export interface GyBackendConnectionConfig {
+  id: string
+  name: string
+  protocol: 'gybackend'
+  endpoint: GyBackendEndpoint
+  token?: string
+}

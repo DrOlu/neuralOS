@@ -1,10 +1,8 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 
 // Types (duplicated to avoid cross-project imports)
-interface AppSettings {
-  schemaVersion: 2
-  language: 'en' | 'zh-CN'
-  themeId: string
+interface BackendSettings {
+  schemaVersion: 3
   commandPolicyMode: 'safe' | 'standard' | 'smart'
   tools: {
     builtIn: Record<string, boolean>
@@ -67,15 +65,6 @@ interface AppSettings {
   model: string
   baseUrl: string
   apiKey: string
-  terminal: {
-    fontSize: number
-    lineHeight: number
-    scrollback: number
-    cursorStyle: 'block' | 'underline' | 'bar'
-    cursorBlink: boolean
-    copyOnSelect: boolean
-    rightClickToPaste: boolean
-  }
   layout?: {
     window?: {
       width: number
@@ -94,6 +83,23 @@ interface AppSettings {
     firstTurnThinkingModelEnabled: boolean
   }
 }
+
+interface UiSettings {
+  uiSchemaVersion: 1
+  language: 'en' | 'zh-CN'
+  themeId: string
+  terminal: {
+    fontSize: number
+    lineHeight: number
+    scrollback: number
+    cursorStyle: 'block' | 'underline' | 'bar'
+    cursorBlink: boolean
+    copyOnSelect: boolean
+    rightClickToPaste: boolean
+  }
+}
+
+type AppSettings = BackendSettings & UiSettings
 
 interface CommandPolicyLists {
   allowlist: string[]
@@ -236,12 +242,17 @@ export interface GyShellAPI {
   }
   // Settings
   settings: {
-    get: () => Promise<AppSettings>
-    set: (settings: Partial<AppSettings>) => Promise<void>
+    get: () => Promise<BackendSettings>
+    set: (settings: Partial<BackendSettings>) => Promise<void>
     openCommandPolicyFile: () => Promise<void>
     getCommandPolicyLists: () => Promise<CommandPolicyLists>
     addCommandPolicyRule: (listName: 'allowlist' | 'denylist' | 'asklist', rule: string) => Promise<CommandPolicyLists>
     deleteCommandPolicyRule: (listName: 'allowlist' | 'denylist' | 'asklist', rule: string) => Promise<CommandPolicyLists>
+  }
+
+  uiSettings: {
+    get: () => Promise<UiSettings>
+    set: (settings: Partial<UiSettings>) => Promise<void>
   }
 
   // Terminal
@@ -290,7 +301,7 @@ export interface GyShellAPI {
 
   // Models
   models: {
-    probe: (model: AppSettings['models']['items'][number]) => Promise<{
+    probe: (model: BackendSettings['models']['items'][number]) => Promise<{
       imageInputs: boolean
       textOutputs: boolean
       testedAt: number
@@ -346,6 +357,10 @@ const api: GyShellAPI = {
     getCommandPolicyLists: () => ipcRenderer.invoke('settings:getCommandPolicyLists'),
     addCommandPolicyRule: (listName, rule) => ipcRenderer.invoke('settings:addCommandPolicyRule', listName, rule),
     deleteCommandPolicyRule: (listName, rule) => ipcRenderer.invoke('settings:deleteCommandPolicyRule', listName, rule)
+  },
+  uiSettings: {
+    get: () => ipcRenderer.invoke('ui-settings:get'),
+    set: (settings) => ipcRenderer.invoke('ui-settings:set', settings)
   },
 
   terminal: {

@@ -1,7 +1,7 @@
 import fs from 'fs/promises'
 import path from 'path'
 import { app, shell } from 'electron'
-import type { TerminalColorScheme } from '../../renderer_v2/theme/terminalColorSchemes'
+import type { TerminalColorScheme } from '../../shared/theme/terminalColorSchemes'
 
 const DEFAULT_CUSTOM_THEMES: TerminalColorScheme[] = [
   {

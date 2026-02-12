@@ -1,5 +1,6 @@
 import type { IGatewayRuntime, StartTaskOptions } from './types';
 import { WebSocketClientTransport, type IWebSocketConnectionLike } from './WebSocketClientTransport';
+import { WebSocketServer } from 'ws';
 
 type WebSocketRpcMethod =
   | 'gateway:ping'
@@ -23,6 +24,7 @@ interface WebSocketRpcRequest {
 
 export interface IWebSocketServerLike {
   on(event: 'connection', listener: (socket: IWebSocketConnectionLike, request?: any) => void): void;
+  on(event: 'error', listener: (error: unknown) => void): void;
   close(callback?: (error?: Error) => void): void;
 }
 
@@ -65,12 +67,7 @@ class WebSocketRpcError extends Error {
 
 export function createDefaultWebSocketServerFactory(): WebSocketServerFactory {
   return ({ host, port }) => {
-    const wsModule = require('ws');
-    const WebSocketServerCtor = wsModule.WebSocketServer ?? wsModule.Server;
-    if (!WebSocketServerCtor) {
-      throw new Error('Cannot create websocket server: ws.WebSocketServer is unavailable.');
-    }
-    return new WebSocketServerCtor({ host, port });
+    return new WebSocketServer({ host, port }) as unknown as IWebSocketServerLike;
   };
 }
 
@@ -94,6 +91,9 @@ export class WebSocketGatewayAdapter {
   start(): void {
     if (this.server) return;
     this.server = this.serverFactory({ host: this.options.host, port: this.options.port });
+    this.server.on('error', (error) => {
+      this.logger.error('[WebSocketGatewayAdapter] Server error.', error);
+    });
     this.server.on('connection', (socket, request) => this.handleConnection(socket, request));
     this.logger.info(`[WebSocketGatewayAdapter] Listening on ws://${this.options.host}:${this.options.port}`);
   }

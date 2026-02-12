@@ -1,5 +1,5 @@
 import { ChatOpenAI } from '@langchain/openai'
-import type { AppSettings, ModelDefinition } from '../../../types'
+import type { BackendSettings, ModelDefinition } from '../../../types'
 
 export function createChatModel(item: ModelDefinition, temperature: number): ChatOpenAI {
   return new ChatOpenAI({
@@ -16,7 +16,7 @@ export function createChatModel(item: ModelDefinition, temperature: number): Cha
   })
 }
 
-export function getMaxTokensForModel(modelName: string, settings: AppSettings | null): number {
+export function getMaxTokensForModel(modelName: string, settings: BackendSettings | null): number {
   const DEFAULT_MAX_TOKENS = 200000
   if (!settings || !modelName || modelName === 'unknown') return DEFAULT_MAX_TOKENS
 

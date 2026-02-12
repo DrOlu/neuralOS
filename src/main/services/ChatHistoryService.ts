@@ -27,10 +27,15 @@ export class ChatHistoryService {
   private store: Store<StoredChatHistory>
 
   constructor() {
-    this.store = new Store<StoredChatHistory>({
+    const storeOptions: any = {
       defaults: DEFAULT_HISTORY,
-      name: 'gyshell-chat-history'
-    })
+      name: 'gyshell-chat-history',
+      projectName: 'gyshell'
+    }
+    if (process.env.GYSHELL_STORE_DIR) {
+      storeOptions.cwd = process.env.GYSHELL_STORE_DIR
+    }
+    this.store = new Store<StoredChatHistory>(storeOptions)
   }
 
   saveSession(session: ChatSession): void {

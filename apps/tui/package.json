@@ -1,0 +1,10 @@
+{
+  "name": "@gyshell/tui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Placeholder package for future GyShell standalone TUI frontend",
+  "scripts": {
+    "build": "echo \"tui placeholder: no build output yet\"",
+    "typecheck": "echo \"tui placeholder: no typecheck yet\""
+  }
+}

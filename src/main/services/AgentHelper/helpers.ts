@@ -1,6 +1,6 @@
 import { ChatOpenAI } from '@langchain/openai'
 import type { BaseMessage } from '@langchain/core/messages'
-import type { AgentEvent, ModelDefinition, AppSettings } from '../../types'
+import type { AgentEvent, ModelDefinition, BackendSettings } from '../../types'
 import { buildActionModelHistory } from './utils/action_model_history'
 import { extractText, parseStrictJsonObject, isEphemeral, markEphemeral } from './utils/common'
 import { createChatModel, getMaxTokensForModel, computeReadFileSupport, getEnabledBuiltInTools } from './utils/model_config'
@@ -30,7 +30,7 @@ export class AgentHelpers {
   /**
    * Look up max tokens for a model name from settings
    */
-  getMaxTokensForModel(modelName: string, settings: AppSettings | null): number {
+  getMaxTokensForModel(modelName: string, settings: BackendSettings | null): number {
     return getMaxTokensForModel(modelName, settings)
   }
 

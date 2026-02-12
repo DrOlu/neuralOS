@@ -3,7 +3,7 @@ import { HumanMessage, AIMessage, ToolMessage, type BaseMessage } from '@langcha
 import { mapChatMessagesToStoredMessages, mapStoredMessagesToChatMessages } from '@langchain/core/messages'
 import { StateGraph, START, END, Annotation, MemorySaver } from '@langchain/langgraph'
 import { RunnableLambda } from '@langchain/core/runnables'
-import type { ChatSession, AppSettings } from '../types'
+import type { ChatSession, BackendSettings } from '../types'
 import { TerminalService } from './TerminalService'
 import { ChatHistoryService } from './ChatHistoryService'
 import type { CommandPolicyService } from './CommandPolicy/CommandPolicyService'
@@ -161,7 +161,7 @@ export class AgentService_v2 {
   private mcpToolService: McpToolService
   private skillService: SkillService
   private uiHistoryService: UIHistoryService
-  private settings: AppSettings | null = null
+  private settings: BackendSettings | null = null
 
   private graph: any = null
   private helpers: AgentHelpers
@@ -191,7 +191,7 @@ export class AgentService_v2 {
     this.initializeGraph()
   }
 
-  updateSettings(settings: AppSettings): void {
+  updateSettings(settings: BackendSettings): void {
     this.settings = settings
     this.builtInToolEnabled = settings.tools?.builtIn ?? {}
     this.initializeGraph()

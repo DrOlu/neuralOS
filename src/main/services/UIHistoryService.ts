@@ -21,10 +21,15 @@ export class UIHistoryService {
   private dirtySessions: Set<string> = new Set()
 
   constructor() {
-    this.store = new Store<StoredUIHistory>({
+    const storeOptions: any = {
       name: 'gyshell-ui-history',
+      projectName: 'gyshell',
       defaults: { sessions: {} }
-    })
+    }
+    if (process.env.GYSHELL_STORE_DIR) {
+      storeOptions.cwd = process.env.GYSHELL_STORE_DIR
+    }
+    this.store = new Store<StoredUIHistory>(storeOptions)
     this.sessionsCache = this.sanitizeSessions(this.store.get('sessions') || {})
     this.saveSessions(this.sessionsCache)
   }
