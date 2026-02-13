@@ -100,7 +100,7 @@ export function findLatestPendingAsk(session: SessionState): ChatMessage | undef
 
 export function compactMessageSummary(message: ChatMessage, showDetails: boolean): string {
   const short = (text: string, max = 120) => {
-    const normalized = text.replace(/\s+/g, ' ').trim()
+    const normalized = normalizeCompactText(text)
     if (normalized.length <= max) return normalized
     return `${normalized.slice(0, max - 1)}...`
   }
@@ -111,7 +111,7 @@ export function compactMessageSummary(message: ChatMessage, showDetails: boolean
 
   if (message.type === 'command') {
     const command = message.content || message.metadata?.command || ''
-    const output = message.metadata?.output ?? ''
+    const output = normalizeCompactText(message.metadata?.output ?? '')
     const suffix = showDetails && output ? ` | ${short(output, 140)}` : ''
     return `$ ${short(command, 80)}${suffix}`
   }
@@ -143,6 +143,20 @@ export function compactMessageSummary(message: ChatMessage, showDetails: boolean
   if (message.type === 'error') return `error: ${short(message.content, 120)}`
 
   return short(message.content, 120)
+}
+
+function normalizeCompactText(input: string): string {
+  return String(input || '')
+    .replace(/\u001b\[[0-9;]*m/g, '')
+    .replace(/\[MENTION_TAB:#([^#\]\r\n]+)(?:##[^#\]\r\n]*)?(?:#\])?/g, (_m, name: string) => `@${name}`)
+    .replace(/\[MENTION_SKILL:#([^#\]\r\n]+)(?:#\])?/g, (_m, name: string) => `@${name}`)
+    .replace(/\[MENTION_FILE:#([^#\]\r\n]+)(?:##[^#\]\r\n]*)?(?:#\])?/g, (_m, path: string) => path.split(/[/\\]/).pop() || path)
+    .replace(/\[MENTION_USER_PASTE:#([^#\]\r\n]+)##([^#\]\r\n]+)(?:#\])?/g, (_m, _path: string, preview: string) => preview)
+    .replace(/`{3,}[\s\S]*?`{3,}/g, ' [code block] ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/[*_~#>[\\\]]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 function summarizeDiff(diff: string): string {

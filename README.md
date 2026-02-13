@@ -1,6 +1,6 @@
 # <img src="./demo_imgs/icon.png" width="40" height="40" align="center" style="margin-right: 10px;"> GyShell
 
-> **v0.1.6 has been released! [Check out here](./changelogs/v0.1.6.md)**
+> **v0.1.7 has been released! [Check out here](./changelogs/v0.1.7.md)**
 
 > **The AI-Native Terminal that Thinks with You.**  
 
@@ -34,6 +34,7 @@ Unlike traditional AI assistants that merely generate scripts or execute one-off
 - **Multi-Tab Mastery**: A single Agent can orchestrate tasks across **multiple terminal tabs** simultaneously. It can compile code in one tab, check logs in another, and deploy in a third.
 - **Smart Context Mentions**: Use **@mentions** to instantly provide the Agent with the context of specific terminal tabs, skills, or files.
 - **Multi-Surface Runtime**: Electron is production-ready, standalone `gybackend` is available, and standalone `@gyshell/tui` is implemented as a chat-first websocket client.
+- **Refined Standalone TUI UX**: compact chat panel, slash/mention autocomplete, clear RUN status indicators, `Ctrl+J` newline, and clipboard paste shortcuts.
 
 ### ⚡ Deep Shell Optimization
 
@@ -82,6 +83,7 @@ GyShell is built from the ground up to understand the nuances of terminal intera
 - **多标签页统筹**：单个 Agent 可以同时操控**多个终端标签页**。它可以在一个标签页编译代码，在另一个查看日志，并在第三个进行部署。
 - **智能上下文提及**：通过 **@提及 (@mentions)** 快速为 Agent 提供特定标签页、技能或文件的上下文信息。
 - **多形态运行时**：Electron 是当前核心形态，独立 `gybackend` 已可使用，独立 `@gyshell/tui` 已实现为 chat-first 的 websocket 客户端。
+- **独立 TUI 交互升级**：更紧凑的 chat 面板、`/` 与 `@` 自动补全、清晰的 RUN 状态、`Ctrl+J` 换行与快捷键粘贴。
 
 ### ⚡ 深度 Shell 交互优化
 
@@ -154,6 +156,9 @@ GyShell 针对终端交互的细微差别进行了底层优化：
   ```
   ```bash
     npm run start:tui
+  ```
+  ```bash
+    npm run test:tui-input-automation
   ```
 6. **Production Build / 构建生产环境应用**
   - **macOS**: `npm run dist:mac`

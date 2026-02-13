@@ -10,7 +10,8 @@
     "start": "bun run --conditions=browser --preload @opentui/solid/preload src/index.tsx",
     "dev": "bun run --watch --conditions=browser --preload @opentui/solid/preload src/index.tsx",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test:smoke": "bun run --conditions=browser --preload @opentui/solid/preload src/index.tsx --help"
+    "test:smoke": "bun run --conditions=browser --preload @opentui/solid/preload src/index.tsx --help",
+    "test:input-automation": "bun run --conditions=browser --preload @opentui/solid/preload scripts/input-automation.tsx"
   },
   "dependencies": {
     "@opentui/core": "0.1.73",

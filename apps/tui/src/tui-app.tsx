@@ -1,6 +1,6 @@
 import { RGBA, TextAttributes, type KeyBinding, type ScrollBoxRenderable, type TextareaRenderable } from '@opentui/core'
 import { render, useKeyboard, useRenderer, useTerminalDimensions } from '@opentui/solid'
-import { createEffect, createMemo, For, onCleanup, Show } from 'solid-js'
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from 'solid-js'
 import { createStore, produce } from 'solid-js/store'
 import type { GatewayClient } from './gateway-client'
 import type {
@@ -27,7 +27,7 @@ type SlashOption = {
   description: string
 }
 
-interface TuiBootstrapData {
+export interface TuiBootstrapData {
   endpoint: string
   terminals: GatewayTerminalSummary[]
   profiles: GatewayProfileSummary[]
@@ -53,7 +53,9 @@ type SessionMeta = {
 type MentionOption = {
   key: string
   label: string
-  token: string
+  insertText: string
+  description: string
+  token?: string
 }
 
 type MentionContext = {
@@ -63,6 +65,8 @@ type MentionContext = {
 }
 
 type SlashContext = {
+  start: number
+  end: number
   query: string
 }
 
@@ -73,34 +77,38 @@ const SLASH_COMMANDS: SlashOption[] = [
   { command: 'terminal', description: 'Select terminal target' },
   { command: 'stop', description: 'Stop current run' },
   { command: 'help', description: 'Open help panel' },
+  { command: 'exit', description: 'Exit GyShell TUI' },
 ]
+
+const RUN_SPINNER_FRAMES = ['|', '/', '-', '\\']
 
 const submitKeybindings: KeyBinding[] = [
   { name: 'return', action: 'submit' },
-  { name: 'return', shift: true, action: 'newline' },
+  { name: 'enter', action: 'submit' },
+  { name: 'linefeed', action: 'newline' },
+  { name: 'j', ctrl: true, action: 'newline' },
 ]
 
+const c = (r: number, g: number, b: number) => RGBA.fromInts(r, g, b, 255)
+
 const ui = {
-  bg: RGBA.fromHex('#0b1017'),
-  panel: RGBA.fromHex('#111a25'),
-  panel2: RGBA.fromHex('#162232'),
-  panel3: RGBA.fromHex('#1c2d43'),
-  border: RGBA.fromHex('#27405d'),
-  text: RGBA.fromHex('#d8e4f0'),
-  muted: RGBA.fromHex('#8aa1ba'),
-  primary: RGBA.fromHex('#59c0ff'),
-  success: RGBA.fromHex('#56cd93'),
-  warning: RGBA.fromHex('#f2be69'),
-  danger: RGBA.fromHex('#ef7f7f'),
-  userBubble: RGBA.fromHex('#162a40'),
-  assistantBubble: RGBA.fromHex('#121c2a'),
-  systemBubble: RGBA.fromHex('#232015'),
+  bg: c(7, 7, 7),
+  panel: c(12, 12, 12),
+  panel2: c(17, 17, 17),
+  panel3: c(24, 24, 24),
+  panel4: c(30, 30, 30),
+  border: c(88, 88, 88),
+  text: c(245, 245, 245),
+  muted: c(207, 207, 207),
+  subtle: c(181, 181, 181),
+  accent: c(255, 255, 255),
+  inverseText: c(10, 10, 10),
 }
 
 export function runTui(client: GatewayClient, data: TuiBootstrapData): Promise<void> {
   return new Promise<void>((resolve) => {
     render(
-      () => <TuiApp client={client} data={data} onExit={resolve} />,
+      () => createTuiRoot(client, data, resolve),
       {
         targetFps: 60,
         gatherStats: false,
@@ -109,6 +117,10 @@ export function runTui(client: GatewayClient, data: TuiBootstrapData): Promise<v
       },
     )
   })
+}
+
+export function createTuiRoot(client: GatewayClient, data: TuiBootstrapData, onExit: () => void) {
+  return <TuiApp client={client} data={data} onExit={onExit} />
 }
 
 function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: () => void }) {
@@ -146,19 +158,14 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
     skills: [],
     input: '',
     suggestionIndex: 0,
-    overlay:
-      props.data.restoredSessionCount > 0
-        ? {
-            type: 'welcome',
-            index: 0,
-          }
-        : null,
+    overlay: null,
     pending: false,
-    statusLine: `Connected: ${props.data.endpoint}`,
+    statusLine: `Connected ${props.data.endpoint}`,
   })
 
   let inputRef: TextareaRenderable | undefined
   let scrollRef: ScrollBoxRenderable | undefined
+  let overlayScrollRef: ScrollBoxRenderable | undefined
 
   const activeSession = createMemo(() => state.sessions[state.activeSessionId])
 
@@ -168,6 +175,16 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
     return session.messages.filter((item) => item.type !== 'tokens_count')
   })
 
+  const renderedMessages = createMemo(() => {
+    const messages = visibleMessages()
+    if (!messages.length) return messages
+    const lastIndex = messages.length - 1
+    return messages.filter((message, index) => {
+      if (message.type !== 'reasoning') return true
+      return message.streaming === true || index === lastIndex
+    })
+  })
+
   const pendingAsk = createMemo(() => {
     const session = activeSession()
     if (!session) return undefined
@@ -175,8 +192,15 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
   })
 
   const mentionContext = createMemo(() => {
-    if (!inputRef) return null
-    return parseMentionContext(state.input, inputRef.cursorOffset)
+    const reactiveInput = state.input
+    void reactiveInput
+    const cursor = getInputCursorOffset()
+    if (inputRef) {
+      const head = inputRef.getTextRange(0, cursor)
+      return parseMentionContextFromHead(head, cursor)
+    }
+    const text = state.input
+    return parseMentionContext(text, cursor || text.length)
   })
 
   const mentionOptions = createMemo(() => {
@@ -184,39 +208,49 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
     if (!context) return [] as MentionOption[]
 
     const query = context.query.toLowerCase()
-    const terminalOptions = state.terminals
-      .filter((item) => matchQuery(query, `${item.title} ${item.id}`))
-      .map((item) => ({
-        key: `terminal:${item.id}`,
-        label: `terminal: ${item.title}`,
-        token: `[MENTION_TAB:#${item.title}##${item.id}#]`,
-      }))
 
-    const skillOptions = state.skills
-      .filter((item) => matchQuery(query, item.name))
+    const skillMatches = state.skills
+      .filter((item) => matchQuery(query, `${item.name} ${item.description ?? ''}`))
       .map((item) => ({
         key: `skill:${item.name}`,
-        label: `skill: ${item.name}`,
-        token: `[MENTION_SKILL:#${item.name}#]`,
+        label: `@skill:${item.name}`,
+        insertText: `@skill:${item.name}`,
+        description: item.description || 'Skill',
       }))
 
-    return [...skillOptions, ...terminalOptions].slice(0, 8)
+    const terminalAliases = buildTerminalMentionAliases(state.terminals)
+    const terminalMatches = terminalAliases.filter((item) => {
+      return matchQuery(query, `${item.label} ${item.description}`)
+    })
+
+    return [...skillMatches, ...terminalMatches].slice(0, 6)
   })
 
   const slashContext = createMemo(() => {
-    if (!inputRef) return null
-    return parseSlashContext(state.input, inputRef.cursorOffset)
+    const reactiveInput = state.input
+    void reactiveInput
+    const cursor = getInputCursorOffset()
+    if (inputRef) {
+      const head = inputRef.getTextRange(0, cursor)
+      return parseSlashContextFromHead(head, cursor)
+    }
+    const text = state.input
+    return parseSlashContext(text, cursor || text.length)
   })
 
   const slashOptions = createMemo(() => {
     const context = slashContext()
     if (!context) return [] as SlashOption[]
 
+    const currentText = getInputText()
+    if (parseStandaloneSlashCommand(currentText)) return [] as SlashOption[]
+
     const starts = SLASH_COMMANDS.filter((item) => item.command.startsWith(context.query))
     const includes = SLASH_COMMANDS.filter(
       (item) => !item.command.startsWith(context.query) && item.command.includes(context.query),
     )
-    return [...starts, ...includes].slice(0, 8)
+
+    return [...starts, ...includes].slice(0, 6)
   })
 
   const suggestionKind = createMemo<'mention' | 'slash' | null>(() => {
@@ -311,7 +345,7 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
         {
           key: 'new',
           title: 'Start new session',
-          subtitle: `Target: ${lookupTerminalTitle(state.activeTerminalId, state.terminals)}`,
+          subtitle: `Target ${lookupTerminalTitle(state.activeTerminalId, state.terminals)}`,
           run: () => {
             void createNewSession(state.activeTerminalId)
           },
@@ -345,7 +379,7 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
         subtitle: `${terminal.type} (${shortId(terminal.id)})`,
         run: () => {
           setState('activeTerminalId', terminal.id)
-          setState('statusLine', `Target terminal: ${terminal.title}`)
+          setState('statusLine', `Target terminal ${terminal.title}`)
           closeOverlay()
         },
       }))
@@ -356,8 +390,8 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
         const meta = state.sessionMeta[sessionId]
         return {
           key: sessionId,
-          title: meta?.title || sessionId,
-          subtitle: composeSessionSubtitle(meta),
+          title: `${truncateLine(normalizeOutputText(meta?.title || sessionId), 20)} (${shortId(sessionId)})`,
+          subtitle: composeSessionSubtitle(meta, state.terminals),
           run: () => {
             void switchSession(sessionId)
           },
@@ -428,7 +462,7 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
 
   const unsubscribeEvent = props.client.on('gatewayEvent', (event) => {
     if (event.type === 'system:notification') {
-      setState('statusLine', `System: ${safeText(event.payload)}`)
+      setState('statusLine', `System ${safeText(event.payload)}`)
     }
   })
 
@@ -437,7 +471,7 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
   })
 
   const unsubscribeError = props.client.on('error', (error) => {
-    setState('statusLine', `Gateway error: ${error.message}`)
+    setState('statusLine', `Gateway error ${error.message}`)
   })
 
   onCleanup(() => {
@@ -449,19 +483,99 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
   })
 
   createEffect(() => {
-    const count = visibleMessages().length
-    void count
+    const overlayOpen = !!state.overlay
+    const sessionId = state.activeSessionId
+    void sessionId
+    if (overlayOpen) return
+
+    queueMicrotask(() => {
+      if (!inputRef) return
+      if (inputRef.focused) return
+      inputRef.focus()
+    })
+  })
+
+  createEffect(() => {
+    const sessionId = state.activeSessionId
+    void sessionId
     queueMicrotask(() => {
       if (!scrollRef) return
       try {
         scrollRef.scrollTo(scrollRef.scrollHeight)
       } catch {
-        // keep rendering even if scroll is unavailable
+        // Keep rendering when scroll handle is unavailable.
       }
     })
   })
 
   useKeyboard((event) => {
+    const keyName = String(event.name || '').toLowerCase()
+    const keySequence = String((event as unknown as { sequence?: string }).sequence || '')
+
+    if (!state.overlay && inputRef && !inputRef.focused && isPasteShortcut(event as { name?: string; ctrl?: boolean; meta?: boolean })) {
+      event.preventDefault()
+      inputRef.focus()
+      void pasteClipboardIntoInput()
+      return
+    }
+
+    if (!state.overlay && inputRef && inputRef.focused && !event.ctrl && !event.meta && !event.super) {
+      queueMicrotask(() => syncInputStateFromRef(false))
+    }
+
+    if (!state.overlay && inputRef && !inputRef.focused && !event.ctrl && !event.meta && !event.super) {
+      inputRef.focus()
+      setState('statusLine', 'Input focus recovered')
+
+      if (keyName === 'return' || keyName === 'enter') {
+        event.preventDefault()
+        void submitInput()
+        return
+      }
+
+      if (keySequence.length === 1) {
+        event.preventDefault()
+        inputRef.insertText(keySequence)
+        setState('input', inputRef.plainText)
+        setState('suggestionIndex', 0)
+        return
+      }
+    }
+
+    const activeSuggestionKind = !state.overlay ? suggestionKind() : null
+    if (activeSuggestionKind) {
+      const options = activeSuggestionKind === 'mention' ? mentionOptions() : slashOptions()
+      if (options.length > 0) {
+        if (keyName === 'down' || keyName === 'arrowdown') {
+          event.preventDefault()
+          setState('suggestionIndex', (value) => (value + 1) % options.length)
+          return
+        }
+
+        if (keyName === 'up' || keyName === 'arrowup') {
+          event.preventDefault()
+          setState('suggestionIndex', (value) => (value - 1 + options.length) % options.length)
+          return
+        }
+
+        if (keyName === 'escape') {
+          event.preventDefault()
+          setState('suggestionIndex', 0)
+          return
+        }
+
+        if (keyName === 'tab' || keyName === 'return' || keyName === 'enter') {
+          event.preventDefault()
+          if (activeSuggestionKind === 'mention') {
+            insertMention(mentionOptions()[state.suggestionIndex])
+          } else {
+            insertSlash(slashOptions()[state.suggestionIndex])
+          }
+          return
+        }
+      }
+    }
+
     if (event.ctrl && event.name === 'c') {
       event.preventDefault()
       exitApp()
@@ -527,20 +641,33 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
   })
 
   function openOverlay(type: OverlayType): void {
+    const initialIndex =
+      type === 'session'
+        ? Math.max(0, state.sessionOrder.findIndex((sessionId) => sessionId === state.activeSessionId))
+        : 0
     setState('overlay', {
       type,
-      index: 0,
+      index: initialIndex,
+    })
+    queueMicrotask(() => {
+      if (!overlayScrollRef) return
+      overlayScrollRef.scrollTo(initialIndex)
     })
   }
 
   function closeOverlay(): void {
     setState('overlay', null)
+    queueMicrotask(() => {
+      if (!inputRef) return
+      inputRef.focus()
+    })
   }
 
   function moveOverlayIndex(direction: number): void {
     const options = overlayOptions()
     if (!options.length) return
 
+    let nextIndex = 0
     setState(
       produce((draft) => {
         if (!draft.overlay) return
@@ -548,8 +675,18 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
         if (next < 0) next = options.length - 1
         if (next >= options.length) next = 0
         draft.overlay.index = next
+        nextIndex = next
       }),
     )
+
+    queueMicrotask(() => {
+      if (!overlayScrollRef) return
+      try {
+        overlayScrollRef.scrollTo(nextIndex)
+      } catch {
+        // Ignore overlay scroll update failure.
+      }
+    })
   }
 
   async function selectOverlayOption(): Promise<void> {
@@ -562,87 +699,74 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
   }
 
   function handleInputContentChange(): void {
-    if (!inputRef) return
-    setState('input', inputRef.plainText)
-    setState('suggestionIndex', 0)
+    syncInputStateFromRef(true)
   }
 
-  function handleInputKeyDown(event: { name: string; preventDefault: () => void }): void {
+  async function handleInputKeyDown(event: {
+    name: string
+    ctrl?: boolean
+    meta?: boolean
+    preventDefault: () => void
+  }): Promise<void> {
     if (state.overlay) return
+    queueMicrotask(() => syncInputStateFromRef(false))
+
+    const keyName = String(event.name || '').toLowerCase()
+    if (isPasteShortcut(event)) {
+      event.preventDefault()
+      await pasteClipboardIntoInput()
+      return
+    }
 
     const kind = suggestionKind()
-    if (!kind) return
-
-    const options = kind === 'mention' ? mentionOptions() : slashOptions()
-    if (!options.length) return
-
-    if (event.name === 'down') {
-      event.preventDefault()
-      setState('suggestionIndex', (value) => (value + 1) % options.length)
-      return
-    }
-
-    if (event.name === 'up') {
-      event.preventDefault()
-      setState('suggestionIndex', (value) => (value - 1 + options.length) % options.length)
-      return
-    }
-
-    if (event.name === 'escape') {
-      event.preventDefault()
-      if (kind === 'mention') {
-        const context = mentionContext()
-        if (!context) return
-        const next = `${state.input.slice(0, context.start)}${state.input.slice(context.end)}`
-        setState('input', next)
-        if (inputRef) {
-          inputRef.setText(next)
-          inputRef.cursorOffset = context.start
-        }
+    if (!kind) {
+      if (keyName === '/' && inputRef && inputRef.cursorOffset === 0) {
+        queueMicrotask(() => {
+          syncInputStateFromRef(false)
+          setState('suggestionIndex', 0)
+        })
+        return
+      }
+      if (keyName === '@') {
+        queueMicrotask(() => {
+          syncInputStateFromRef(false)
+          setState('suggestionIndex', 0)
+        })
+        return
+      }
+      if (keyName === 'return' || keyName === 'enter') {
+        event.preventDefault()
+        void submitInput()
       }
       return
     }
-
-    if (event.name === 'tab') {
-      event.preventDefault()
-      if (kind === 'mention') {
-        insertMention(mentionOptions()[state.suggestionIndex])
-      } else {
-        insertSlash(slashOptions()[state.suggestionIndex])
-      }
-    }
+    return
   }
 
   function insertMention(option: MentionOption | undefined): void {
     if (!option || !inputRef) return
-    const context = mentionContext()
+    const context = getMentionContextAtCursor()
     if (!context) return
-
-    const next = `${state.input.slice(0, context.start)}${option.token} ${state.input.slice(context.end)}`
-    setState('input', next)
-    setState('suggestionIndex', 0)
-    inputRef.setText(next)
-    inputRef.cursorOffset = context.start + option.token.length + 1
+    replaceInputRange(context.start, context.end, `${option.insertText} `)
   }
 
   function insertSlash(option: SlashOption | undefined): void {
     if (!option || !inputRef) return
-    const next = `/${option.command} `
-    setState('input', next)
-    setState('suggestionIndex', 0)
-    inputRef.setText(next)
-    inputRef.gotoBufferEnd()
+    const context = getSlashContextAtCursor()
+    if (!context) return
+    replaceInputRange(context.start, context.end, `/${option.command}`)
   }
 
   async function submitInput(): Promise<void> {
     if (state.overlay) return
 
-    const text = state.input.trim()
+    const text = getInputText().trim()
     if (!text) return
 
-    if (text.startsWith('/')) {
-      await runSlashCommand(text)
+    const standaloneSlash = parseStandaloneSlashCommand(text)
+    if (standaloneSlash) {
       clearInput()
+      await runSlashCommand(`/${standaloneSlash}`)
       return
     }
 
@@ -652,33 +776,39 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
       return
     }
 
-    setState('pending', true)
+    clearInput()
 
-    try {
-      await props.client.request('agent:startTask', {
+    const encodedText = encodeMentions(text, state.skills, state.terminals)
+    setState(
+      produce((draft) => {
+        const current = draft.sessions[session.id]
+        if (!current) return
+        current.isThinking = true
+        current.isBusy = true
+        current.lockedProfileId = draft.activeProfileId || null
+      }),
+    )
+
+    void props.client
+      .request('agent:startTask', {
         sessionId: session.id,
         terminalId: session.terminalId,
-        userText: text,
+        userText: encodedText,
         options: {
           startMode: session.isBusy ? 'inserted' : 'normal',
         },
       })
-
-      setState(
-        produce((draft) => {
-          const current = draft.sessions[session.id]
-          if (!current) return
-          current.isThinking = true
-          current.isBusy = true
-          current.lockedProfileId = draft.activeProfileId || null
-        }),
-      )
-    } catch (error) {
-      setState('statusLine', `Failed to send prompt: ${safeError(error)}`)
-    } finally {
-      setState('pending', false)
-      clearInput()
-    }
+      .catch((error) => {
+        setState(
+          produce((draft) => {
+            const current = draft.sessions[session.id]
+            if (!current) return
+            current.isThinking = false
+            current.isBusy = false
+          }),
+        )
+        setState('statusLine', `Failed to send prompt ${safeError(error)}`)
+      })
   }
 
   async function runSlashCommand(raw: string): Promise<void> {
@@ -715,13 +845,86 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
       return
     }
 
-    setState('statusLine', `Unknown slash command: /${command}`)
+    if (command === 'exit') {
+      exitApp()
+      return
+    }
+
+    setState('statusLine', `Unknown slash command /${command}`)
   }
 
   function clearInput(): void {
     setState('input', '')
     setState('suggestionIndex', 0)
-    if (inputRef) inputRef.clear()
+    if (inputRef) {
+      inputRef.clear()
+      inputRef.focus()
+    }
+  }
+
+  function getInputText(): string {
+    if (inputRef) return inputRef.plainText
+    return state.input
+  }
+
+  function getInputCursorOffset(): number {
+    if (inputRef) return Math.max(0, inputRef.cursorOffset)
+    return getInputText().length
+  }
+
+  function getMentionContextAtCursor(): MentionContext | null {
+    if (!inputRef) return parseMentionContext(getInputText(), getInputCursorOffset())
+    const cursor = getInputCursorOffset()
+    const head = inputRef.getTextRange(0, cursor)
+    return parseMentionContextFromHead(head, cursor)
+  }
+
+  function getSlashContextAtCursor(): SlashContext | null {
+    if (!inputRef) return parseSlashContext(getInputText(), getInputCursorOffset())
+    const cursor = getInputCursorOffset()
+    const head = inputRef.getTextRange(0, cursor)
+    return parseSlashContextFromHead(head, cursor)
+  }
+
+  function syncInputStateFromRef(resetSuggestion: boolean): void {
+    const next = getInputText()
+    if (next !== state.input) {
+      setState('input', next)
+    }
+    if (resetSuggestion) {
+      setState('suggestionIndex', 0)
+    }
+  }
+
+  async function pasteClipboardIntoInput(): Promise<void> {
+    if (!inputRef) return
+    const pasted = await readClipboardText()
+    if (!pasted) {
+      setState('statusLine', 'Clipboard is empty or unavailable')
+      return
+    }
+
+    const normalized = pasted.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+    inputRef.insertText(normalized)
+    syncInputStateFromRef(true)
+    setState('statusLine', `Pasted ${Math.max(1, normalized.length)} chars`)
+  }
+
+  function replaceInputRange(startOffset: number, endOffset: number, replacement: string): void {
+    if (!inputRef) return
+
+    const safeStart = Math.max(0, Math.min(startOffset, endOffset))
+    const safeEnd = Math.max(safeStart, endOffset)
+
+    inputRef.cursorOffset = safeStart
+    const startCursor = inputRef.logicalCursor
+    inputRef.cursorOffset = safeEnd
+    const endCursor = inputRef.logicalCursor
+
+    inputRef.deleteRange(startCursor.row, startCursor.col, endCursor.row, endCursor.col)
+    inputRef.insertText(replacement)
+
+    syncInputStateFromRef(true)
   }
 
   async function createNewSession(terminalId: string): Promise<void> {
@@ -732,26 +935,29 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
 
       setState(
         produce((draft) => {
-          if (!draft.sessions[sessionId]) {
-            draft.sessions[sessionId] = createSessionState(sessionId, terminalId)
+          draft.sessions[sessionId] = createSessionState(sessionId, terminalId)
+          if (!draft.sessionOrder.includes(sessionId)) {
             draft.sessionOrder.unshift(sessionId)
           }
           draft.sessionMeta[sessionId] = {
             id: sessionId,
-            title: draft.sessions[sessionId]?.title || 'New Chat',
+            title: 'New Chat',
             updatedAt: Date.now(),
             messagesCount: 0,
             boundTerminalId: terminalId,
+            lastMessagePreview: '',
             loaded: true,
           }
+          draft.activeTerminalId = terminalId
           draft.activeSessionId = sessionId
         }),
       )
 
-      setState('statusLine', `Created session: ${shortId(sessionId)}`)
+      clearInput()
+      setState('statusLine', `Created session ${shortId(sessionId)}`)
       closeOverlay()
     } catch (error) {
-      setState('statusLine', `Failed to create session: ${safeError(error)}`)
+      setState('statusLine', `Failed to create session ${safeError(error)}`)
     } finally {
       setState('pending', false)
     }
@@ -759,8 +965,10 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
 
   async function switchSession(sessionId: string): Promise<void> {
     await ensureSessionLoaded(sessionId)
+    const targetTerminalId = state.sessions[sessionId]?.terminalId || state.activeTerminalId
+    setState('activeTerminalId', targetTerminalId)
     setState('activeSessionId', sessionId)
-    setState('statusLine', `Switched session: ${state.sessionMeta[sessionId]?.title || shortId(sessionId)}`)
+    setState('statusLine', `Switched session ${state.sessionMeta[sessionId]?.title || shortId(sessionId)}`)
     closeOverlay()
   }
 
@@ -793,7 +1001,7 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
         }),
       )
     } catch (error) {
-      setState('statusLine', `Failed to load session ${shortId(sessionId)}: ${safeError(error)}`)
+      setState('statusLine', `Failed to load session ${shortId(sessionId)} ${safeError(error)}`)
     }
   }
 
@@ -806,10 +1014,10 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
 
       setState('activeProfileId', result.activeProfileId)
       setState('profiles', result.profiles)
-      setState('statusLine', `Profile: ${lookupProfileName(result.activeProfileId, result.profiles)}`)
+      setState('statusLine', `Profile ${lookupProfileName(result.activeProfileId, result.profiles)}`)
       closeOverlay()
     } catch (error) {
-      setState('statusLine', `Profile switch failed: ${safeError(error)}`)
+      setState('statusLine', `Profile switch failed ${safeError(error)}`)
     }
   }
 
@@ -818,7 +1026,7 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
       await props.client.request('agent:stopTask', { sessionId })
       setState('statusLine', 'Stop signal sent')
     } catch (error) {
-      setState('statusLine', `Stop failed: ${safeError(error)}`)
+      setState('statusLine', `Stop failed ${safeError(error)}`)
     }
   }
 
@@ -848,9 +1056,9 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
           }
         }),
       )
-      setState('statusLine', `Decision sent: ${decision}`)
+      setState('statusLine', `Decision sent ${decision}`)
     } catch (error) {
-      setState('statusLine', `Approval failed: ${safeError(error)}`)
+      setState('statusLine', `Approval failed ${safeError(error)}`)
     }
   }
 
@@ -863,108 +1071,183 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
   const selectedProfileName = createMemo(() => lookupProfileName(state.activeProfileId, state.profiles))
   const activeSessionShortId = createMemo(() => shortId(state.activeSessionId))
   const activeSessionMeta = createMemo(() => state.sessionMeta[state.activeSessionId])
+  const runActive = createMemo(() => Boolean(state.pending || activeSession()?.isBusy))
+  const [runSpinnerIndex, setRunSpinnerIndex] = createSignal(0)
+
+  createEffect(() => {
+    if (!runActive()) return
+    const timer = setInterval(() => {
+      setRunSpinnerIndex((value) => (value + 1) % RUN_SPINNER_FRAMES.length)
+    }, 120)
+    onCleanup(() => clearInterval(timer))
+  })
+
+  const suggestionLineWidth = createMemo(() => Math.max(24, dimensions().width - 6))
+  const overlayPanelWidth = createMemo(() => Math.max(48, Math.min(100, dimensions().width - 8)))
+  const overlayPanelHeight = createMemo(() => Math.max(12, Math.min(28, dimensions().height - 4)))
+  const overlayListHeight = createMemo(() => Math.max(6, overlayPanelHeight() - 5))
+  const overlayOptionLineWidth = createMemo(() => Math.max(20, Math.min(72, overlayPanelWidth() - 6)))
+  const inputMinHeight = createMemo(() => {
+    const lines = state.input.split('\n').length
+    return Math.max(1, Math.min(5, lines))
+  })
+  const headerRightText = createMemo(() => {
+    const profile = truncateDisplayWidth(selectedProfileName(), 24)
+    const terminal = truncateDisplayWidth(lookupTerminalTitle(state.activeTerminalId, state.terminals), 14)
+    const runLabel = runActive() ? `RUN ${RUN_SPINNER_FRAMES[runSpinnerIndex()]}` : 'IDLE'
+    const raw = `${profile} | ${terminal} | ${runLabel}`
+    const max = Math.max(10, Math.floor(dimensions().width * 0.45))
+    return truncateDisplayWidth(raw, max)
+  })
+  const headerLeftText = createMemo(() => {
+    const base = `GyShell | ${activeSessionMeta()?.title || 'Untitled'} (${activeSessionShortId()})`
+    const rightWidth = displayWidth(headerRightText())
+    const max = Math.max(14, dimensions().width - rightWidth - 5)
+    return truncateDisplayWidth(base, max)
+  })
 
   return (
     <box width={dimensions().width} height={dimensions().height} backgroundColor={ui.bg} flexDirection="column">
-      <box flexShrink={0} backgroundColor={ui.panel} paddingLeft={2} paddingRight={2} paddingTop={1} paddingBottom={1}>
-        <text fg={ui.primary} attributes={TextAttributes.BOLD}>
-          GyShell TUI
-        </text>
-        <text fg={ui.muted}> | </text>
-        <text fg={ui.text}>{selectedProfileName()}</text>
-        <text fg={ui.muted}> | {lookupTerminalTitle(state.activeTerminalId, state.terminals)}</text>
-        <box flexGrow={1} />
-        <text fg={state.pending ? ui.warning : ui.success}>{state.pending ? 'RUNNING' : 'IDLE'}</text>
-      </box>
-
-      <box flexShrink={0} backgroundColor={ui.panel2} paddingLeft={2} paddingRight={2} paddingTop={1} paddingBottom={1}>
-        <text fg={ui.text} attributes={TextAttributes.BOLD}>
-          {truncateLine(activeSessionMeta()?.title || 'Untitled Session', 64)}
-        </text>
-        <text fg={ui.muted}> ({activeSessionShortId()})</text>
-        <text fg={ui.muted}> • {visibleMessages().length} msgs</text>
-        <Show when={props.data.restoredSessionCount > 0}>
-          <text fg={ui.muted}> • recovered {props.data.restoredSessionCount}</text>
-        </Show>
-        <box flexGrow={1} />
-        <text fg={ui.muted}>Ctrl+K commands</text>
-      </box>
-
-      <scrollbox
-        ref={(node: ScrollBoxRenderable) => (scrollRef = node)}
-        flexGrow={1}
-        paddingLeft={2}
-        paddingRight={2}
-        paddingTop={1}
+      <box
+        flexDirection="row"
+        flexShrink={0}
+        backgroundColor={ui.panel}
+        border={['bottom']}
+        borderColor={ui.border}
+        paddingLeft={1}
+        paddingRight={1}
       >
-        <Show when={visibleMessages().length === 0}>
-          <box paddingTop={1}>
-            <text fg={ui.muted}>No messages yet. Type prompt and press Enter.</text>
-          </box>
-        </Show>
+        <text fg={ui.accent} attributes={TextAttributes.BOLD} wrapMode="none">
+          {headerLeftText()}
+        </text>
+        <box flexGrow={1} />
+        <text fg={ui.subtle} wrapMode="none">
+          {headerRightText()}
+        </text>
+      </box>
 
-        <For each={visibleMessages()}>
-          {(message, index) => (
-            <box marginTop={showHeader(visibleMessages(), index()) ? 1 : 0}>
-              <Show when={showHeader(visibleMessages(), index())}>
-                <text fg={labelColorForMessage(message)} attributes={TextAttributes.BOLD}>
-                  {labelForMessage(message)}
-                  <span style={{ fg: ui.muted }}> {formatClock(message.timestamp)}</span>
-                </text>
-              </Show>
-
-              <box
-                paddingLeft={1}
-                border={['left']}
-                borderColor={borderColorForMessage(message)}
-                backgroundColor={bubbleColorForMessage(message)}
-              >
-                <text fg={ui.text}>{compactMessageSummary(message, false)}</text>
+      <For each={[state.activeSessionId]}>
+        {() => (
+          <scrollbox
+            ref={(node: ScrollBoxRenderable) => (scrollRef = node)}
+            flexGrow={1}
+            paddingLeft={1}
+            paddingRight={1}
+            paddingTop={0}
+            paddingBottom={0}
+            backgroundColor={ui.panel2}
+            stickyScroll
+            stickyStart="bottom"
+          >
+            <Show when={renderedMessages().length === 0}>
+              <box paddingTop={1}>
+                <text fg={ui.muted}>No messages yet. Start typing below.</text>
               </box>
-            </box>
-          )}
-        </For>
-      </scrollbox>
+            </Show>
+
+            <For each={renderedMessages()}>
+              {(message, index) => (
+                <box marginTop={showHeader(renderedMessages(), index()) ? 1 : 0} flexDirection="column">
+                  <Show when={showHeader(renderedMessages(), index())}>
+                    <text fg={ui.muted}>
+                      {labelForMessage(message)} <span style={{ fg: ui.subtle }}>{formatClock(message.timestamp)}</span>
+                    </text>
+                  </Show>
+
+                  <For each={messageBodyLines(message)}>
+                    {(line) => (
+                      <box paddingLeft={1} border={['left']} borderColor={borderColorForMessage(message)} backgroundColor={ui.panel2}>
+                        <text fg={textColorForMessage(message)}>{line}</text>
+                      </box>
+                    )}
+                  </For>
+                </box>
+              )}
+            </For>
+          </scrollbox>
+        )}
+      </For>
 
       <Show when={pendingAsk()}>
         {(ask) => (
-          <box flexShrink={0} backgroundColor={ui.panel3} paddingLeft={2} paddingRight={2} paddingTop={1} paddingBottom={1}>
-            <text fg={ui.warning}>
-              Permission: {truncateLine(ask().metadata?.command || ask().content, 100)}
+          <box
+            flexShrink={0}
+            backgroundColor={ui.panel3}
+            border={['top', 'bottom']}
+            borderColor={ui.border}
+            paddingLeft={1}
+            paddingRight={1}
+          >
+            <text fg={ui.accent}>
+              PERMISSION <span style={{ fg: ui.text }}>{truncateLine(ask().metadata?.command || ask().content, 120)}</span>
               <span style={{ fg: ui.muted }}> (A allow / D deny)</span>
             </text>
           </box>
         )}
       </Show>
 
+      <Show when={runActive() && !state.overlay}>
+        <box
+          flexShrink={0}
+          backgroundColor={ui.panel4}
+          border={['top']}
+          borderColor={ui.border}
+          paddingLeft={1}
+          paddingRight={1}
+        >
+          <text fg={ui.accent}>
+            RUN {RUN_SPINNER_FRAMES[runSpinnerIndex()]} <span style={{ fg: ui.muted }}>session is active, new messages will be inserted</span>
+          </text>
+        </box>
+      </Show>
+
       <Show when={suggestionKind() && !state.overlay}>
-        <box flexShrink={0} backgroundColor={ui.panel3} paddingLeft={2} paddingRight={2} paddingTop={1} paddingBottom={1}>
+        <box
+          flexShrink={0}
+          backgroundColor={ui.panel3}
+          border={['top']}
+          borderColor={ui.border}
+          paddingLeft={1}
+          paddingRight={1}
+        >
           <For each={suggestionKind() === 'mention' ? mentionOptions() : slashOptions()}>
             {(option, idx) => (
-              <text fg={idx() === state.suggestionIndex ? ui.primary : ui.muted}>
-                {idx() === state.suggestionIndex ? '> ' : '  '}
-                {suggestionKind() === 'mention' ? (option as MentionOption).label : `/${(option as SlashOption).command}`}
-                <Show when={suggestionKind() === 'slash'}>
-                  <span style={{ fg: ui.muted }}> {(option as SlashOption).description}</span>
-                </Show>
-              </text>
+              <box backgroundColor={idx() === state.suggestionIndex ? ui.accent : undefined}>
+                <text fg={idx() === state.suggestionIndex ? ui.inverseText : ui.text}>
+                  {truncateLine(
+                    suggestionKind() === 'mention'
+                      ? `${idx() === state.suggestionIndex ? '>' : ' '} ${(option as MentionOption).label} ${(option as MentionOption).description}`
+                      : `${idx() === state.suggestionIndex ? '>' : ' '} /${(option as SlashOption).command} ${(option as SlashOption).description}`,
+                    suggestionLineWidth(),
+                  )}
+                </text>
+              </box>
             )}
           </For>
         </box>
       </Show>
 
-      <box flexShrink={0} backgroundColor={ui.panel} paddingLeft={2} paddingRight={2} paddingTop={1}>
+      <box
+        flexShrink={0}
+        backgroundColor={ui.panel}
+        border={['top']}
+        borderColor={ui.border}
+        paddingLeft={1}
+        paddingRight={1}
+      >
         <textarea
           ref={(node: TextareaRenderable) => {
             inputRef = node
             node.focus()
           }}
-          placeholder="Type a prompt. Enter send, Shift+Enter newline, / for commands, @ for mentions"
-          minHeight={1}
-          maxHeight={6}
+          placeholder="Type prompt. Enter send, Ctrl+J newline, / commands, @ mentions"
+          minHeight={inputMinHeight()}
+          maxHeight={5}
           textColor={ui.text}
           focusedTextColor={ui.text}
-          cursorColor={ui.primary}
+          focusedBackgroundColor={ui.panel}
+          backgroundColor={ui.panel}
+          cursorColor={ui.accent}
           keyBindings={submitKeybindings}
           onContentChange={handleInputContentChange}
           onKeyDown={(event) => handleInputKeyDown(event as any)}
@@ -974,21 +1257,31 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
         />
       </box>
 
-      <box flexShrink={0} backgroundColor={ui.panel2} paddingLeft={2} paddingRight={2} paddingBottom={1}>
-        <text fg={ui.muted}>{state.statusLine}</text>
+      <box
+        flexDirection="row"
+        flexShrink={0}
+        backgroundColor={ui.panel2}
+        border={['top']}
+        borderColor={ui.border}
+        paddingLeft={1}
+        paddingRight={1}
+      >
+        <text fg={ui.muted}>{truncateLine(state.statusLine, Math.max(18, dimensions().width - 58))}</text>
         <box flexGrow={1} />
-        <text fg={state.pending ? ui.warning : ui.muted}>{state.pending ? 'Working...' : activeSessionShortId()}</text>
+        <text fg={ui.subtle}>Ctrl+K menu | Ctrl+N new | Ctrl+L sessions | Ctrl+C exit</text>
       </box>
 
       <Show when={state.overlay}>
         {(overlay) => (
-          <box position="absolute" top={3} left={2} right={2} bottom={2} alignItems="center" backgroundColor={ui.bg}>
+          <box position="absolute" top={1} left={0} right={0} bottom={0} alignItems="center" backgroundColor={ui.bg}>
             <box
-              width={Math.max(48, Math.min(110, dimensions().width - 8))}
+              width={overlayPanelWidth()}
+              height={overlayPanelHeight()}
               backgroundColor={ui.panel2}
               border={['top', 'bottom', 'left', 'right']}
               borderColor={ui.border}
               padding={1}
+              flexDirection="column"
             >
               <box flexDirection="row">
                 <text fg={ui.text} attributes={TextAttributes.BOLD}>
@@ -1006,31 +1299,38 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
                   <text fg={ui.muted}>Ctrl+L session list</text>
                   <text fg={ui.muted}>Ctrl+C exit</text>
                   <text fg={ui.text}>Input</text>
-                  <text fg={ui.muted}>Enter send, Shift+Enter newline</text>
-                  <text fg={ui.muted}>Tab accepts @ or / suggestion</text>
+                  <text fg={ui.muted}>Enter send, Ctrl+J newline</text>
+                  <text fg={ui.muted}>Tab/Enter accepts @ or / suggestions</text>
                   <text fg={ui.muted}>A / D respond to permission asks</text>
                 </box>
               </Show>
 
               <Show when={overlay().type !== 'help'}>
-                <box paddingTop={1}>
+                <scrollbox
+                  ref={(node: ScrollBoxRenderable) => (overlayScrollRef = node)}
+                  marginTop={1}
+                  height={overlayListHeight()}
+                  scrollbarOptions={{ visible: false }}
+                >
                   <For each={overlayOptions()}>
                     {(option, idx) => (
                       <box
                         paddingLeft={1}
                         paddingRight={1}
-                        backgroundColor={idx() === overlay().index ? ui.primary : undefined}
+                        height={1}
+                        flexShrink={0}
+                        backgroundColor={idx() === overlay().index ? ui.accent : undefined}
                       >
-                        <text fg={idx() === overlay().index ? ui.bg : ui.text}>
-                          {option.title}
-                          <Show when={option.subtitle}>
-                            <span style={{ fg: idx() === overlay().index ? ui.bg : ui.muted }}> {option.subtitle}</span>
-                          </Show>
+                        <text fg={idx() === overlay().index ? ui.inverseText : ui.text} wrapMode="none">
+                          {truncateDisplayWidth(
+                            `${idx() === overlay().index ? '>' : ' '} ${option.title}${option.subtitle ? ` | ${option.subtitle}` : ''}`,
+                            overlayOptionLineWidth(),
+                          )}
                         </text>
                       </box>
                     )}
                   </For>
-                </box>
+                </scrollbox>
               </Show>
             </box>
           </box>
@@ -1097,29 +1397,46 @@ function parseMentionContext(text: string, cursorOffset: number): MentionContext
   if (!text) return null
   const safeOffset = Math.max(0, Math.min(cursorOffset, text.length))
   const head = text.slice(0, safeOffset)
-  const start = head.lastIndexOf('@')
-  if (start < 0) return null
+  return parseMentionContextFromHead(head, safeOffset)
+}
 
-  const before = start === 0 ? ' ' : text[start - 1]
-  if (!/\s/.test(before)) return null
+function parseMentionContextFromHead(head: string, safeOffset: number): MentionContext | null {
+  if (!head) return null
 
-  const between = text.slice(start + 1, safeOffset)
-  if (/\s/.test(between)) return null
+  let cursor = head.length - 1
+  while (cursor >= 0 && isMentionQueryChar(head[cursor])) {
+    cursor -= 1
+  }
+
+  if (cursor < 0 || head[cursor] !== '@') return null
+  if (cursor > 0 && isMentionQueryChar(head[cursor - 1])) return null
+
+  const query = head.slice(cursor + 1)
+  const startOffset = Math.max(0, safeOffset - query.length - 1)
 
   return {
-    start,
+    start: startOffset,
     end: safeOffset,
-    query: between,
+    query,
   }
 }
 
 function parseSlashContext(text: string, cursorOffset: number): SlashContext | null {
-  if (!text.startsWith('/')) return null
+  if (!text) return null
   const safeOffset = Math.max(0, Math.min(cursorOffset, text.length))
   const head = text.slice(0, safeOffset)
+  return parseSlashContextFromHead(head, safeOffset)
+}
+
+function parseSlashContextFromHead(head: string, safeOffset: number): SlashContext | null {
+  if (!head) return null
+  if (!head.startsWith('/')) return null
   if (head.includes('\n')) return null
   if (head.includes(' ')) return null
+
   return {
+    start: 0,
+    end: safeOffset,
     query: head.slice(1).toLowerCase(),
   }
 }
@@ -1129,10 +1446,29 @@ function matchQuery(query: string, candidate: string): boolean {
   return candidate.toLowerCase().includes(query)
 }
 
+function parseStandaloneSlashCommand(input: string): string | null {
+  const raw = String(input || '')
+  if (!raw.startsWith('/')) return null
+  if (raw.includes('\n')) return null
+  if (!/^\/[A-Za-z0-9_.-]+$/.test(raw)) return null
+  const command = raw.slice(1).toLowerCase()
+  const exists = SLASH_COMMANDS.some((item) => item.command.toLowerCase() === command)
+  return exists ? command : null
+}
+
+function isMentionQueryChar(char: string | undefined): boolean {
+  if (!char) return false
+  return /[A-Za-z0-9_.:-]/.test(char)
+}
+
 function showHeader(messages: ChatMessage[], index: number): boolean {
   const current = messages[index]
   const previous = messages[index - 1]
-  if (!current || !previous) return true
+  if (!current) return true
+  if (!previous) return current.role === 'user' || current.type === 'text'
+
+  if (current.role !== 'user' && current.type !== 'text') return false
+  if (previous.role !== 'user' && previous.type !== 'text') return true
 
   const sameRole = current.role === previous.role
   const sameType = labelForMessage(current) === labelForMessage(previous)
@@ -1142,38 +1478,28 @@ function showHeader(messages: ChatMessage[], index: number): boolean {
 
 function labelForMessage(message: ChatMessage): string {
   if (message.role === 'user') return 'YOU'
-  if (message.type === 'error') return 'ERROR'
+  if (message.type === 'text') return 'AI'
+  if (message.type === 'error') return 'ERR'
   if (message.type === 'alert') return 'ALERT'
   if (message.type === 'ask') return 'ASK'
-  if (message.type === 'command') return 'CMD'
+  if (message.type === 'command') return 'RUN'
   if (message.type === 'tool_call') return 'TOOL'
-  if (message.type === 'file_edit') return 'EDIT'
+  if (message.type === 'file_edit') return 'PATCH'
   if (message.type === 'reasoning') return 'THINK'
   if (message.type === 'sub_tool') return 'STEP'
   return 'AI'
 }
 
-function labelColorForMessage(message: ChatMessage): RGBA {
-  if (message.role === 'user') return ui.primary
-  if (message.type === 'error') return ui.danger
-  if (message.type === 'alert' || message.type === 'ask') return ui.warning
-  if (message.type === 'command' || message.type === 'tool_call' || message.type === 'file_edit') return ui.primary
-  if (message.type === 'reasoning' || message.type === 'sub_tool') return ui.muted
-  return ui.success
-}
-
 function borderColorForMessage(message: ChatMessage): RGBA {
-  if (message.role === 'user') return ui.primary
-  if (message.type === 'error') return ui.danger
-  if (message.type === 'alert' || message.type === 'ask') return ui.warning
+  if (message.role === 'user') return ui.accent
+  if (message.type === 'error') return ui.accent
+  if (message.type === 'alert' || message.type === 'ask') return ui.muted
   return ui.border
 }
 
-function bubbleColorForMessage(message: ChatMessage): RGBA | undefined {
-  if (message.role === 'user') return ui.userBubble
-  if (message.type === 'alert' || message.type === 'ask') return ui.systemBubble
-  if (message.type === 'error') return ui.systemBubble
-  return ui.assistantBubble
+function textColorForMessage(message: ChatMessage): RGBA {
+  if (message.type === 'reasoning' || message.type === 'sub_tool' || message.type === 'tool_call') return ui.muted
+  return ui.text
 }
 
 function overlayTitle(type: OverlayType): string {
@@ -1206,15 +1532,17 @@ function resolveTerminalId(
   return exists ? preferredTerminalId : fallbackTerminalId
 }
 
-function composeSessionSubtitle(meta: SessionMeta | undefined): string {
+function composeSessionSubtitle(meta: SessionMeta | undefined, terminals: GatewayTerminalSummary[]): string {
   if (!meta) return 'No metadata'
   const flags = [
     `${meta.messagesCount} msgs`,
     formatShortDate(meta.updatedAt),
     meta.loaded ? 'cached' : 'load on open',
   ]
-  if (meta.lastMessagePreview) flags.push(truncateLine(meta.lastMessagePreview, 40))
-  return flags.join(' • ')
+  if (meta.boundTerminalId) {
+    flags.push(truncateLine(lookupTerminalTitle(meta.boundTerminalId, terminals), 12))
+  }
+  return flags.join(' | ')
 }
 
 function formatShortDate(timestamp: number): string {
@@ -1241,10 +1569,88 @@ function truncateLine(input: string, max: number): string {
   return `${normalized.slice(0, max - 1)}...`
 }
 
+function displayWidth(input: string): number {
+  const normalized = String(input || '')
+  const bun = globalThis as unknown as { Bun?: { stringWidth?: (value: string) => number } }
+  const width = bun.Bun?.stringWidth
+  if (typeof width === 'function') return width(normalized)
+  return normalized.length
+}
+
+function truncateDisplayWidth(input: string, max: number): string {
+  const normalized = String(input || '').replace(/\s+/g, ' ').trim()
+  if (!normalized) return ''
+  if (max <= 0) return ''
+  if (displayWidth(normalized) <= max) return normalized
+
+  const ellipsis = '...'
+  const target = Math.max(1, max - displayWidth(ellipsis))
+  let output = ''
+  for (const char of normalized) {
+    const next = `${output}${char}`
+    if (displayWidth(next) > target) break
+    output = next
+  }
+  return `${output}${ellipsis}`
+}
+
 function shortId(input: string): string {
   if (!input) return 'unknown'
   if (input.length <= 10) return input
   return `${input.slice(0, 4)}...${input.slice(-4)}`
+}
+
+function isPasteShortcut(event: { name?: string; ctrl?: boolean; meta?: boolean }): boolean {
+  const keyName = String(event.name || '').toLowerCase()
+  if (keyName !== 'v') return false
+  return event.ctrl === true || event.meta === true
+}
+
+async function readClipboardText(): Promise<string | null> {
+  const testValue = process.env.GYSHELL_TUI_TEST_CLIPBOARD
+  if (typeof testValue === 'string' && testValue.length > 0) return testValue
+
+  const bunGlobal = globalThis as unknown as {
+    Bun?: {
+      which?: (binary: string) => string | null
+      spawnSync?: (options: {
+        cmd: string[]
+        stdout?: 'pipe' | 'inherit' | 'ignore'
+        stderr?: 'pipe' | 'inherit' | 'ignore'
+      }) => { success: boolean; stdout: Uint8Array }
+    }
+  }
+
+  const bunApi = bunGlobal.Bun
+  if (!bunApi?.spawnSync || !bunApi.which) return null
+
+  const tryRead = (cmd: string[]): string | null => {
+    if (!bunApi.which!(cmd[0])) return null
+    try {
+      const result = bunApi.spawnSync!({
+        cmd,
+        stdout: 'pipe',
+        stderr: 'ignore',
+      })
+      if (!result.success) return null
+      const text = Buffer.from(result.stdout).toString('utf8')
+      if (!text) return null
+      return text
+    } catch {
+      return null
+    }
+  }
+
+  const platform = process.platform
+  if (platform === 'darwin') {
+    return tryRead(['pbpaste'])
+  }
+
+  if (platform === 'win32') {
+    return tryRead(['powershell', '-NoProfile', '-Command', 'Get-Clipboard -Raw'])
+  }
+
+  return tryRead(['wl-paste', '-n']) || tryRead(['xclip', '-selection', 'clipboard', '-o'])
 }
 
 function safeError(error: unknown): string {
@@ -1276,5 +1682,257 @@ function cloneMessage(message: ChatMessage): ChatMessage {
 function previewFromSession(session: SessionState): string {
   const latestVisible = [...session.messages].reverse().find((msg) => msg.type !== 'tokens_count')
   if (!latestVisible) return ''
-  return truncateLine(latestVisible.content || latestVisible.metadata?.output || '', 120)
+  return truncateLine(messagePrimaryText(latestVisible), 120)
+}
+
+function messageBodyLines(message: ChatMessage): string[] {
+  if (message.type === 'text') {
+    return markdownToLines(message.content)
+  }
+
+  if (message.type === 'command') {
+    const command = normalizeOutputText(message.metadata?.command || message.content)
+    const output = normalizeOutputText(message.metadata?.output ?? '')
+    const commandTag = message.metadata?.isNowait ? 'RUN ASYNC' : 'RUN'
+    const lines = [`[${commandTag}] ${truncateLine(command || '(empty command)', 160)}`]
+    const summary = summarizeTerminalOutput(output)
+    if (summary) {
+      lines.push(`  ${truncateLine(summary, 160)}`)
+    }
+    if (typeof message.metadata?.exitCode === 'number') {
+      lines.push(`  exit ${message.metadata.exitCode}`)
+    }
+    return lines
+  }
+
+  if (message.type === 'tool_call') {
+    const toolName = message.metadata?.toolName || 'tool'
+    const toolTag = toolTagForName(toolName)
+    const summary = summarizeToolCall(message)
+    return [`[${toolTag}] ${truncateLine(summary, 160)}`]
+  }
+
+  if (message.type === 'file_edit') {
+    const action = message.metadata?.action || 'edited'
+    const file = message.metadata?.filePath || 'unknown file'
+    const stats = summarizeDiff(message.metadata?.diff ?? '')
+    return [`[PATCH] ${action} ${truncateLine(file, 120)}${stats ? ` ${stats}` : ''}`]
+  }
+
+  if (message.type === 'reasoning') {
+    const detail = normalizeOutputText(message.content)
+    if (!detail) return ['[THINK] thinking...']
+    const summary = detail.replace(/^\[thinking\]\s*/i, '')
+    return [`[THINK] ${truncateLine(summary || 'thinking...', 180)}`]
+  }
+
+  if (message.type === 'sub_tool') {
+    const title = message.metadata?.subToolTitle || 'sub tool'
+    const hint = message.metadata?.subToolHint ? ` (${message.metadata.subToolHint})` : ''
+    const output = normalizeOutputText(message.metadata?.output ?? '')
+    const summary = summarizeTerminalOutput(output)
+    if (summary) return [`[STEP] ${truncateLine(`${title}${hint} | ${summary}`, 180)}`]
+    return [`[STEP] ${title}${hint}`]
+  }
+
+  if (message.type === 'ask') {
+    return [`[ASK] ${truncateLine(normalizeOutputText(message.metadata?.command || message.content), 180)}`]
+  }
+
+  if (message.type === 'error') {
+    return [`[ERROR] ${truncateLine(normalizeOutputText(message.content), 180)}`]
+  }
+
+  if (message.type === 'alert') {
+    return [`[ALERT] ${truncateLine(normalizeOutputText(message.content), 180)}`]
+  }
+
+  return [compactMessageSummary(message, false)]
+}
+
+function toolTagForName(toolName: string): string {
+  const name = String(toolName || '').toLowerCase()
+  if (name.includes('exec_command')) return 'RUN'
+  if (name.includes('read_command_output')) return 'READ CMD'
+  if (name.includes('read_terminal')) return 'READ TERM'
+  if (name.includes('write_stdin')) return 'STDIN'
+  if (name.includes('wait_command_end')) return 'WAIT'
+  if (name.includes('create_or_edit')) return 'PATCH'
+  if (name.includes('read_file')) return 'READ FILE'
+  return 'TOOL'
+}
+
+function summarizeToolCall(message: ChatMessage): string {
+  const toolName = message.metadata?.toolName || 'tool'
+  const normalizedInput = normalizeOutputText(message.content || '')
+  const normalizedOutput = normalizeOutputText(message.metadata?.output || '')
+  const outputSummary = summarizeTerminalOutput(normalizedOutput)
+
+  if (outputSummary) return `${toolName}: ${outputSummary}`
+  if (normalizedInput) return `${toolName}: ${truncateLine(normalizedInput, 140)}`
+  return `${toolName} finished`
+}
+
+function summarizeTerminalOutput(raw: string): string {
+  const content = extractTerminalContent(raw) || raw
+  const firstLine = content
+    .split('\n')
+    .map((line) => line.trim())
+    .find((line) => !!line && !line.startsWith('='))
+  if (!firstLine) return ''
+  return firstLine
+}
+
+function extractTerminalContent(raw: string): string {
+  if (!raw) return ''
+  const match = raw.match(/<terminal_content>\s*([\s\S]*?)\s*<\/terminal_content>/i)
+  if (!match) return ''
+  return String(match[1] || '').trim()
+}
+
+function messagePrimaryText(message: ChatMessage): string {
+  const lines = messageBodyLines(message)
+  return lines.join(' ')
+}
+
+function normalizeOutputText(input: string): string {
+  return String(input || '')
+    .replace(/\u001b\[[0-9;]*m/g, '')
+    .replace(/\[MENTION_TAB:#([^#\]\r\n]+)(?:##[^#\]\r\n]*)?(?:#\])?/g, (_m, name: string) => `@${name}`)
+    .replace(/\[MENTION_SKILL:#([^#\]\r\n]+)(?:#\])?/g, (_m, name: string) => `@${name}`)
+    .replace(/\[MENTION_FILE:#([^#\]\r\n]+)(?:##[^#\]\r\n]*)?(?:#\])?/g, (_m, path: string) => path.split(/[/\\]/).pop() || path)
+    .replace(/\[MENTION_USER_PASTE:#([^#\]\r\n]+)##([^#\]\r\n]+)(?:#\])?/g, (_m, _path: string, preview: string) => preview)
+    .replace(/\r/g, '')
+    .trim()
+}
+
+function markdownToLines(text: string, limit?: number): string[] {
+  const normalized = normalizeOutputText(text)
+  if (!normalized) return ['']
+
+  const rawLines = normalized.split('\n')
+  const parsed: string[] = []
+  let inCode = false
+
+  for (const raw of rawLines) {
+    const line = raw.trimEnd()
+    if (line.startsWith('```')) {
+      inCode = !inCode
+      continue
+    }
+
+    if (inCode) {
+      parsed.push(`  ${line}`)
+      continue
+    }
+
+    if (/^#{1,6}\s+/.test(line)) {
+      parsed.push(line.replace(/^#{1,6}\s+/, '').trim())
+      continue
+    }
+
+    if (/^[-*+]\s+/.test(line)) {
+      parsed.push(`- ${line.replace(/^[-*+]\s+/, '').trim()}`)
+      continue
+    }
+
+    if (/^\d+\.\s+/.test(line)) {
+      parsed.push(line)
+      continue
+    }
+
+    const clean = line
+      .replace(/`([^`]+)`/g, '$1')
+      .replace(/\*\*([^*]+)\*\*/g, '$1')
+      .replace(/__([^_]+)__/g, '$1')
+      .replace(/\*([^*]+)\*/g, '$1')
+      .replace(/_([^_]+)_/g, '$1')
+      .replace(/~~([^~]+)~~/g, '$1')
+      .replace(/\[(.*?)\]\((.*?)\)/g, '$1 ($2)')
+
+    parsed.push(clean)
+  }
+
+  const compact = parsed.map((line) => line.trimEnd()).filter((line, index, arr) => !(line === '' && arr[index - 1] === ''))
+  if (limit === undefined || limit < 0) return compact.length ? compact : ['']
+  if (compact.length <= limit) return compact.length ? compact : ['']
+  return [...compact.slice(0, limit), `... (${compact.length - limit} more lines)`]
+}
+
+function encodeMentions(input: string, skills: SkillSummary[], terminals: GatewayTerminalSummary[]): string {
+  let output = input
+
+  const skillMap = new Map(skills.map((item) => [item.name.toLowerCase(), item.name]))
+  output = output.replace(/@skill:([A-Za-z0-9_.-]+)/g, (full, rawName: string) => {
+    const actual = skillMap.get(rawName.toLowerCase())
+    if (!actual) return full
+    return `[MENTION_SKILL:#${actual}#]`
+  })
+
+  const terminalMap = new Map(terminals.map((item) => [item.id.toLowerCase(), item]))
+  output = output.replace(/@terminal:([A-Za-z0-9_.:-]+)/g, (full, rawId: string) => {
+    const terminal = terminalMap.get(rawId.toLowerCase())
+    if (!terminal) return full
+    return `[MENTION_TAB:#${terminal.title}##${terminal.id}#]`
+  })
+
+  const aliasMap = new Map(
+    buildTerminalMentionAliases(terminals)
+      .filter((item) => !!item.token)
+      .map((item) => [item.insertText.toLowerCase(), item.token as string]),
+  )
+
+  output = output.replace(/@[A-Za-z0-9_.-]+/g, (full) => {
+    return aliasMap.get(full.toLowerCase()) ?? full
+  })
+
+  return output
+}
+
+function buildTerminalMentionAliases(terminals: GatewayTerminalSummary[]): MentionOption[] {
+  const counts = new Map<string, number>()
+
+  return terminals.map((terminal) => {
+    const base = normalizeTerminalMentionBase(terminal.title)
+    const index = (counts.get(base) || 0) + 1
+    counts.set(base, index)
+    const alias = index === 1 ? base : `${base}_${index}`
+    const mention = `@${alias}`
+    return {
+      key: `terminal:${terminal.id}`,
+      label: mention,
+      insertText: mention,
+      description: terminal.title,
+      token: `[MENTION_TAB:#${terminal.title}##${terminal.id}#]`,
+    }
+  })
+}
+
+function normalizeTerminalMentionBase(title: string): string {
+  const normalized = normalizeOutputText(title)
+    .replace(/\s+/g, '_')
+    .replace(/[^A-Za-z0-9_.-]/g, '')
+    .toUpperCase()
+  if (normalized) return normalized
+  return 'TERMINAL'
+}
+
+function summarizeDiff(diff: string): string {
+  if (!diff) return ''
+
+  const lines = diff.split('\n')
+  let added = 0
+  let removed = 0
+
+  for (const line of lines) {
+    if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('@@')) continue
+    if (line.startsWith('+')) added += 1
+    if (line.startsWith('-')) removed += 1
+  }
+
+  const parts: string[] = []
+  if (added > 0) parts.push(`+${added}`)
+  if (removed > 0) parts.push(`-${removed}`)
+  if (!parts.length) return ''
+  return `(${parts.join(' ')})`
 }

@@ -24,6 +24,7 @@
     "dev:tui": "npm --workspace @gyshell/tui run dev --",
     "start:tui": "npm --workspace @gyshell/tui run start --",
     "test:tui": "npm --workspace @gyshell/tui run test:smoke",
+    "test:tui-input-automation": "npm --workspace @gyshell/tui run test:input-automation",
     "typecheck:tui": "npm --workspace @gyshell/tui run typecheck",
     "build:all": "npm run build:electron && npm run build:backend && npm run build:tui",
     "typecheck:all": "npm run typecheck && npm run typecheck:backend && npm run typecheck:tui",
