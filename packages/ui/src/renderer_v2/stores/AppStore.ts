@@ -131,6 +131,8 @@ export class AppStore {
       setSkillEnabled: action,
       setRecursionLimit: action,
       setDebugMode: action,
+      setWsGatewayAccess: action,
+      setWsGatewayPort: action,
       setRuntimeThinkingCorrectionEnabled: action,
       setTaskFinishGuardEnabled: action,
       setFirstTurnThinkingModelEnabled: action,
@@ -464,6 +466,52 @@ export class AppStore {
       }
     })
     await window.gyshell.settings.set({ debugMode: enabled })
+  }
+
+  private async updateWsGatewaySettings(nextWs: NonNullable<AppSettings['gateway']>['ws']): Promise<void> {
+    const previous = this.settings?.gateway?.ws
+    runInAction(() => {
+      if (this.settings) {
+        this.settings.gateway = {
+          ws: nextWs
+        }
+      }
+    })
+    try {
+      const next = await window.gyshell.settings.setWsGatewayConfig(nextWs)
+      runInAction(() => {
+        if (this.settings) {
+          this.settings.gateway = { ws: next }
+        }
+      })
+    } catch (error) {
+      runInAction(() => {
+        if (this.settings && previous) {
+          this.settings.gateway = { ws: previous }
+        }
+      })
+      console.error('Failed to update websocket gateway settings', error)
+    }
+  }
+
+  async setWsGatewayAccess(access: NonNullable<AppSettings['gateway']>['ws']['access']): Promise<void> {
+    const current = this.settings?.gateway?.ws || { access: 'localhost', port: 17888 }
+    await this.updateWsGatewaySettings({
+      access,
+      port: current.port
+    })
+  }
+
+  async setWsGatewayPort(port: number): Promise<void> {
+    const current = this.settings?.gateway?.ws || { access: 'localhost', port: 17888 }
+    const rounded = Math.floor(port)
+    if (!Number.isInteger(rounded) || rounded <= 0 || rounded >= 65536) {
+      return
+    }
+    await this.updateWsGatewaySettings({
+      access: current.access,
+      port: rounded
+    })
   }
 
   private getExperimentalSettingsSnapshot(): NonNullable<AppSettings['experimental']> {

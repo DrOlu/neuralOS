@@ -82,6 +82,12 @@ interface BackendSettings {
     taskFinishGuardEnabled: boolean
     firstTurnThinkingModelEnabled: boolean
   }
+  gateway: {
+    ws: {
+      access: 'disabled' | 'localhost' | 'internet'
+      port: number
+    }
+  }
 }
 
 interface UiSettings {
@@ -244,6 +250,8 @@ export interface GyShellAPI {
   settings: {
     get: () => Promise<BackendSettings>
     set: (settings: Partial<BackendSettings>) => Promise<void>
+    setWsGatewayAccess: (access: BackendSettings['gateway']['ws']['access']) => Promise<BackendSettings['gateway']['ws']>
+    setWsGatewayConfig: (ws: BackendSettings['gateway']['ws']) => Promise<BackendSettings['gateway']['ws']>
     openCommandPolicyFile: () => Promise<void>
     getCommandPolicyLists: () => Promise<CommandPolicyLists>
     addCommandPolicyRule: (listName: 'allowlist' | 'denylist' | 'asklist', rule: string) => Promise<CommandPolicyLists>
@@ -353,6 +361,8 @@ const api: GyShellAPI = {
   settings: {
     get: () => ipcRenderer.invoke('settings:get'),
     set: (settings) => ipcRenderer.invoke('settings:set', settings),
+    setWsGatewayAccess: (access) => ipcRenderer.invoke('settings:setWsGatewayAccess', access),
+    setWsGatewayConfig: (ws) => ipcRenderer.invoke('settings:setWsGatewayConfig', ws),
     openCommandPolicyFile: () => ipcRenderer.invoke('settings:openCommandPolicyFile'),
     getCommandPolicyLists: () => ipcRenderer.invoke('settings:getCommandPolicyLists'),
     addCommandPolicyRule: (listName, rule) => ipcRenderer.invoke('settings:addCommandPolicyRule', listName, rule),

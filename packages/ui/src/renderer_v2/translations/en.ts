@@ -50,6 +50,8 @@ export const en = {
     recursionLimit: 'Agent Recursion Limit',
     recursionLimitInf: 'Infinite',
     debugMode: 'Debug Mode',
+    wsGatewayAccess: 'WebSocket Gateway Exposure',
+    wsGatewayPort: 'WebSocket Gateway Port',
     experimentalFeatures: 'Experimental Features',
     runtimeThinkingCorrection: 'Runtime Thinking Reflection Correction',
     taskFinishGuard: 'Task Finish Guard',
@@ -129,6 +131,11 @@ export const en = {
       smart: 'For unknown commands not in any list, allow them to execute immediately.'
     },
     commandPolicyRuleDesc: 'Priority: Denylist > Asklist > Allowlist. Commands matching a list will follow that list\'s action regardless of the mode above. Wildcards supported:\n- "ls *": Matches ls with any arguments\n- "rm -rf /": Matches this exact dangerous command\n- "*": Matches every possible command',
+    wsGatewayAccessModes: {
+      localhost: 'Localhost only',
+      internet: 'Internet (all interfaces)',
+      disabled: 'Disabled'
+    },
     // New tooltips for other sections
     tooltips: {
       language: 'Change the display language of the application interface.',
@@ -141,6 +148,10 @@ export const en = {
       cursorBlink: 'Whether the terminal cursor should blink.',
       recursionLimit: 'The maximum number of steps the Agent can take in a single task. Increase this if you encounter "Recursion limit reached" errors. Setting to maximum enables infinite steps.',
       debugMode: 'Enable debug-oriented persistence and diagnostics. Currently this keeps additional_kwargs.__raw_response in backend exported messages; outgoing model inputs still strip raw payloads.',
+      wsGatewayAccess:
+        'Control websocket RPC exposure.\n- Localhost only: bind to 127.0.0.1 and only accept local connections.\n- Internet: bind to 0.0.0.0 so LAN/public interfaces can connect (subject to OS firewall).\n- Disabled: do not start websocket listener.',
+      wsGatewayPort:
+        'Websocket listener port (1-65535). Changes apply immediately for localhost/internet modes.',
       runtimeThinkingCorrection: 'Run a background thinking-model audit every 8 model loops. If it detects the trajectory is off-track, it injects a correction constraint before a later model request.',
       taskFinishGuard: 'Before ending, run a strict completion audit to verify the task is truly finished. If disabled, the agent can end immediately when no tool call is produced.',
       firstTurnThinkingModel: 'If enabled, the first model_request in each run uses the Thinking model, then all later model_request steps revert to the Global model.',

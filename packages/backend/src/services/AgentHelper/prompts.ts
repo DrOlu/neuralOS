@@ -200,7 +200,7 @@ export const SELF_CORRECTION_INSTRUCTION_SCHEMA = z.object({
 /**
  * Create a system information prompt that lists available terminal tabs and their system info
  */
-export function createSystemInfoPrompt(tabs: TerminalTab[]): HumanMessage {
+export function createSystemInfoPrompt(tabs: TerminalTab[], sessionId: string): HumanMessage {
   const tabInfos = tabs.map(t => {
     let base = `- ID: ${t.id}, Name: ${t.title}, Type: ${t.type}`
     if (t.systemInfo) {
@@ -210,7 +210,7 @@ export function createSystemInfoPrompt(tabs: TerminalTab[]): HumanMessage {
     return base
   }).join('\n')
 
-  const sysInfoText = `${SYS_INFO_MARKER}\nAvailable Terminal Tabs:\n${tabInfos}`
+  const sysInfoText = `${SYS_INFO_MARKER}\n你本次对话的sessionId是${sessionId}\nAvailable Terminal Tabs:\n${tabInfos}`
   
   return new HumanMessage(sysInfoText)
 }
@@ -285,6 +285,7 @@ export function createBaseSystemPrompt(): SystemMessage {
       '',
       '# Context Markers & Protocol Tags',
       'The conversation history contains special tags that provide critical context. You must recognize and respond to these tags according to the following protocol:',
+      '你在SYS_INFO_MARKER中看见的sessionId就是你本轮对话对应的唯一标识符，如果你需要编写任何回调自己的指令时请务必使用这个sessionId',
       '',
       `- **\`${SYS_INFO_MARKER.trim()}\`**: This tag precedes a list of all currently open terminal tabs and their detailed system information (OS, Arch, Hostname, etc.). Use this to understand your available "workspace".`,
       `- **\`${TAB_CONTEXT_MARKER.trim()}\`**: This tag precedes the real-time state of the currently active terminal tab, including its recent output. This is your "eyes" on the terminal.`,

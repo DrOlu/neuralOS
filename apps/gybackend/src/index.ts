@@ -5,6 +5,11 @@ import { AgentService_v2 } from '../../../packages/backend/src/services/AgentSer
 import { UIHistoryService } from '../../../packages/backend/src/services/UIHistoryService'
 import { GatewayService } from '../../../packages/backend/src/services/Gateway/GatewayService'
 import { WebSocketGatewayAdapter } from '../../../packages/backend/src/services/Gateway/WebSocketGatewayAdapter'
+import {
+  WebSocketGatewayControlService,
+  resolveWsGatewayAccessFromHost,
+  resolveWsGatewayPolicyFromEnv
+} from '../../../packages/backend/src/services/Gateway/WebSocketGatewayControlService'
 import { NodeSettingsService } from '../../../packages/backend/src/adapters/node/NodeSettingsService'
 import { NodeCommandPolicyService } from '../../../packages/backend/src/adapters/node/NodeCommandPolicyService'
 import { NodeMcpToolService } from '../../../packages/backend/src/adapters/node/NodeMcpToolService'
@@ -35,8 +40,19 @@ function resolveDataDir(): string {
 async function bootstrap(): Promise<void> {
   const dataDir = resolveDataDir()
   process.env.GYSHELL_STORE_DIR = dataDir
-  const host = process.env.GYBACKEND_WS_HOST || '0.0.0.0'
-  const port = numberFromEnv('GYBACKEND_WS_PORT', 17888)
+  const defaultHost = (process.env.GYBACKEND_WS_HOST || '0.0.0.0').trim() || '0.0.0.0'
+  const defaultPort = numberFromEnv('GYBACKEND_WS_PORT', 17888)
+  const startupPolicy = resolveWsGatewayPolicyFromEnv({
+    env: process.env,
+    defaultPolicy: {
+      access: resolveWsGatewayAccessFromHost(defaultHost),
+      port: defaultPort,
+      hostOverride: defaultHost
+    },
+    enableVarName: 'GYBACKEND_WS_ENABLE',
+    hostVarName: 'GYBACKEND_WS_HOST',
+    portVarName: 'GYBACKEND_WS_PORT'
+  })
   const bootstrapLocalTerminal = boolFromEnv('GYBACKEND_BOOTSTRAP_LOCAL_TERMINAL', true)
 
   const settingsService = new NodeSettingsService(dataDir)
@@ -89,69 +105,71 @@ async function bootstrap(): Promise<void> {
     }
   }
 
-  const wsAdapter = new WebSocketGatewayAdapter(gatewayService, {
-    host,
-    port,
-    terminalBridge: {
-      listTerminals: () =>
-        terminalService.getAllTerminals().map((terminal) => ({
-          id: terminal.id,
-          title: terminal.title,
-          type: terminal.type
-        }))
-    },
-    profileBridge: {
-      getProfiles: () => {
-        const snapshot = settingsService.getSettings()
-        const modelNameById = new Map(snapshot.models.items.map((item) => [item.id, item.model]))
-        return {
-          activeProfileId: snapshot.models.activeProfileId,
-          profiles: snapshot.models.profiles.map((profile) => ({
-            id: profile.id,
-            name: profile.name,
-            globalModelId: profile.globalModelId,
-            modelName: modelNameById.get(profile.globalModelId)
-          }))
-        }
-      },
-      setActiveProfile: (profileId: string) => {
-        const snapshot = settingsService.getSettings()
-        const exists = snapshot.models.profiles.some((profile) => profile.id === profileId)
-        if (!exists) {
-          throw new Error(`Profile not found: ${profileId}`)
-        }
+  const wsGatewayControlService = new WebSocketGatewayControlService({
+    createAdapter: (host, port) =>
+      new WebSocketGatewayAdapter(gatewayService, {
+        host,
+        port,
+        terminalBridge: {
+          listTerminals: () =>
+            terminalService.getAllTerminals().map((terminal) => ({
+              id: terminal.id,
+              title: terminal.title,
+              type: terminal.type
+            }))
+        },
+        profileBridge: {
+          getProfiles: () => {
+            const snapshot = settingsService.getSettings()
+            const modelNameById = new Map(snapshot.models.items.map((item) => [item.id, item.model]))
+            return {
+              activeProfileId: snapshot.models.activeProfileId,
+              profiles: snapshot.models.profiles.map((profile) => ({
+                id: profile.id,
+                name: profile.name,
+                globalModelId: profile.globalModelId,
+                modelName: modelNameById.get(profile.globalModelId)
+              }))
+            }
+          },
+          setActiveProfile: (profileId: string) => {
+            const snapshot = settingsService.getSettings()
+            const exists = snapshot.models.profiles.some((profile) => profile.id === profileId)
+            if (!exists) {
+              throw new Error(`Profile not found: ${profileId}`)
+            }
 
-        settingsService.setSettings({
-          models: {
-            items: snapshot.models.items,
-            profiles: snapshot.models.profiles,
-            activeProfileId: profileId
+            settingsService.setSettings({
+              models: {
+                items: snapshot.models.items,
+                profiles: snapshot.models.profiles,
+                activeProfileId: profileId
+              }
+            })
+
+            const next = settingsService.getSettings()
+            agentService.updateSettings(next)
+
+            const modelNameById = new Map(next.models.items.map((item) => [item.id, item.model]))
+            return {
+              activeProfileId: next.models.activeProfileId,
+              profiles: next.models.profiles.map((profile) => ({
+                id: profile.id,
+                name: profile.name,
+                globalModelId: profile.globalModelId,
+                modelName: modelNameById.get(profile.globalModelId)
+              }))
+            }
           }
-        })
-
-        const next = settingsService.getSettings()
-        agentService.updateSettings(next)
-
-        const modelNameById = new Map(next.models.items.map((item) => [item.id, item.model]))
-        return {
-          activeProfileId: next.models.activeProfileId,
-          profiles: next.models.profiles.map((profile) => ({
-            id: profile.id,
-            name: profile.name,
-            globalModelId: profile.globalModelId,
-            modelName: modelNameById.get(profile.globalModelId)
-          }))
         }
-      }
-    }
+      })
   })
-
-  wsAdapter.start()
+  await wsGatewayControlService.applyPolicy(startupPolicy)
 
   const shutdown = async (signal: string): Promise<void> => {
     console.log(`[gybackend] Received ${signal}, shutting down...`)
     try {
-      await wsAdapter.stop()
+      await wsGatewayControlService.stop()
     } catch (error) {
       console.warn('[gybackend] Failed to stop websocket adapter cleanly:', error)
     }
@@ -171,7 +189,12 @@ async function bootstrap(): Promise<void> {
   })
 
   console.log('[gybackend] Started.')
-  console.log(`[gybackend] WebSocket RPC endpoint: ws://${host}:${port}`)
+  const wsState = wsGatewayControlService.getState()
+  if (wsState.running && wsState.host) {
+    console.log(`[gybackend] WebSocket RPC endpoint: ws://${wsState.host}:${wsState.port}`)
+  } else {
+    console.log('[gybackend] WebSocket RPC endpoint: disabled')
+  }
   console.log(`[gybackend] Data directory: ${dataDir}`)
   console.log(`[gybackend] Settings file: ${settingsService.getSettingsPath()}`)
 }

@@ -11,6 +11,11 @@ files:
       - apps/gybackend/dist/**/*
       - apps/gybackend/package.json
       - package.json
+extraResources:
+  - from: apps/electron/cli-runtime
+    to: cli
+    filter:
+      - '**/*'
 asarUnpack:
   - '**/*.node'
 mac:

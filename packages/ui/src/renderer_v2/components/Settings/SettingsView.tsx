@@ -406,6 +406,36 @@ export const SettingsView: React.FC<{ store: AppStore }> = observer(({ store }) 
                     <span className="switch-slider" />
                   </label>
                 </div>
+                <div className="settings-row">
+                  <div className="settings-row-label-with-info">
+                    <label>{t.settings.wsGatewayAccess}</label>
+                    <InfoTooltip content={t.settings.tooltips.wsGatewayAccess} />
+                  </div>
+                  <Select
+                    className="settings-native-select"
+                    value={store.settings?.gateway?.ws?.access || 'localhost'}
+                    onChange={(value) => store.setWsGatewayAccess(value as any)}
+                    options={[
+                      { value: 'localhost', label: t.settings.wsGatewayAccessModes.localhost },
+                      { value: 'internet', label: t.settings.wsGatewayAccessModes.internet },
+                      { value: 'disabled', label: t.settings.wsGatewayAccessModes.disabled }
+                    ]}
+                  />
+                </div>
+                <div className="settings-row">
+                  <div className="settings-row-label-with-info">
+                    <label>{t.settings.wsGatewayPort}</label>
+                    <InfoTooltip content={t.settings.tooltips.wsGatewayPort} />
+                  </div>
+                  <NumericInput
+                    className="settings-inline-input"
+                    style={{ width: 110 }}
+                    value={store.settings?.gateway?.ws?.port || 17888}
+                    onChange={(value) => store.setWsGatewayPort(value)}
+                    min={1}
+                    max={65535}
+                  />
+                </div>
               </div>
 
               <div className="settings-section-header" style={{ marginTop: 24 }}>

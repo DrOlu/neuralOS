@@ -11,6 +11,7 @@ type WebSocketRpcMethod =
   | 'models:getProfiles'
   | 'models:setActiveProfile'
   | 'agent:startTask'
+  | 'agent:startTaskAsync'
   | 'agent:stopTask'
   | 'agent:replyMessage'
   | 'agent:replyCommandApproval'
@@ -248,6 +249,16 @@ export class WebSocketGatewayAdapter {
         const terminalId = this.readOptionalStringParam(params, 'terminalId');
         const options = this.readStartTaskOptions(params.options);
         await this.gateway.dispatchTask(sessionId, userText, terminalId, options);
+        return { ok: true };
+      }
+      case 'agent:startTaskAsync': {
+        const sessionId = this.readStringParam(params, 'sessionId');
+        const userText = this.readStringParam(params, 'userText');
+        const terminalId = this.readOptionalStringParam(params, 'terminalId');
+        const options = this.readStartTaskOptions(params.options);
+        void this.gateway.dispatchTask(sessionId, userText, terminalId, options).catch((error) => {
+          this.logger.error(`[WebSocketGatewayAdapter] Async task failed (session=${sessionId}).`, error);
+        });
         return { ok: true };
       }
       case 'agent:stopTask': {

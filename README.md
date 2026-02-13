@@ -160,10 +160,17 @@ GyShell 针对终端交互的细微差别进行了底层优化：
   ```bash
     npm run test:tui-input-automation
   ```
-6. **Production Build / 构建生产环境应用**
+6. **Install CLI globally (npm) / 通过 npm 全局安装 CLI**
+  ```bash
+    npm install -g @gyshell/tui
+  ```
+  ```bash
+    gyll --help
+  ```
+7. **Production Build / 构建生产环境应用**
   - **macOS**: `npm run dist:mac`
   - **Windows**: `npm run dist:win`
-  - These commands automatically build standalone backend artifacts and package them with the desktop build.
+  - These commands automatically build standalone backend artifacts, compile desktop CLI binaries, and package them with the desktop build.
 
 For the full and up-to-date build command matrix, see:
 

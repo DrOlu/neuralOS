@@ -1,5 +1,5 @@
 import { app, BrowserWindow, screen, shell } from 'electron'
-import { join } from 'path'
+import { join, resolve } from 'path'
 import { SettingsService } from '../../../../packages/backend/src/services/SettingsService'
 import { UiSettingsService } from '../../../../packages/backend/src/services/UiSettingsService'
 import { TerminalService } from '../../../../packages/backend/src/services/TerminalService'
@@ -15,9 +15,14 @@ import { GatewayService } from '../../../../packages/backend/src/services/Gatewa
 import { ElectronGatewayIpcAdapter } from '../../../../packages/backend/src/services/Gateway/ElectronGatewayIpcAdapter'
 import { ElectronWindowTransport } from '../../../../packages/backend/src/services/Gateway/ElectronWindowTransport'
 import { WebSocketGatewayAdapter } from '../../../../packages/backend/src/services/Gateway/WebSocketGatewayAdapter'
+import {
+  WebSocketGatewayControlService,
+  resolveWsGatewayPolicyFromEnv
+} from '../../../../packages/backend/src/services/Gateway/WebSocketGatewayControlService'
 import { TempFileService } from '../../../../packages/backend/src/services/TempFileService'
 import { VersionService } from '../../../../packages/backend/src/services/VersionService'
 import { ElectronAppSettingsMigrationService } from '../../../../packages/backend/src/services/settings/ElectronAppSettingsMigrationService'
+import { installCliLaunchers } from './CliInstallService'
 
 let mainWindow: BrowserWindow | null = null
 let settingsService: SettingsService
@@ -32,7 +37,7 @@ let skillService: SkillService
 let uiHistoryService: UIHistoryService
 let tempFileService: TempFileService
 let versionService: VersionService
-let webSocketGatewayAdapter: WebSocketGatewayAdapter | null = null
+let webSocketGatewayControlService: WebSocketGatewayControlService | null = null
 
 function createWindow(): void {
   const settings = settingsService.getSettings()
@@ -130,6 +135,16 @@ function createWindow(): void {
 }
 
 app.whenReady().then(async () => {
+  try {
+    installCliLaunchers({
+      isPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+      projectRoot: resolve(__dirname, '../../../../')
+    })
+  } catch (error) {
+    console.warn('[Main] Failed to install CLI launchers:', error)
+  }
+
   // Run Electron-only data migrations before services consume persisted state.
   const settingsMigrationService = new ElectronAppSettingsMigrationService()
   settingsMigrationService.run()
@@ -163,6 +178,63 @@ app.whenReady().then(async () => {
     mcpToolService
   )
   gatewayService.registerTransport(new ElectronWindowTransport())
+  webSocketGatewayControlService = new WebSocketGatewayControlService({
+    createAdapter: (host, port) =>
+      new WebSocketGatewayAdapter(gatewayService, {
+        host,
+        port,
+        terminalBridge: {
+          listTerminals: () =>
+            terminalService.getAllTerminals().map((terminal) => ({
+              id: terminal.id,
+              title: terminal.title,
+              type: terminal.type
+            }))
+        },
+        profileBridge: {
+          getProfiles: () => {
+            const settingsSnapshot = settingsService.getSettings()
+            const modelNameById = new Map(settingsSnapshot.models.items.map((model) => [model.id, model.model]))
+            return {
+              activeProfileId: settingsSnapshot.models.activeProfileId,
+              profiles: settingsSnapshot.models.profiles.map((profile) => ({
+                id: profile.id,
+                name: profile.name,
+                globalModelId: profile.globalModelId,
+                modelName: modelNameById.get(profile.globalModelId)
+              }))
+            }
+          },
+          setActiveProfile: (profileId: string) => {
+            const settingsSnapshot = settingsService.getSettings()
+            const exists = settingsSnapshot.models.profiles.some((profile) => profile.id === profileId)
+            if (!exists) {
+              throw new Error(`Profile not found: ${profileId}`)
+            }
+            settingsService.setSettings({
+              models: {
+                items: settingsSnapshot.models.items,
+                profiles: settingsSnapshot.models.profiles,
+                activeProfileId: profileId
+              }
+            })
+            const nextSettings = settingsService.getSettings()
+            agentService.updateSettings(nextSettings)
+
+            const modelNameById = new Map(nextSettings.models.items.map((model) => [model.id, model.model]))
+            return {
+              activeProfileId: nextSettings.models.activeProfileId,
+              profiles: nextSettings.models.profiles.map((profile) => ({
+                id: profile.id,
+                name: profile.name,
+                globalModelId: profile.globalModelId,
+                modelName: modelNameById.get(profile.globalModelId)
+              }))
+            }
+          }
+        }
+      })
+  })
   const ipcAdapter = new ElectronGatewayIpcAdapter(
     gatewayService,
     terminalService,
@@ -176,78 +248,26 @@ app.whenReady().then(async () => {
     modelCapabilityService,
     mcpToolService,
     themeService,
-    versionService
+    versionService,
+    webSocketGatewayControlService
   )
   ipcAdapter.registerHandlers()
 
-  const shouldEnableWebSocketGateway = /^(1|true)$/i.test(process.env.GYSHELL_WS_ENABLE || '')
-  if (shouldEnableWebSocketGateway) {
-    const wsPort = Number(process.env.GYSHELL_WS_PORT || 17888)
-    const wsHost = process.env.GYSHELL_WS_HOST || '127.0.0.1'
-    const validPort = Number.isInteger(wsPort) && wsPort > 0 && wsPort < 65536
-    if (!validPort) {
-      console.error(`[Main] Invalid GYSHELL_WS_PORT: ${process.env.GYSHELL_WS_PORT}`)
-    } else {
-      try {
-        webSocketGatewayAdapter = new WebSocketGatewayAdapter(gatewayService, {
-          host: wsHost,
-          port: wsPort,
-          terminalBridge: {
-            listTerminals: () =>
-              terminalService.getAllTerminals().map((terminal) => ({
-                id: terminal.id,
-                title: terminal.title,
-                type: terminal.type
-              }))
-          },
-          profileBridge: {
-            getProfiles: () => {
-              const settingsSnapshot = settingsService.getSettings()
-              const modelNameById = new Map(settingsSnapshot.models.items.map((model) => [model.id, model.model]))
-              return {
-                activeProfileId: settingsSnapshot.models.activeProfileId,
-                profiles: settingsSnapshot.models.profiles.map((profile) => ({
-                  id: profile.id,
-                  name: profile.name,
-                  globalModelId: profile.globalModelId,
-                  modelName: modelNameById.get(profile.globalModelId)
-                }))
-              }
-            },
-            setActiveProfile: (profileId: string) => {
-              const settingsSnapshot = settingsService.getSettings()
-              const exists = settingsSnapshot.models.profiles.some((profile) => profile.id === profileId)
-              if (!exists) {
-                throw new Error(`Profile not found: ${profileId}`)
-              }
-              settingsService.setSettings({
-                models: {
-                  items: settingsSnapshot.models.items,
-                  profiles: settingsSnapshot.models.profiles,
-                  activeProfileId: profileId
-                }
-              })
-              const nextSettings = settingsService.getSettings()
-              agentService.updateSettings(nextSettings)
-
-              const modelNameById = new Map(nextSettings.models.items.map((model) => [model.id, model.model]))
-              return {
-                activeProfileId: nextSettings.models.activeProfileId,
-                profiles: nextSettings.models.profiles.map((profile) => ({
-                  id: profile.id,
-                  name: profile.name,
-                  globalModelId: profile.globalModelId,
-                  modelName: modelNameById.get(profile.globalModelId)
-                }))
-              }
-            }
-          }
-        })
-        webSocketGatewayAdapter.start()
-      } catch (error) {
-        console.error('[Main] Failed to start websocket gateway server:', error)
-      }
-    }
+  const settingsSnapshot = settingsService.getSettings()
+  const startupPolicy = resolveWsGatewayPolicyFromEnv({
+    env: process.env,
+    defaultPolicy: {
+      access: settingsSnapshot.gateway.ws.access,
+      port: settingsSnapshot.gateway.ws.port
+    },
+    enableVarName: 'GYSHELL_WS_ENABLE',
+    hostVarName: 'GYSHELL_WS_HOST',
+    portVarName: 'GYSHELL_WS_PORT'
+  })
+  try {
+    await webSocketGatewayControlService.applyPolicy(startupPolicy)
+  } catch (error) {
+    console.error('[Main] Failed to apply websocket gateway startup policy:', error)
   }
 
   // Load MCP tools (best-effort)
@@ -268,13 +288,13 @@ app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', async () => {
-  if (webSocketGatewayAdapter) {
+  if (webSocketGatewayControlService) {
     try {
-      await webSocketGatewayAdapter.stop()
+      await webSocketGatewayControlService.stop()
     } catch (error) {
       console.error('[Main] Failed to stop websocket gateway server:', error)
     } finally {
-      webSocketGatewayAdapter = null
+      webSocketGatewayControlService = null
     }
   }
   if (tempFileService) {

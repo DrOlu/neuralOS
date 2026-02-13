@@ -7,6 +7,9 @@ out
 reference code/
 step_plan/
 scripts/
+!apps/tui/scripts/
+apps/tui/scripts/*
+!apps/tui/scripts/build-cli-binaries.ts
 tests/
 node_modules/
 about_mcp.md
@@ -16,3 +19,4 @@ demo.md
 build.sh
 *.tsbuildinfo
 .gybackend-data/
+apps/electron/cli-runtime/

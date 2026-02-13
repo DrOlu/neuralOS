@@ -2,24 +2,34 @@ import readline from 'node:readline/promises'
 import { stdin as input, stdout as output } from 'node:process'
 import { GatewayClient } from './gateway-client'
 
+export type CliMode = 'tui' | 'run' | 'hook'
+
 export interface CliOptions {
   url?: string
-  host?: string
-  port?: number
+  mode: CliMode
+  message?: string
+  sessionId?: string
   timeoutMs: number
   help: boolean
 }
 
 export function parseCliOptions(argv: string[]): CliOptions {
   const options: CliOptions = {
+    mode: 'tui',
     timeoutMs: 3000,
     help: false,
   }
+  const messageTokens: string[] = []
+  let modeResolved = false
 
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i]
     const next = argv[i + 1]
 
+    if (token === '--') {
+      messageTokens.push(...argv.slice(i + 1))
+      break
+    }
     if (token === '--help' || token === '-h') {
       options.help = true
       continue
@@ -29,16 +39,8 @@ export function parseCliOptions(argv: string[]): CliOptions {
       i += 1
       continue
     }
-    if (token === '--host' && next) {
-      options.host = next
-      i += 1
-      continue
-    }
-    if (token === '--port' && next) {
-      const parsed = Number(next)
-      if (Number.isInteger(parsed) && parsed > 0 && parsed < 65536) {
-        options.port = parsed
-      }
+    if ((token === '--sessionid' || token === '--session-id' || token === '--sessionId') && next) {
+      options.sessionId = next
       i += 1
       continue
     }
@@ -50,12 +52,19 @@ export function parseCliOptions(argv: string[]): CliOptions {
       i += 1
       continue
     }
+
+    if (!modeResolved && (token === 'run' || token === 'hook')) {
+      options.mode = token
+      modeResolved = true
+      continue
+    }
+
+    messageTokens.push(token)
   }
 
-  if (!options.url && (options.host || options.port)) {
-    const host = options.host ?? '127.0.0.1'
-    const port = options.port ?? 17888
-    options.url = `ws://${host}:${port}`
+  const message = messageTokens.join(' ').trim()
+  if (message) {
+    options.message = message
   }
 
   return options
@@ -66,14 +75,21 @@ export function printCliHelp(): void {
     'GyShell TUI',
     '',
     'Usage:',
-    '  gyshell-tui [--url ws://127.0.0.1:17888] [--host 127.0.0.1 --port 17888] [--timeout 3000]',
+    '  gyll [--url 127.0.0.1:17888] [--timeout 3000] [--sessionid <id>]',
+    '  gyll [--url 127.0.0.1:17888] [--timeout 3000] "message"',
+    '  gyll run [--url 127.0.0.1:17888] [--timeout 3000] "message"',
+    '  gyll hook [--url 127.0.0.1:17888] [--timeout 3000] "message"',
+    '',
+    'Commands:',
+    '  run         Send one message and stream output in terminal, then exit',
+    '  hook        Send one message asynchronously, then exit immediately',
+    '  (default)   Start interactive TUI mode',
     '',
     'Options:',
-    '  --url      Full websocket gateway URL',
-    '  --host     Gateway host when --url is not provided',
-    '  --port     Gateway port when --url is not provided',
+    '  --url        Gateway websocket URL (ip:port or ws://ip:port)',
+    '  --sessionid  Prefer this session id when entering TUI',
     '  --timeout  Probe/connect timeout in milliseconds (default: 3000)',
-    '  --help     Show this message',
+    '  --help,-h  Show this message',
   ]
 
   output.write(lines.join('\n') + '\n')
@@ -121,10 +137,7 @@ function buildProbeCandidates(options: CliOptions): string[] {
 
   const backendEnvPort = parsePort(process.env.GYBACKEND_WS_PORT)
   if (backendEnvPort) ports.add(backendEnvPort)
-
-  if (options.port) ports.add(options.port)
-
-  const hosts = options.host ? [options.host] : ['127.0.0.1', 'localhost']
+  const hosts = ['127.0.0.1', 'localhost']
   const urls: string[] = []
 
   for (const port of ports) {

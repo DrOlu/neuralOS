@@ -50,6 +50,8 @@ export const zh = {
     recursionLimit: 'Agent 递归上限',
     recursionLimitInf: '无限制',
     debugMode: '调试模式',
+    wsGatewayAccess: 'WebSocket 网关暴露范围',
+    wsGatewayPort: 'WebSocket 网关端口',
     experimentalFeatures: '试验性功能',
     runtimeThinkingCorrection: '运行时思考反思纠正',
     taskFinishGuard: '任务结束守卫',
@@ -129,6 +131,11 @@ export const zh = {
       smart: '对于不在名单中的未知命令，一律直接允许执行。'
     },
     commandPolicyRuleDesc: '规则优先级：黑名单 > 询问名单 > 白名单。匹配到名单的命令将直接执行对应动作，不受上方模式影响。支持通配符：\n- "ls *"：匹配 ls 及其所有参数\n- "rm -rf /"：精确匹配该危险命令\n- "*"：匹配所有可能的命令',
+    wsGatewayAccessModes: {
+      localhost: '仅本机',
+      internet: '开放网络（所有网卡）',
+      disabled: '关闭'
+    },
     // New tooltips for other sections
     tooltips: {
       language: '切换界面的显示语言。目前支持简体中文和英文。',
@@ -141,6 +148,10 @@ export const zh = {
       cursorBlink: '终端光标是否以动画形式闪烁。',
       recursionLimit: 'Agent 在单个任务中允许执行的最大步数。如果经常遇到“递归上限”错误，请调高此值。拉到最右侧为无限制。',
       debugMode: '开启调试相关的持久化与诊断能力。目前会在后端导出消息中保留 additional_kwargs.__raw_response；但发送给模型前仍会自动剥离这些原始字段。',
+      wsGatewayAccess:
+        '控制 websocket RPC 对外暴露方式。\n- 仅本机：绑定 127.0.0.1，只允许本地连接。\n- 开放网络：绑定 0.0.0.0，允许局域网/公网网卡接入（仍受系统防火墙影响）。\n- 关闭：不启动 websocket 监听。',
+      wsGatewayPort:
+        'websocket 监听端口（1-65535）。在“仅本机/开放网络”模式下修改后会立即生效。',
       runtimeThinkingCorrection: '每 8 次 model 循环在后台运行一次思考模型审计。若判断路径偏离，会在后续一次模型请求前注入纠正约束。',
       taskFinishGuard: '在结束前执行严格完成度审计，确认任务确实完成。关闭后，当没有工具调用时可直接结束。',
       firstTurnThinkingModel: '开启后，每次 run 的第一次 model_request 会使用 Thinking 模型，后续 model_request 自动回归 Global 模型。',

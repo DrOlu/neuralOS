@@ -13,8 +13,10 @@ import type { ModelCapabilityService } from '../ModelCapabilityService'
 import type { McpToolService } from '../McpToolService'
 import type { ThemeService } from '../ThemeService'
 import type { VersionService } from '../VersionService'
+import type { WsGatewayAccess } from '../../types'
 import { BUILTIN_TOOL_INFO } from '../AgentHelper/tools'
 import { resolveTheme } from '../../../../ui/src/shared/theme/themes'
+import type { WebSocketGatewayControlService } from './WebSocketGatewayControlService'
 
 export class ElectronGatewayIpcAdapter {
   constructor(
@@ -30,7 +32,8 @@ export class ElectronGatewayIpcAdapter {
     private modelCapabilityService: ModelCapabilityService,
     private mcpToolService: McpToolService,
     private themeService: ThemeService,
-    private versionService: VersionService
+    private versionService: VersionService,
+    private wsGatewayControlService: WebSocketGatewayControlService
   ) {}
 
   private updateWindowsThemeIfNeeded(beforeThemeId?: string, afterThemeId?: string): void {
@@ -215,9 +218,24 @@ export class ElectronGatewayIpcAdapter {
     })
 
     ipcMain.handle('settings:set', async (_: any, settings: any) => {
+      if (settings?.gateway?.ws) {
+        await this.applyWsGatewayConfig(settings.gateway.ws)
+      }
       this.settingsService.setSettings(settings)
       const currentSettings = this.settingsService.getSettings()
       this.agentService.updateSettings(currentSettings)
+    })
+
+    ipcMain.handle('settings:setWsGatewayAccess', async (_: any, access: WsGatewayAccess) => {
+      const current = this.settingsService.getSettings()
+      return this.applyWsGatewayConfig({
+        access,
+        port: current.gateway.ws.port
+      })
+    })
+
+    ipcMain.handle('settings:setWsGatewayConfig', async (_: any, ws: { access: WsGatewayAccess; port: number }) => {
+      return this.applyWsGatewayConfig(ws)
     })
 
     ipcMain.handle('ui-settings:get', async () => {
@@ -369,5 +387,28 @@ export class ElectronGatewayIpcAdapter {
         menu.popup({ window })
       }
     )
+  }
+
+  private async applyWsGatewayConfig(ws: { access: WsGatewayAccess; port: number }) {
+    if (ws.access !== 'disabled' && ws.access !== 'localhost' && ws.access !== 'internet') {
+      throw new Error(`Invalid websocket gateway access mode: ${String(ws.access)}`)
+    }
+    const port = Number(ws.port)
+    if (!Number.isInteger(port) || port <= 0 || port >= 65536) {
+      throw new Error(`Invalid websocket gateway port: ${String(ws.port)}`)
+    }
+    const nextWs = {
+      access: ws.access,
+      port
+    }
+    await this.wsGatewayControlService.applyPolicy(nextWs)
+    this.settingsService.setSettings({
+      gateway: {
+        ws: nextWs
+      }
+    })
+    const nextSettings = this.settingsService.getSettings()
+    this.agentService.updateSettings(nextSettings)
+    return nextSettings.gateway.ws
   }
 }

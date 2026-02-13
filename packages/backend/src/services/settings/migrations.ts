@@ -30,6 +30,12 @@ export const DEFAULT_BACKEND_SETTINGS: BackendSettings = {
     proxies: [],
     tunnels: []
   },
+  gateway: {
+    ws: {
+      access: 'localhost',
+      port: 17888
+    }
+  },
   layout: {
     panelSizes: [30, 70],
     panelOrder: ['chat', 'terminal']
@@ -69,6 +75,7 @@ function pickBackendSnapshot(raw: unknown): Partial<BackendSettings> {
     models: raw.models,
     connections: raw.connections,
     tools: raw.tools,
+    gateway: raw.gateway,
     layout: raw.layout,
     recursionLimit: raw.recursionLimit,
     debugMode: raw.debugMode,
@@ -134,6 +141,16 @@ function normalizeBackendSettings(settings: BackendSettings): BackendSettings {
     runtimeThinkingCorrectionEnabled: next.experimental?.runtimeThinkingCorrectionEnabled !== false,
     taskFinishGuardEnabled: next.experimental?.taskFinishGuardEnabled !== false,
     firstTurnThinkingModelEnabled: next.experimental?.firstTurnThinkingModelEnabled === true
+  }
+
+  const access = next.gateway?.ws?.access
+  const normalizedAccess = access === 'disabled' || access === 'internet' || access === 'localhost' ? access : 'localhost'
+  const port = Number(next.gateway?.ws?.port)
+  next.gateway = {
+    ws: {
+      access: normalizedAccess,
+      port: Number.isInteger(port) && port > 0 && port < 65536 ? port : 17888
+    }
   }
 
   next.schemaVersion = BACKEND_SETTINGS_SCHEMA_VERSION

@@ -119,6 +119,13 @@ export interface UiSettings {
   terminal: TerminalUiSettings
 }
 
+export type WsGatewayAccess = 'disabled' | 'localhost' | 'internet'
+
+export interface WsGatewaySettings {
+  access: WsGatewayAccess
+  port: number
+}
+
 export interface BackendSettings {
   /** Settings schema version, used for migrations */
   schemaVersion: 3
@@ -171,6 +178,11 @@ export interface BackendSettings {
   debugMode?: boolean
   /** Experimental feature switches */
   experimental?: ExperimentalFlags
+
+  /** WebSocket gateway exposure policy */
+  gateway: {
+    ws: WsGatewaySettings
+  }
 }
 
 export type AppSettings = BackendSettings & UiSettings
