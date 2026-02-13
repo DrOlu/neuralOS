@@ -7,11 +7,11 @@
 - `npm run build`
   - Electron build using `apps/electron/electron.vite.config.ts`.
 - `npm run build:backend`
-  - Build standalone backend workspace `@gyshell/gybackend`.
+  - Build backend runtime workspace `@gyshell/gybackend` (internal development command).
 - `npm run build:tui`
-  - Build standalone TUI workspace `@gyshell/tui`.
+  - Build TUI workspace `@gyshell/tui` (internal development command).
 - `npm run build:cli-binaries`
-  - Compile standalone CLI binaries via Bun (`apps/tui/scripts/build-cli-binaries.ts`).
+  - Compile platform CLI binaries (`gyll` runtime) via Bun (`apps/tui/scripts/build-cli-binaries.ts`).
 - `npm run build:all`
   - Build Electron + backend + TUI.
 - `npm run prepare:cli-runtime`
@@ -37,12 +37,17 @@
 - `npm run dist:win`
   - Build backend + Electron + compiled Windows CLI runtime, package Windows targets.
 
-## Global CLI Install
+## Desktop Bundled CLI
 
-- `npm install -g @gyshell/tui`
-  - Installs `gyll` / `gyll-tui` command globally.
+After installing GyShell desktop app, `gyll` is bundled and available from the desktop runtime setup.
 
-## Workspace Commands
+- `gyll --help`
+- `gyll --url 127.0.0.1:17888`
+- `gyll --url 127.0.0.1:17888 "message"`
+- `gyll run --url 127.0.0.1:17888 "message"`
+- `gyll hook --url 127.0.0.1:17888 "message"`
+
+## Workspace Commands (Development/Internal)
 
 - `npm --workspace @gyshell/gybackend run build|start|typecheck`
 - `npm --workspace @gyshell/tui run build|build:cli-binaries|dev|start|typecheck|test:smoke`

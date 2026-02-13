@@ -1,6 +1,6 @@
 # gybackend
 
-Standalone GyShell backend process for server/Linux deployment.
+Backend runtime bootstrap workspace for GyShell (internal/development entry).
 
 ## Run
 
@@ -8,6 +8,8 @@ Standalone GyShell backend process for server/Linux deployment.
 npm --workspace @gyshell/gybackend run build
 npm --workspace @gyshell/gybackend run start
 ```
+
+This workspace is mainly for repository development and runtime debugging. End users should use the desktop app and its bundled `gyll` CLI.
 
 ## Environment Variables
 
@@ -26,4 +28,4 @@ npm --workspace @gyshell/gybackend run start
 ## Notes
 
 - gybackend delegates shared backend behavior to `packages/backend`.
-- MCP runtime is active in standalone backend mode via shared MCP core.
+- MCP runtime is active through the shared backend core.

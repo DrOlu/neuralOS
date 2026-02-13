@@ -5,8 +5,8 @@ This repository now uses clear runtime/package separation.
 ## Runtime Shapes
 
 1. Electron desktop app (`apps/electron`)  
-2. Standalone backend service (`apps/gybackend`)  
-3. Standalone TUI client (`apps/tui`)
+2. Backend runtime entry (`apps/gybackend`, internal/development bootstrap)  
+3. TUI/CLI runtime entry (`apps/tui`, source workspace for bundled `gyll`)
 
 ## Workspace Layout
 
@@ -14,8 +14,8 @@ This repository now uses clear runtime/package separation.
 GyShell/
 ├── apps/
 │   ├── electron/           # Electron shell (main/preload/config/sign scripts)
-│   ├── gybackend/          # Standalone backend bootstrap
-│   └── tui/                # Standalone TUI frontend
+│   ├── gybackend/          # Backend runtime bootstrap entry (internal)
+│   └── tui/                # TUI/CLI source workspace (bundled into desktop runtime)
 ├── packages/
 │   ├── backend/            # Single-source backend logic (services + adapters + types)
 │   ├── ui/                 # Shared web UI package

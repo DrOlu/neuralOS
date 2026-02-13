@@ -1,6 +1,6 @@
 # @gyshell/tui
 
-Standalone terminal UI client for GyShell gateway.
+TUI and CLI runtime workspace for GyShell.
 
 ## Features
 
@@ -17,19 +17,13 @@ Standalone terminal UI client for GyShell gateway.
 npm --workspace @gyshell/tui run start
 ```
 
-## Install as CLI (npm global)
-
-```bash
-npm install -g @gyshell/tui
-```
-
-Then use:
+## Desktop Bundled CLI
 
 ```bash
 gyll --help
 ```
 
-The npm entry package is a thin wrapper. It resolves and executes the current platform binary package (`@gyshell/tui-<platform>-<arch>`).
+`gyll` is bundled with desktop app packaging. Install and launch GyShell desktop app once, then run `gyll` in terminal.
 
 ## Dev mode
 
@@ -38,7 +32,7 @@ The npm entry package is a thin wrapper. It resolves and executes the current pl
 npm --workspace @gyshell/tui run dev
 ```
 
-This does not start backend automatically. Start Electron app or backend service manually.
+This does not start backend automatically. Start GyShell desktop app first.
 
 ## Smoke test
 
