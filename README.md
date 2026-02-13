@@ -143,20 +143,73 @@ GyShell 针对终端交互的细微差别进行了底层优化：
   ```bash
     npm run dev
   ```
-4. **Desktop bundled CLI usage / 桌面版内置 CLI 使用**
+4. **Desktop bundled CLI usage (English)**
   - Install and launch GyShell desktop app once.
+  - If `--url` is omitted, CLI auto-connects to the local desktop backend on your machine (default port: `17888`).
   - Then run:
   ```bash
     gyll --help
   ```
   - Common forms:
   ```bash
-    gyll --url 127.0.0.1:17888
-    gyll --url 127.0.0.1:17888 "Hello"
-    gyll run --url 127.0.0.1:17888 "Run task"
-    gyll hook --url 127.0.0.1:17888 "Send and exit"
+    gyll --url ip:port
+    gyll --url ip:port "Hello"
+    gyll run --url ip:port "Run task"
+    gyll hook --url ip:port "Send and exit"
   ```
-5. **TUI development mode / TUI 开发模式**
+  - Local quick forms:
+  ```bash
+    gyll
+    gyll "Hello"
+    gyll run "Run task"
+    gyll hook "Send and exit"
+  ```
+  - Resume a target session:
+  ```bash
+    gyll --sessionid "your-session-id"
+  ```
+  - Behavior differences:
+    - `gyll` (no message): enter interactive TUI.
+    - `gyll "message"`: create a new session, send message immediately, then enter TUI.
+    - `gyll run "message"`: create a new session, do not enter TUI, stream AI output in terminal.
+    - `gyll hook "message"`: create a new session, send once, exit immediately, no terminal streaming.
+  - Note for `hook--sessionid <id> "msg"`:
+    - This mode is designed for callback-style self-wakeup in long workflows.
+    - Typical pattern: ask the agent to write temporary code for a long task, then call `gyll hook ...` at the end, or call it inside `catch error` to insert the error message back to itself.
+5. **桌面版内置 CLI 使用（中文）**
+  - 安装并启动一次 GyShell 桌面版。
+  - 如果不传 `--url`，CLI 会自动连接你本机桌面版后端（默认端口 `17888`）。
+  - 先执行：
+  ```bash
+    gyll --help
+  ```
+  - 常见形式：
+  ```bash
+    gyll --url ip:port
+    gyll --url ip:port "你好"
+    gyll run --url ip:port "执行任务"
+    gyll hook --url ip:port "发送后退出"
+  ```
+  - 本机快速形式：
+  ```bash
+    gyll
+    gyll "你好"
+    gyll run "执行任务"
+    gyll hook "发送后退出"
+  ```
+  - 恢复指定会话：
+  ```bash
+    gyll --sessionid "your-session-id"
+  ```
+  - 行为区别：
+    - `gyll`（不带消息）：进入交互式 TUI。
+    - `gyll "消息"`：新建会话并立即发送消息，然后进入 TUI。
+    - `gyll run "消息"`：新建会话，不进入 TUI，直接在终端流式输出 AI 结果。
+    - `gyll hook "消息"`：新建会话，只发送一次后立即退出，不在终端持续输出。
+  - `hook--sessionid <id> "msg"` 备注：
+    - 这个模式是用来在长流程任务里让 Agent 回调自己的。
+    - 典型做法：让 Agent 写临时代码执行长任务，在末尾调用 `gyll hook ...`；或者在 `catch error` 中调用，把错误信息回插给自己。
+6. **TUI development mode / TUI 开发模式**
   ```bash
     npm run dev:tui
   ```
@@ -166,7 +219,7 @@ GyShell 针对终端交互的细微差别进行了底层优化：
   ```bash
     npm run test:tui-input-automation
   ```
-6. **Production Build / 构建生产环境应用**
+7. **Production Build / 构建生产环境应用**
   - **macOS**: `npm run dist:mac`
   - **Windows**: `npm run dist:win`
   - These commands automatically compile desktop CLI binaries and package them with the desktop build.
