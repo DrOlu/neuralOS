@@ -75,6 +75,7 @@ export const zh = {
     apiKey: 'API Key',
     maxTokens: '最大 Token 数',
     maxTokensPlaceholder: '最大 Token 数 (默认 200k)',
+    supportStructuredOutput: '支持 Structured Output',
     commandPolicyMode: '指令安全模式',
     editCommandPolicyFile: '编辑指令名单 JSON',
     commandPolicyAllowlist: '白名单 (Allow)',

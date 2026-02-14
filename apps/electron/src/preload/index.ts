@@ -16,6 +16,7 @@ interface BackendSettings {
       apiKey?: string
       baseUrl?: string
       maxTokens: number
+      supportsStructuredOutput: boolean
       profile?: {
         imageInputs?: boolean
         textOutputs?: boolean

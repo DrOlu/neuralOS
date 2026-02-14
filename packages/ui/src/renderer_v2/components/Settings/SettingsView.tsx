@@ -86,7 +86,8 @@ const ModelEditor = observer(({ store, modelId, onClose }: { store: AppStore; mo
         if (existing) {
             return {
                 ...existing,
-                maxTokens: typeof existing.maxTokens === 'number' ? existing.maxTokens : 200000
+                maxTokens: typeof existing.maxTokens === 'number' ? existing.maxTokens : 200000,
+                supportsStructuredOutput: existing.supportsStructuredOutput === true
             }
         }
         return {
@@ -95,7 +96,8 @@ const ModelEditor = observer(({ store, modelId, onClose }: { store: AppStore; mo
             model: '',
             baseUrl: '',
             apiKey: '',
-            maxTokens: 200000
+            maxTokens: 200000,
+            supportsStructuredOutput: false
         }
     })
     const [isSaving, setIsSaving] = useState(false)
@@ -180,6 +182,20 @@ const ModelEditor = observer(({ store, modelId, onClose }: { store: AppStore; mo
                         disabled={isSaving}
                         min={0}
                       />
+                    </div>
+                    <div className="editor-row editor-row-toggle">
+                      <span className="editor-icon">
+                        <Shield size={16} strokeWidth={2} />
+                      </span>
+                      <label className="editor-toggle">
+                        <input
+                          type="checkbox"
+                          checked={draft.supportsStructuredOutput === true}
+                          onChange={(e) => setDraft({ ...draft, supportsStructuredOutput: e.target.checked })}
+                          disabled={isSaving}
+                        />
+                        <span>{t.settings.supportStructuredOutput}</span>
+                      </label>
                     </div>
                 </div>
                 <div className="editor-footer">

@@ -28,7 +28,8 @@ function bootstrapPatchFromEnv(): Partial<BackendSettings> {
           model: modelName,
           apiKey,
           baseUrl,
-          maxTokens: 200000
+          maxTokens: 200000,
+          supportsStructuredOutput: false
         }
       ],
       profiles: [

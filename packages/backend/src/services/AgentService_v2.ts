@@ -27,7 +27,6 @@ import {
 } from './AgentHelper/tools'
 import type { ToolExecutionContext } from './AgentHelper/types'
 import { AgentHelpers } from './AgentHelper/helpers'
-import { ActionModelFallbackHelper } from './AgentHelper/utils/action_model_fallback'
 import { buildDebugRawResponse, captureRawResponseChunk } from './AgentHelper/utils/raw_response'
 import { invokeWithRetryAndSanitizedInput, stripRawResponseFromStoredMessages } from './AgentHelper/utils/model_messages'
 import { createStreamReasoningExtractor } from './AgentHelper/utils/stream_reasoning_extractor'
@@ -147,6 +146,8 @@ interface SessionModelBinding {
   model: ChatOpenAI
   actionModel: ChatOpenAI
   thinkingModel: ChatOpenAI
+  actionModelSupportsStructuredOutput: boolean
+  thinkingModelSupportsStructuredOutput: boolean
   readFileSupport: { image: boolean }
   toolsForModel: any[]
   globalMaxTokens: number
@@ -167,7 +168,6 @@ export class AgentService_v2 {
   private checkpointer: MemorySaver
   private builtInToolEnabled: Record<string, boolean> = {}
   private lastAbortedMessage: BaseMessage | null = null
-  private actionModelFallbackHelper = new ActionModelFallbackHelper()
   private sessionModelBindings: Map<string, SessionModelBinding> = new Map()
   private selfCorrectionRuntimeManager = new SelfCorrectionRuntimeManager()
   private waitForFeedback: ((messageId: string, timeoutMs?: number) => Promise<any | null>) | null = null
@@ -302,6 +302,12 @@ export class AgentService_v2 {
     const model = this.helpers.createChatModel(globalItem, 0.7)
     const actionModel = actionItem?.apiKey ? this.helpers.createChatModel(actionItem, 0.1) : model
     const thinkingModel = thinkingItem?.apiKey ? this.helpers.createChatModel(thinkingItem, 0.2) : model
+    const actionModelSupportsStructuredOutput = actionItem?.apiKey
+      ? actionItem.supportsStructuredOutput === true
+      : globalItem.supportsStructuredOutput === true
+    const thinkingModelSupportsStructuredOutput = thinkingItem?.apiKey
+      ? thinkingItem.supportsStructuredOutput === true
+      : globalItem.supportsStructuredOutput === true
     const readFileSupport = this.helpers.computeReadFileSupport(
       globalItem.profile,
       thinkingItem?.profile ?? globalItem.profile
@@ -313,6 +319,8 @@ export class AgentService_v2 {
       model,
       actionModel,
       thinkingModel,
+      actionModelSupportsStructuredOutput,
+      thinkingModelSupportsStructuredOutput,
       readFileSupport,
       toolsForModel,
       globalMaxTokens: typeof globalItem.maxTokens === 'number' ? globalItem.maxTokens : 200000,
@@ -347,7 +355,6 @@ export class AgentService_v2 {
 
   releaseSessionModelBinding(sessionId: string): void {
     this.sessionModelBindings.delete(sessionId)
-    this.actionModelFallbackHelper.clearSession(sessionId)
     this.selfCorrectionRuntimeManager.clearSession(sessionId)
   }
 
@@ -1444,38 +1451,30 @@ ${recent}
   ): Promise<z.infer<T>> {
     const sessionBinding = this.getSessionModelBinding(sessionId)
     const actionModel = sessionBinding.actionModel
+    if (sessionBinding.actionModelSupportsStructuredOutput) {
+      const structuredModel = actionModel.withStructuredOutput(schema, { method: 'jsonSchema' })
+      return await invokeWithRetryAndSanitizedInput({
+        helpers: this.helpers,
+        messages,
+        signal,
+        operation: async (sanitizedMessages) => {
+          return await structuredModel.invoke(sanitizedMessages, { signal }) as any
+        },
+        onRetry: (attempt) => {
+          console.log(`[AgentService_v2] Retrying action model decision for ${decisionName} (attempt ${attempt + 1})...`)
+        },
+        maxRetries: MODEL_RETRY_MAX,
+        delaysMs: MODEL_RETRY_DELAYS_MS
+      })
+    }
 
-    return await this.actionModelFallbackHelper.runWithSessionFallback({
+    return await this.invokeActionModelPolicyDecisionWithoutSchema(
       sessionId,
-      invokeStructured: async () => {
-        const structuredModel = actionModel.withStructuredOutput(schema)
-        return await invokeWithRetryAndSanitizedInput({
-          helpers: this.helpers,
-          messages,
-          signal,
-          operation: async (sanitizedMessages) => {
-            return await structuredModel.invoke(sanitizedMessages, { signal }) as any
-          },
-          onRetry: (attempt) => {
-            console.log(`[AgentService_v2] Retrying action model decision for ${decisionName} (attempt ${attempt + 1})...`)
-          },
-          maxRetries: MODEL_RETRY_MAX,
-          delaysMs: MODEL_RETRY_DELAYS_MS
-        })
-      },
-      invokePseudoSchema: async () => {
-        return await this.invokeActionModelPolicyDecisionWithoutSchema(
-          sessionId,
-          messages,
-          schema,
-          signal,
-          decisionName
-        )
-      },
-      onFallbackTriggered: (error) => {
-        console.warn(`[AgentService_v2] Structured action-model output failed for ${decisionName}. Enabling per-session pseudo-schema fallback.`, error)
-      }
-    })
+      messages,
+      schema,
+      signal,
+      decisionName
+    )
   }
 
   private async invokeActionModelPolicyDecisionWithoutSchema<T extends z.ZodTypeAny>(
@@ -1487,22 +1486,21 @@ ${recent}
   ): Promise<z.infer<T>> {
     const sessionBinding = this.getSessionModelBinding(sessionId)
     const actionModel = sessionBinding.actionModel
+    const functionCallingModel = actionModel.withStructuredOutput(schema, { method: 'functionCalling' })
     const result = await invokeWithRetryAndSanitizedInput({
       helpers: this.helpers,
       messages,
       signal,
       operation: async (sanitizedMessages) => {
-        return await actionModel.invoke(sanitizedMessages, { signal })
+        return await functionCallingModel.invoke(sanitizedMessages, { signal }) as any
       },
       onRetry: (attempt) => {
-        console.log(`[AgentService_v2] Retrying pseudo-schema action model decision for ${decisionName} (attempt ${attempt + 1})...`)
+        console.log(`[AgentService_v2] Retrying tool-call action model decision for ${decisionName} (attempt ${attempt + 1})...`)
       },
       maxRetries: MODEL_RETRY_MAX,
       delaysMs: MODEL_RETRY_DELAYS_MS
     })
-    const contentText = this.helpers.extractText((result as any)?.content)
-    const parsed = this.helpers.parseStrictJsonObject(contentText)
-    return schema.parse(parsed)
+    return result as z.infer<T>
   }
 
   private async getThinkingModelDecision<T extends z.ZodTypeAny>(
@@ -1515,48 +1513,36 @@ ${recent}
     const sessionBinding = this.getSessionModelBinding(sessionId)
     const model = sessionBinding.thinkingModel || sessionBinding.model
 
-    return await this.actionModelFallbackHelper.runWithSessionFallback({
-      sessionId,
-      invokeStructured: async () => {
-        const structuredModel = model.withStructuredOutput(schema)
-        return await invokeWithRetryAndSanitizedInput({
-          helpers: this.helpers,
-          messages,
-          signal,
-          operation: async (sanitizedMessages) => {
-            return await structuredModel.invoke(sanitizedMessages, { signal }) as any
-          },
-          onRetry: (attempt) => {
-            console.log(`[AgentService_v2] Retrying thinking model decision for ${decisionName} (attempt ${attempt + 1})...`)
-          },
-          maxRetries: MODEL_RETRY_MAX,
-          delaysMs: MODEL_RETRY_DELAYS_MS
-        })
+    if (sessionBinding.thinkingModelSupportsStructuredOutput) {
+      const structuredModel = model.withStructuredOutput(schema, { method: 'jsonSchema' })
+      return await invokeWithRetryAndSanitizedInput({
+        helpers: this.helpers,
+        messages,
+        signal,
+        operation: async (sanitizedMessages) => {
+          return await structuredModel.invoke(sanitizedMessages, { signal }) as any
+        },
+        onRetry: (attempt) => {
+          console.log(`[AgentService_v2] Retrying thinking model decision for ${decisionName} (attempt ${attempt + 1})...`)
+        },
+        maxRetries: MODEL_RETRY_MAX,
+        delaysMs: MODEL_RETRY_DELAYS_MS
+      })
+    }
+
+    const functionCallingModel = model.withStructuredOutput(schema, { method: 'functionCalling' })
+    return await invokeWithRetryAndSanitizedInput({
+      helpers: this.helpers,
+      messages,
+      signal,
+      operation: async (sanitizedMessages) => {
+        return await functionCallingModel.invoke(sanitizedMessages, { signal }) as any
       },
-      invokePseudoSchema: async () => {
-        const raw = await invokeWithRetryAndSanitizedInput({
-          helpers: this.helpers,
-          messages,
-          signal,
-          operation: async (sanitizedMessages) => {
-            return await model.invoke(sanitizedMessages, { signal })
-          },
-          onRetry: (attempt) => {
-            console.log(`[AgentService_v2] Retrying pseudo-schema thinking decision for ${decisionName} (attempt ${attempt + 1})...`)
-          },
-          maxRetries: MODEL_RETRY_MAX,
-          delaysMs: MODEL_RETRY_DELAYS_MS
-        })
-        const contentText = this.helpers.extractText((raw as any)?.content)
-        const parsed = this.helpers.parseStrictJsonObject(contentText)
-        return schema.parse(parsed)
+      onRetry: (attempt) => {
+        console.log(`[AgentService_v2] Retrying tool-call thinking decision for ${decisionName} (attempt ${attempt + 1})...`)
       },
-      onFallbackTriggered: (error) => {
-        console.warn(
-          `[AgentService_v2] Structured thinking-model output failed for ${decisionName}. Enabling per-session pseudo-schema fallback.`,
-          error
-        )
-      }
+      maxRetries: MODEL_RETRY_MAX,
+      delaysMs: MODEL_RETRY_DELAYS_MS
     })
   }
 
@@ -1573,7 +1559,6 @@ ${recent}
     }
     this.selfCorrectionRuntimeManager.clearSession(sessionId)
     this.ensureSessionModelBinding(sessionId, lockedProfileId)
-    this.actionModelFallbackHelper.beginSession(sessionId)
     const recursionLimit = this.settings?.recursionLimit ?? 200
     const loadedSession = this.chatHistoryService.loadSession(sessionId)
     const baseMessages = loadedSession ? mapStoredMessagesToChatMessages(Array.from(loadedSession.messages.values())) : []
@@ -1635,7 +1620,6 @@ ${recent}
       throw err // Throw to Gateway for UI notification
     } finally {
       this.selfCorrectionRuntimeManager.clearSession(sessionId)
-      this.actionModelFallbackHelper.clearSession(sessionId)
       await this.clearCheckpoint(sessionId)
     }
   }

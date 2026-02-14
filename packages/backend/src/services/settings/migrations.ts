@@ -98,7 +98,8 @@ function normalizeBackendSettings(settings: BackendSettings): BackendSettings {
 
   next.models.items = next.models.items.map((item) => ({
     ...item,
-    maxTokens: typeof item.maxTokens === 'number' && item.maxTokens > 0 ? item.maxTokens : 200000
+    maxTokens: typeof item.maxTokens === 'number' && item.maxTokens > 0 ? item.maxTokens : 200000,
+    supportsStructuredOutput: item.supportsStructuredOutput === true
   }))
 
   const builtIn = { ...(next.tools?.builtIn ?? {}) }

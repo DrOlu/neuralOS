@@ -741,6 +741,7 @@ export class AppStore {
     const modelSnapshot = toJS(model)
     const plainModel: ModelDefinition = {
       ...modelSnapshot,
+      supportsStructuredOutput: modelSnapshot.supportsStructuredOutput === true,
       // Ensure profile is a plain object for IPC cloning
       profile: modelSnapshot.profile ? toJS(modelSnapshot.profile) : undefined
     }

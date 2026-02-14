@@ -14,6 +14,8 @@ export interface ModelDefinition {
   baseUrl?: string
   /** Max tokens for context management */
   maxTokens: number
+  /** Whether this model supports OpenAI JSON Schema structured output */
+  supportsStructuredOutput: boolean
   /** Cached capability profile detected by backend */
   profile?: {
     imageInputs?: boolean

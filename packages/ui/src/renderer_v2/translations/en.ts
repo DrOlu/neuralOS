@@ -75,6 +75,7 @@ export const en = {
     apiKey: 'API Key',
     maxTokens: 'Max Tokens',
     maxTokensPlaceholder: 'Max Tokens (Default 200k)',
+    supportStructuredOutput: 'Support Structured Output',
     commandPolicyMode: 'Command Policy Mode',
     editCommandPolicyFile: 'Edit Command Policy JSON',
     commandPolicyAllowlist: 'Allowlist',
