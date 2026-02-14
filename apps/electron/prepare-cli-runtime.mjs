@@ -32,6 +32,22 @@ function inferDefaultTarget() {
   throw new Error(`Unsupported host for default CLI target: ${platform}/${arch}`)
 }
 
+function parseTarget(target) {
+  const trimmed = String(target || '').trim()
+  const match = /^(darwin|linux|windows)-(arm64|x64)$/.exec(trimmed)
+  if (!match) {
+    throw new Error(`Unsupported CLI target: ${target}`)
+  }
+  const platform = match[1] === 'windows' ? 'win32' : match[1]
+  const arch = match[2]
+  return { platform, arch }
+}
+
+function shouldEnableCrossPlatformInstall(target) {
+  const parsed = parseTarget(target)
+  return parsed.platform !== process.platform || parsed.arch !== process.arch
+}
+
 function runBuild(target) {
   const args = [
     '--workspace',
@@ -46,6 +62,9 @@ function runBuild(target) {
     '--output-root',
     runtimeRoot,
   ]
+  if (shouldEnableCrossPlatformInstall(target)) {
+    args.push('--with-install')
+  }
   const result = spawnSync('npm', args, {
     cwd: repoRoot,
     stdio: 'inherit',
