@@ -187,14 +187,16 @@ const ModelEditor = observer(({ store, modelId, onClose }: { store: AppStore; mo
                       <span className="editor-icon">
                         <Shield size={16} strokeWidth={2} />
                       </span>
-                      <label className="editor-toggle">
+                      <span className="editor-toggle-label">{t.settings.supportStructuredOutput}</span>
+                      <label className="switch">
                         <input
                           type="checkbox"
+                          aria-label={t.settings.supportStructuredOutput}
                           checked={draft.supportsStructuredOutput === true}
                           onChange={(e) => setDraft({ ...draft, supportsStructuredOutput: e.target.checked })}
                           disabled={isSaving}
                         />
-                        <span>{t.settings.supportStructuredOutput}</span>
+                        <span className="switch-slider" />
                       </label>
                     </div>
                 </div>
