@@ -4,6 +4,7 @@ import fs from 'node:fs/promises'
 import { TerminalService } from '../../services/TerminalService'
 import { AgentService_v2 } from '../../services/AgentService_v2'
 import { UIHistoryService } from '../../services/UIHistoryService'
+import { ChatHistoryService } from '../../services/ChatHistoryService'
 import { GatewayService } from '../../services/Gateway/GatewayService'
 import { WebSocketGatewayAdapter } from '../../services/Gateway/WebSocketGatewayAdapter'
 import {
@@ -118,12 +119,14 @@ export async function startGyBackend(): Promise<void> {
 
   const terminalService = new TerminalService()
   const uiHistoryService = new UIHistoryService()
+  const chatHistoryService = new ChatHistoryService()
   const agentService = new AgentService_v2(
     terminalService,
     commandPolicyService,
     mcpToolService,
     skillService,
-    uiHistoryService
+    uiHistoryService,
+    chatHistoryService
   )
 
   const gatewayService = new GatewayService(

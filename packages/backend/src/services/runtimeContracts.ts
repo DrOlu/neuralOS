@@ -1,5 +1,5 @@
 import type { StructuredTool } from '@langchain/core/tools'
-import type { BackendSettings } from '../types'
+import type { AgentEvent, BackendSettings, ChatSession, TerminalTab } from '../types'
 import type { CommandPolicyListName, CommandPolicyLists, CommandPolicyMode } from './CommandPolicy/CommandPolicyService'
 import type { SkillInfo, CreateOrRewriteSkillResult } from './SkillService'
 import type { McpServerSummary } from './McpToolService'
@@ -7,6 +7,15 @@ import type { McpServerSummary } from './McpToolService'
 export interface ISettingsRuntime {
   getSettings(): BackendSettings
   setSettings(settings: Partial<BackendSettings>): void
+}
+
+export interface IChatHistoryRuntime {
+  saveSession(session: ChatSession): void
+  loadSession(sessionId: string): ChatSession | null
+  getAllSessions(): any[]
+  deleteSession(sessionId: string): void
+  renameSession(sessionId: string, newTitle: string): void
+  exportSession(sessionId: string): any | null
 }
 
 export interface ICommandPolicyRuntime {
@@ -49,4 +58,22 @@ export interface IMcpRuntime {
   getActiveTools(): StructuredTool[]
   invokeTool(toolName: string, args: unknown, signal?: AbortSignal): Promise<unknown>
   openConfigFile?(): Promise<void>
+}
+
+export interface IGatewayTerminalRuntime {
+  setRawEventPublisher(publisher: (channel: string, data: unknown) => void): void
+  getAllTerminals(): TerminalTab[]
+}
+
+export interface IAgentRuntime {
+  setEventPublisher(publisher: (sessionId: string, event: AgentEvent) => void): void
+  setFeedbackWaiter(waiter: (messageId: string, timeoutMs?: number) => Promise<any | null>): void
+  run(context: any, input: string, signal: AbortSignal, startMode?: 'normal' | 'inserted'): Promise<void>
+  isAbortError(error: unknown): boolean
+  releaseSessionModelBinding(sessionId: string): void
+  loadChatSession(sessionId: string): ChatSession | null
+  deleteChatSession(sessionId: string): void
+  renameChatSession(sessionId: string, newTitle: string): void
+  exportChatSession(sessionId: string): any | null
+  rollbackToMessage(sessionId: string, messageId: string): { ok: boolean; removedCount: number }
 }

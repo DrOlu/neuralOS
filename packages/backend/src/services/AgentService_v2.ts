@@ -5,8 +5,7 @@ import { StateGraph, START, END, Annotation, MemorySaver } from '@langchain/lang
 import { RunnableLambda } from '@langchain/core/runnables'
 import type { ChatSession, BackendSettings } from '../types'
 import { TerminalService } from './TerminalService'
-import { ChatHistoryService } from './ChatHistoryService'
-import type { ICommandPolicyRuntime, IMcpRuntime, ISkillRuntime } from './runtimeContracts'
+import type { IChatHistoryRuntime, ICommandPolicyRuntime, IMcpRuntime, ISkillRuntime } from './runtimeContracts'
 import type { UIHistoryService } from './UIHistoryService'
 import { v4 as uuidv4 } from 'uuid'
 import type { z } from 'zod'
@@ -156,7 +155,7 @@ interface SessionModelBinding {
 
 export class AgentService_v2 {
   private terminalService: TerminalService
-  private chatHistoryService: ChatHistoryService
+  private chatHistoryService: IChatHistoryRuntime
   private commandPolicyService: ICommandPolicyRuntime
   private mcpToolService: IMcpRuntime
   private skillService: ISkillRuntime
@@ -177,10 +176,11 @@ export class AgentService_v2 {
     commandPolicyService: ICommandPolicyRuntime,
     mcpToolService: IMcpRuntime,
     skillService: ISkillRuntime,
-    uiHistoryService: UIHistoryService
+    uiHistoryService: UIHistoryService,
+    chatHistoryService: IChatHistoryRuntime
   ) {
     this.terminalService = terminalService
-    this.chatHistoryService = new ChatHistoryService()
+    this.chatHistoryService = chatHistoryService
     this.commandPolicyService = commandPolicyService
     this.mcpToolService = mcpToolService
     this.skillService = skillService
@@ -202,6 +202,10 @@ export class AgentService_v2 {
 
   setFeedbackWaiter(waiter: (messageId: string, timeoutMs?: number) => Promise<any | null>): void {
     this.waitForFeedback = waiter
+  }
+
+  isAbortError(error: unknown): boolean {
+    return this.helpers.isAbortError(error)
   }
 
   private initializeGraph(): void {

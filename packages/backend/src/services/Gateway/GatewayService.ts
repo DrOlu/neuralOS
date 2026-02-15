@@ -10,10 +10,14 @@ import type {
   GatewaySessionSnapshot,
   GatewaySessionSummary
 } from './types';
-import type { TerminalService } from '../TerminalService';
-import type { AgentService_v2 } from '../AgentService_v2';
 import type { UIHistoryService } from '../UIHistoryService';
-import type { ICommandPolicyRuntime, ISettingsRuntime, IMcpRuntime } from '../runtimeContracts';
+import type {
+  IAgentRuntime,
+  ICommandPolicyRuntime,
+  IGatewayTerminalRuntime,
+  IMcpRuntime,
+  ISettingsRuntime
+} from '../runtimeContracts';
 import { getRunExperimentalFlagsFromSettings } from '../AgentHelper/utils/experimental_flags';
 import { TransportHub } from './TransportHub';
 
@@ -25,8 +29,8 @@ export class GatewayService extends EventEmitter implements IGatewayRuntime {
   private transportHub: TransportHub = new TransportHub();
 
   constructor(
-    private terminalService: TerminalService,
-    private agentService: AgentService_v2,
+    private terminalService: IGatewayTerminalRuntime,
+    private agentService: IAgentRuntime,
     private uiHistoryService: UIHistoryService,
     private commandPolicyService: ICommandPolicyRuntime,
     private settingsService: ISettingsRuntime,
@@ -126,7 +130,11 @@ export class GatewayService extends EventEmitter implements IGatewayRuntime {
       // AgentService has been refactored as stateless run
       await this.agentService.run(context, input, abortController.signal, options?.startMode || 'normal');
     } catch (error: any) {
-      if (this.agentService['helpers'].isAbortError(error)) {
+      const isAbortError =
+        typeof this.agentService.isAbortError === 'function'
+          ? this.agentService.isAbortError(error)
+          : (error instanceof Error && (error.name === 'AbortError' || error.message === 'AbortError'));
+      if (isAbortError) {
         // User stopped manually, not treated as an error, handled by stopTask
         return;
       }

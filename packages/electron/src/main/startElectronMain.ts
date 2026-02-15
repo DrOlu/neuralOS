@@ -11,6 +11,7 @@ import { ThemeConfigStore } from '../theme/ThemeConfigStore'
 import { applyPlatformWindowTweaks, getPlatformBrowserWindowOptions } from './platform/windowChrome'
 import { SkillService } from '../../../backend/src/services/SkillService'
 import { UIHistoryService } from '../../../backend/src/services/UIHistoryService'
+import { ChatHistoryService } from '../../../backend/src/services/ChatHistoryService'
 import { GatewayService } from '../../../backend/src/services/Gateway/GatewayService'
 import { ElectronGatewayIpcAdapter } from '../gateway/ElectronGatewayIpcAdapter'
 import { ElectronWindowTransport } from '../gateway/ElectronWindowTransport'
@@ -216,7 +217,15 @@ export async function startElectronMain(): Promise<void> {
   void skillService.reload()
 
   modelCapabilityService = new ModelCapabilityService()
-  agentService = new AgentService_v2(terminalService, commandPolicyService, mcpToolService, skillService, uiHistoryService)
+  const chatHistoryService = new ChatHistoryService()
+  agentService = new AgentService_v2(
+    terminalService,
+    commandPolicyService,
+    mcpToolService,
+    skillService,
+    uiHistoryService,
+    chatHistoryService
+  )
   const gatewayService = new GatewayService(
     terminalService, 
     agentService, 
