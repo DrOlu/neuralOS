@@ -121,6 +121,37 @@ GyShell 针对终端交互的细微差别进行了底层优化：
 
 ---
 
+## 🧱 Monorepo Architecture / 仓库架构
+
+GyShell follows a strict monorepo boundary:
+
+- `packages/*` contains implementation logic.
+- `apps/*` contains composition/bootstrap wrappers only.
+- Frontend implementation should not be placed under `packages/backend`.
+
+```text
+GyShell/
+├── apps/
+│   ├── electron/      # Electron wrapper (entry/preload/build configs)
+│   ├── gybackend/     # gybackend wrapper (process entry only)
+│   ├── mobile-web/    # mobile-web wrapper (vite + mount entry)
+│   └── tui/           # tui wrapper (CLI entry + scripts)
+├── packages/
+│   ├── backend/       # backend runtime core
+│   ├── electron/      # electron-only runtime implementation
+│   ├── mobile-web/    # mobile web frontend implementation
+│   ├── tui/           # tui frontend implementation
+│   ├── ui/            # electron renderer implementation
+│   └── shared/        # shared cross-surface modules
+```
+
+For full details, see:
+
+- `docs/monorepo-architecture.md`
+- `docs/build-commands.md`
+
+---
+
 ## 📦 Installation & Build / 安装与构建
 
 ### Prerequisites / 前置要求
@@ -209,7 +240,11 @@ GyShell 针对终端交互的细微差别进行了底层优化：
   - `hook--sessionid <id> "msg"` 备注：
     - 这个模式是用来在长流程任务里让 Agent 回调自己的。
     - 典型做法：让 Agent 写临时代码执行长任务，在末尾调用 `gyll hook ...`；或者在 `catch error` 中调用，把错误信息回插给自己。
-6. **TUI development mode / TUI 开发模式**
+6. **Mobile Web development mode / Mobile Web 开发模式**
+  ```bash
+    npm run dev:mobile-web
+  ```
+7. **TUI development mode / TUI 开发模式**
   ```bash
     npm run dev:tui
   ```
@@ -219,7 +254,7 @@ GyShell 针对终端交互的细微差别进行了底层优化：
   ```bash
     npm run test:tui-input-automation
   ```
-7. **Production Build / 构建生产环境应用**
+8. **Production Build / 构建生产环境应用**
   - **macOS**: `npm run dist:mac`
   - **Windows**: `npm run dist:win`
   - These commands automatically compile desktop CLI binaries and package them with the desktop build.

@@ -1,5 +1,5 @@
 import type { BrowserWindow, BrowserWindowConstructorOptions } from 'electron'
-import type { TerminalColorScheme } from '../../../../../packages/ui/src/shared/theme/terminalColorSchemes'
+import type { TerminalColorScheme } from '../../../../shared/src/theme/terminalColorSchemes'
 import { applyWindowsWindowTweaks, getWindowsBrowserWindowOptions, updateWindowsTheme } from './windows/windowChrome'
 
 export function getPlatformBrowserWindowOptions(

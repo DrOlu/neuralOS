@@ -1,0 +1,13 @@
+{
+  "name": "@gyshell/mobile-web-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/main.tsx"
+  },
+  "scripts": {
+    "build": "echo \"mobile-web-core: built by app wrapper\"",
+    "typecheck": "echo \"mobile-web-core: checked by workspace consumers\""
+  }
+}

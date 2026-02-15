@@ -1,22 +1,21 @@
 import { ipcMain, shell, Menu, BrowserWindow } from 'electron'
-import type { StartTaskOptions } from './types'
-import type { IGatewayRuntime } from './types'
-import type { TerminalService } from '../TerminalService'
-import type { AgentService_v2 } from '../AgentService_v2'
-import type { UIHistoryService, HistoryExportMode } from '../UIHistoryService'
-import type { CommandPolicyService } from '../CommandPolicy/CommandPolicyService'
-import type { TempFileService } from '../TempFileService'
-import type { SkillService } from '../SkillService'
-import type { SettingsService } from '../SettingsService'
-import type { UiSettingsService } from '../UiSettingsService'
-import type { ModelCapabilityService } from '../ModelCapabilityService'
-import type { McpToolService } from '../McpToolService'
-import type { ThemeService } from '../ThemeService'
-import type { VersionService } from '../VersionService'
-import type { WsGatewayAccess } from '../../types'
-import { BUILTIN_TOOL_INFO } from '../AgentHelper/tools'
-import { resolveTheme } from '../../../../ui/src/shared/theme/themes'
-import type { WebSocketGatewayControlService } from './WebSocketGatewayControlService'
+import type { StartTaskOptions, IGatewayRuntime } from '../../../backend/src/services/Gateway/types'
+import type { TerminalService } from '../../../backend/src/services/TerminalService'
+import type { AgentService_v2 } from '../../../backend/src/services/AgentService_v2'
+import type { UIHistoryService, HistoryExportMode } from '../../../backend/src/services/UIHistoryService'
+import type { CommandPolicyService } from '../../../backend/src/services/CommandPolicy/CommandPolicyService'
+import type { TempFileService } from '../../../backend/src/services/TempFileService'
+import type { SkillService } from '../../../backend/src/services/SkillService'
+import type { SettingsService } from '../../../backend/src/services/SettingsService'
+import type { ModelCapabilityService } from '../../../backend/src/services/ModelCapabilityService'
+import type { McpToolService } from '../../../backend/src/services/McpToolService'
+import type { VersionService } from '../../../backend/src/services/VersionService'
+import type { WsGatewayAccess } from '../../../backend/src/types'
+import { BUILTIN_TOOL_INFO } from '../../../backend/src/services/AgentHelper/tools'
+import { resolveTheme } from '../../../shared/src/theme/themes'
+import type { WebSocketGatewayControlService } from '../../../backend/src/services/Gateway/WebSocketGatewayControlService'
+import type { UiSettingsStore } from '../settings/UiSettingsStore'
+import type { ThemeConfigStore } from '../theme/ThemeConfigStore'
 
 export class ElectronGatewayIpcAdapter {
   constructor(
@@ -28,18 +27,18 @@ export class ElectronGatewayIpcAdapter {
     private tempFileService: TempFileService,
     private skillService: SkillService,
     private settingsService: SettingsService,
-    private uiSettingsService: UiSettingsService,
+    private uiSettingsStore: UiSettingsStore,
     private modelCapabilityService: ModelCapabilityService,
     private mcpToolService: McpToolService,
-    private themeService: ThemeService,
+    private themeStore: ThemeConfigStore,
     private versionService: VersionService,
     private wsGatewayControlService: WebSocketGatewayControlService
   ) {}
 
-  private updateWindowsThemeIfNeeded(beforeThemeId?: string, afterThemeId?: string): void {
+  private updateWindowsThemeIfNeeded(): void {
     if (process.platform !== 'win32') return
-    if (beforeThemeId === afterThemeId) return
-    const theme = resolveTheme(afterThemeId, this.themeService.getCustomThemes())
+    const uiSettings = this.uiSettingsStore.getSettings()
+    const theme = resolveTheme(uiSettings.themeId, this.themeStore.getCustomThemes())
     const bg = theme.terminal.background
     const fg = theme.terminal.foreground
     const windows = BrowserWindow.getAllWindows()
@@ -239,14 +238,12 @@ export class ElectronGatewayIpcAdapter {
     })
 
     ipcMain.handle('ui-settings:get', async () => {
-      return this.uiSettingsService.getSettings()
+      return this.uiSettingsStore.getSettings()
     })
 
     ipcMain.handle('ui-settings:set', async (_: any, settings: any) => {
-      const before = this.uiSettingsService.getSettings()
-      this.uiSettingsService.setSettings(settings)
-      const after = this.uiSettingsService.getSettings()
-      this.updateWindowsThemeIfNeeded(before.themeId, after.themeId)
+      this.uiSettingsStore.setSettings(settings)
+      this.updateWindowsThemeIfNeeded()
     })
 
     ipcMain.handle('models:probe', async (_evt: any, model: any) => {
@@ -315,15 +312,17 @@ export class ElectronGatewayIpcAdapter {
     })
 
     ipcMain.handle('themes:openCustomConfig', async () => {
-      await this.themeService.openCustomThemeFile()
+      await this.themeStore.openCustomThemeFile()
     })
 
     ipcMain.handle('themes:reloadCustom', async () => {
-      return await this.themeService.loadCustomThemes()
+      const themes = await this.themeStore.loadCustomThemes()
+      this.updateWindowsThemeIfNeeded()
+      return themes
     })
 
     ipcMain.handle('themes:getCustom', async () => {
-      return await this.themeService.loadCustomThemes()
+      return await this.themeStore.loadCustomThemes()
     })
 
     ipcMain.handle('version:getState', async () => {

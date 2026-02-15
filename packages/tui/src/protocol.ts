@@ -125,6 +125,7 @@ export interface GatewayProfilesPayload {
 export interface SkillSummary {
   name: string
   description?: string
+  enabled?: boolean
 }
 
 export interface GatewaySessionSummary {
@@ -134,6 +135,7 @@ export interface GatewaySessionSummary {
   messagesCount: number
   boundTerminalId?: string
   lastMessagePreview?: string
+  isBusy: boolean
 }
 
 export interface GatewaySessionSnapshot {
@@ -142,4 +144,5 @@ export interface GatewaySessionSnapshot {
   updatedAt: number
   messages: ChatMessage[]
   boundTerminalId?: string
+  isBusy: boolean
 }

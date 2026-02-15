@@ -194,9 +194,11 @@ export class GatewayService extends EventEmitter implements IGatewayRuntime {
   listSessionSummaries(): GatewaySessionSummary[] {
     return this.uiHistoryService.getAllSessions().map((session) => {
       const backendSession = this.agentService.loadChatSession(session.id);
+      const context = this.sessions.get(session.id);
       const latestVisible = [...session.messages]
         .reverse()
         .find((message) => message.type !== 'tokens_count');
+      const isBusy = context ? context.status !== 'idle' : false;
 
       return {
         id: session.id,
@@ -204,7 +206,8 @@ export class GatewayService extends EventEmitter implements IGatewayRuntime {
         updatedAt: session.updatedAt,
         messagesCount: session.messages.length,
         boundTerminalId: backendSession?.boundTerminalTabId,
-        lastMessagePreview: this.normalizeSessionPreview(latestVisible?.content || latestVisible?.metadata?.output || '')
+        lastMessagePreview: this.normalizeSessionPreview(latestVisible?.content || latestVisible?.metadata?.output || ''),
+        isBusy
       };
     });
   }
@@ -214,6 +217,8 @@ export class GatewayService extends EventEmitter implements IGatewayRuntime {
     if (!session) return null;
 
     const backendSession = this.agentService.loadChatSession(session.id);
+    const context = this.sessions.get(session.id);
+    const isBusy = context ? context.status !== 'idle' : false;
     return {
       id: session.id,
       title: session.title,
@@ -222,7 +227,8 @@ export class GatewayService extends EventEmitter implements IGatewayRuntime {
         ...message,
         metadata: message.metadata ? { ...message.metadata } : undefined
       })),
-      boundTerminalId: backendSession?.boundTerminalTabId
+      boundTerminalId: backendSession?.boundTerminalTabId,
+      isBusy
     };
   }
 

@@ -2,28 +2,31 @@ import Store from 'electron-store'
 import fs from 'node:fs'
 import path from 'node:path'
 import { app } from 'electron'
-import type { BackendSettings, UiSettings } from '../../types'
+import type { BackendSettings } from '../../../backend/src/types'
+import type { UiSettings } from './types'
 import {
   DEFAULT_BACKEND_SETTINGS,
-  DEFAULT_UI_SETTINGS,
-  migrateBackendSettings,
-  migrateUiSettings
-} from './migrations'
+  migrateBackendSettings
+} from '../../../backend/src/services/settings/migrations'
+import { DEFAULT_UI_SETTINGS, migrateUiSettings } from './migrations'
 import {
   BACKEND_SETTINGS_STORE_NAME,
-  LEGACY_SETTINGS_STORE_NAME,
-  UI_SETTINGS_STORE_NAME
-} from './storeNames'
+  LEGACY_SETTINGS_STORE_NAME
+} from '../../../backend/src/services/settings/storeNames'
+import { UI_SETTINGS_STORE_NAME } from './storeNames'
 
 /**
  * Runs Electron app settings migrations at startup.
  * This module is Electron-only and owns legacy-to-current store upgrades.
  */
-export class ElectronAppSettingsMigrationService {
-  private getStoreFilePath(name: string): string {
+export class ElectronAppSettingsMigration {
+  private getBaseDir(): string {
     const overrideDir = (process.env.GYSHELL_STORE_DIR || '').trim()
-    const baseDir = overrideDir || app.getPath('userData')
-    return path.join(baseDir, `${name}.json`)
+    return overrideDir || app.getPath('userData')
+  }
+
+  private getStoreFilePath(name: string): string {
+    return path.join(this.getBaseDir(), `${name}.json`)
   }
 
   private getBackupPath(baseDir: string): string {
@@ -46,7 +49,7 @@ export class ElectronAppSettingsMigrationService {
       if (!text) return undefined
       return JSON.parse(text)
     } catch (error) {
-      console.warn('[ElectronAppSettingsMigrationService] Failed to parse legacy settings file:', error)
+      console.warn('[ElectronAppSettingsMigration] Failed to parse legacy settings file:', error)
       return undefined
     }
   }
@@ -57,9 +60,9 @@ export class ElectronAppSettingsMigrationService {
       const backupPath = this.getBackupPath(path.dirname(legacyStorePath))
       fs.copyFileSync(legacyStorePath, backupPath)
       fs.unlinkSync(legacyStorePath)
-      console.log(`[ElectronAppSettingsMigrationService] Legacy settings backed up to ${backupPath} and cleaned up.`)
+      console.log(`[ElectronAppSettingsMigration] Legacy settings backed up to ${backupPath} and cleaned up.`)
     } catch (error) {
-      console.warn('[ElectronAppSettingsMigrationService] Failed to backup/cleanup legacy settings file:', error)
+      console.warn('[ElectronAppSettingsMigration] Failed to backup/cleanup legacy settings file:', error)
     }
   }
 

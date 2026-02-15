@@ -1,10 +1,10 @@
 import Store from 'electron-store'
-import type { UiSettings } from '../types'
-import { migrateUiSettings, DEFAULT_UI_SETTINGS } from './settings/migrations'
-import { deepMerge } from './settings/objectMerge'
-import { UI_SETTINGS_STORE_NAME } from './settings/storeNames'
+import type { UiSettings } from './types'
+import { migrateUiSettings, DEFAULT_UI_SETTINGS } from './migrations'
+import { deepMerge } from './objectMerge'
+import { UI_SETTINGS_STORE_NAME } from './storeNames'
 
-export class UiSettingsService {
+export class UiSettingsStore {
   private store: Store<UiSettings>
 
   constructor() {

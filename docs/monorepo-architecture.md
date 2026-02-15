@@ -1,25 +1,35 @@
 # GyShell Monorepo Architecture
 
-This repository now uses clear runtime/package separation.
+This repository uses strict layering:
 
-## Runtime Shapes
+- `packages/*` owns implementation logic.
+- `apps/*` owns composition/bootstrap/build wrappers only.
+
+Frontend implementation does not belong to `packages/backend`.
+
+## Runtime Surfaces
 
 1. Electron desktop app (`apps/electron`)  
-2. Backend runtime entry (`apps/gybackend`, internal/development bootstrap)  
-3. TUI/CLI runtime entry (`apps/tui`, source workspace for bundled `gyll`)
+2. Standalone backend process (`apps/gybackend`, internal/development bootstrap)  
+3. TUI/CLI runtime (`apps/tui`, wrapper for core TUI package)
+4. Mobile web runtime (`apps/mobile-web`, wrapper for core mobile-web package)
 
 ## Workspace Layout
 
 ```text
 GyShell/
 ├── apps/
-│   ├── electron/           # Electron shell (main/preload/config/sign scripts)
-│   ├── gybackend/          # Backend runtime bootstrap entry (internal)
-│   └── tui/                # TUI/CLI source workspace (bundled into desktop runtime)
+│   ├── electron/           # Electron wrapper: entrypoints, preload, build/package configs
+│   ├── gybackend/          # gybackend wrapper: process entry only
+│   ├── mobile-web/         # mobile-web wrapper: vite host + thin mount entry
+│   └── tui/                # tui wrapper: CLI/package entry + automation/build scripts
 ├── packages/
-│   ├── backend/            # Single-source backend logic (services + adapters + types)
-│   ├── ui/                 # Shared web UI package
-│   └── shared/             # Cross-runtime contracts (future expansion)
+│   ├── backend/            # Backend domain/runtime core (gateway/agent/services/adapters)
+│   ├── electron/           # Electron-only implementation (main bootstrap/ipc/theme/settings)
+│   ├── mobile-web/         # Mobile web frontend implementation
+│   ├── tui/                # TUI frontend implementation
+│   ├── ui/                 # Electron renderer implementation
+│   └── shared/             # Cross-surface shared modules (e.g. theme models)
 ├── package.json            # Workspace orchestrator scripts
 └── turbo.json              # Task graph scaffold
 ```
@@ -27,21 +37,40 @@ GyShell/
 ## Ownership Boundaries
 
 - `packages/backend`
-  - Agent, gateway, terminal/runtime services
-  - Command policy / skills / MCP runtime and adapters
-  - Backend domain types and runtime contracts
+  - Backend runtime logic only
+  - Agent/gateway/terminal services
+  - Command policy / skills / MCP core and node adapters
+  - Backend types and runtime contracts
+  - gybackend reusable bootstrap in `packages/backend/src/runtimes/gybackend`
+- `packages/electron`
+  - Electron-only runtime implementation
+  - Main process bootstrap (`startElectronMain`)
+  - IPC adapter / window transport
+  - Electron settings/theme stores and migration
 - `packages/ui`
-  - Renderer React app and shared theme modules
+  - Electron renderer React app
+  - UI stores/components/platform views
+- `packages/tui`
+  - TUI/CLI implementation logic
+  - Session/input/mention/slash workflows
+- `packages/mobile-web`
+  - Mobile web implementation logic
+  - Chat/terminal/skills/settings panels and controller
+- `packages/shared`
+  - Shared modules used by multiple surfaces
+  - Theme model and built-in scheme resolution
 - `apps/electron`
-  - Composition root (`apps/electron/src/main/index.ts`)
+  - Thin composition root (`apps/electron/src/main/index.ts`)
   - Preload bridge (`apps/electron/src/preload/*`)
-  - Platform window behavior (`apps/electron/src/main/platform/*`)
   - Electron build/package config (`apps/electron/electron.vite.config.ts`, `apps/electron/electron-builder.yml`)
   - macOS signature workaround script (`apps/electron/scripts/fix-mac-signatures.sh`)
 - `apps/gybackend`
-  - Node process bootstrap and runtime wiring only
+  - Thin entry wrapper that calls backend package bootstrap
 - `apps/tui`
-  - Chat-first websocket client runtime
+  - Thin CLI wrapper entry
+  - TUI automation and CLI binary build scripts
+- `apps/mobile-web`
+  - Thin mount entry and vite runtime config only
 
 ## Packaging/Signing Constraint
 
@@ -56,5 +85,5 @@ This preserves the previous macOS packaging behavior while moving configuration 
 ## Next Milestones
 
 - Move more protocol contracts from `packages/backend` into `packages/shared`
-- Add package-level unit tests for `packages/backend` and `packages/ui`
-- Keep `apps/*` as thin shells with zero business logic duplication
+- Add package-level unit tests for `packages/electron`, `packages/tui`, and `packages/mobile-web`
+- Keep `apps/*` as pure composition shells with zero business logic duplication

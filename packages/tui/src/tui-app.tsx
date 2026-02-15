@@ -1,4 +1,4 @@
-import { RGBA, TextAttributes, type KeyBinding, type ScrollBoxRenderable, type TextareaRenderable } from '@opentui/core'
+import { RGBA, TextAttributes, type KeyBinding } from '@opentui/core'
 import { render, useKeyboard, useRenderer, useTerminalDimensions } from '@opentui/solid'
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from 'solid-js'
 import { createStore, produce } from 'solid-js/store'
@@ -31,11 +31,13 @@ export interface TuiBootstrapData {
   endpoint: string
   terminals: GatewayTerminalSummary[]
   profiles: GatewayProfileSummary[]
+  skills: SkillSummary[]
   activeProfileId: string
   initialSessionId: string
   initialTerminalId: string
   initialSessionTitle: string
   initialMessages: ChatMessage[]
+  initialSessionBusy: boolean
   restoredSessionCount: number
   recoveredSessions: GatewaySessionSummary[]
 }
@@ -155,7 +157,7 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
     sessions: boot.sessions,
     sessionMeta: boot.sessionMeta,
     activeSessionId: props.data.initialSessionId,
-    skills: [],
+    skills: props.data.skills.filter((item) => item.enabled !== false),
     input: '',
     suggestionIndex: 0,
     overlay: null,
@@ -163,9 +165,9 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
     statusLine: `Connected ${props.data.endpoint}`,
   })
 
-  let inputRef: TextareaRenderable | undefined
-  let scrollRef: ScrollBoxRenderable | undefined
-  let overlayScrollRef: ScrollBoxRenderable | undefined
+  let inputRef: any
+  let scrollRef: any
+  let overlayScrollRef: any
 
   const activeSession = createMemo(() => state.sessions[state.activeSessionId])
 
@@ -210,12 +212,14 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
     const query = context.query.toLowerCase()
 
     const skillMatches = state.skills
+      .filter((item) => item.enabled !== false)
       .filter((item) => matchQuery(query, `${item.name} ${item.description ?? ''}`))
       .map((item) => ({
         key: `skill:${item.name}`,
-        label: `@skill:${item.name}`,
-        insertText: `@skill:${item.name}`,
+        label: `@${item.name}`,
+        insertText: `@${item.name}`,
         description: item.description || 'Skill',
+        token: `[MENTION_SKILL:#${item.name}#]`,
       }))
 
     const terminalAliases = buildTerminalMentionAliases(state.terminals)
@@ -448,9 +452,10 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
         const name = 'name' in item && typeof item.name === 'string' ? item.name : null
         if (!name) return []
         const description = 'description' in item && typeof item.description === 'string' ? item.description : undefined
-        return [{ name, description }]
+        const enabled = !('enabled' in item) || item.enabled !== false
+        return [{ name, description, enabled }]
       })
-      setState('skills', next)
+      setState('skills', next.filter((item) => item.enabled !== false))
       setState('statusLine', `Skills updated (${next.length})`)
       return
     }
@@ -984,8 +989,8 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
           const terminalId = resolveTerminalId(snapshot.boundTerminalId, draft.terminals, draft.activeTerminalId)
           const session = createSessionState(sessionId, terminalId, snapshot.title || 'Recovered Session')
           session.messages = (snapshot.messages || []).map(cloneMessage)
-          session.isBusy = false
-          session.isThinking = false
+          session.isBusy = snapshot.isBusy === true
+          session.isThinking = snapshot.isBusy === true
           draft.sessions[sessionId] = session
 
           const current = draft.sessionMeta[sessionId]
@@ -995,7 +1000,7 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
             updatedAt: snapshot.updatedAt || current?.updatedAt || Date.now(),
             messagesCount: snapshot.messages?.length ?? current?.messagesCount ?? 0,
             boundTerminalId: snapshot.boundTerminalId || current?.boundTerminalId,
-            lastMessagePreview: current?.lastMessagePreview,
+            lastMessagePreview: previewFromSession(session) || current?.lastMessagePreview,
             loaded: true,
           }
         }),
@@ -1129,7 +1134,7 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
       <For each={[state.activeSessionId]}>
         {() => (
           <scrollbox
-            ref={(node: ScrollBoxRenderable) => (scrollRef = node)}
+            ref={(node) => (scrollRef = node)}
             flexGrow={1}
             paddingLeft={1}
             paddingRight={1}
@@ -1236,7 +1241,7 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
         paddingRight={1}
       >
         <textarea
-          ref={(node: TextareaRenderable) => {
+          ref={(node) => {
             inputRef = node
             node.focus()
           }}
@@ -1307,7 +1312,7 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
 
               <Show when={overlay().type !== 'help'}>
                 <scrollbox
-                  ref={(node: ScrollBoxRenderable) => (overlayScrollRef = node)}
+                  ref={(node) => (overlayScrollRef = node)}
                   marginTop={1}
                   height={overlayListHeight()}
                   scrollbarOptions={{ visible: false }}
@@ -1374,7 +1379,10 @@ function buildBootState(data: TuiBootstrapData, initialSession: SessionState): {
 
     if (summary.id !== data.initialSessionId) {
       const terminalId = summary.boundTerminalId || data.initialTerminalId
-      sessions[summary.id] = createSessionState(summary.id, terminalId, summary.title || 'Recovered Session')
+      const nextSession = createSessionState(summary.id, terminalId, summary.title || 'Recovered Session')
+      nextSession.isBusy = summary.isBusy === true
+      nextSession.isThinking = summary.isBusy === true
+      sessions[summary.id] = nextSession
     }
   }
 
@@ -1667,8 +1675,8 @@ function safeText(payload: unknown): string {
 function hydrateInitialSession(data: TuiBootstrapData): SessionState {
   const session = createSessionState(data.initialSessionId, data.initialTerminalId, data.initialSessionTitle || 'New Chat')
   session.messages = data.initialMessages.map(cloneMessage)
-  session.isThinking = false
-  session.isBusy = false
+  session.isThinking = data.initialSessionBusy === true
+  session.isBusy = data.initialSessionBusy === true
   return session
 }
 
@@ -1862,13 +1870,6 @@ function markdownToLines(text: string, limit?: number): string[] {
 function encodeMentions(input: string, skills: SkillSummary[], terminals: GatewayTerminalSummary[]): string {
   let output = input
 
-  const skillMap = new Map(skills.map((item) => [item.name.toLowerCase(), item.name]))
-  output = output.replace(/@skill:([A-Za-z0-9_.-]+)/g, (full, rawName: string) => {
-    const actual = skillMap.get(rawName.toLowerCase())
-    if (!actual) return full
-    return `[MENTION_SKILL:#${actual}#]`
-  })
-
   const terminalMap = new Map(terminals.map((item) => [item.id.toLowerCase(), item]))
   output = output.replace(/@terminal:([A-Za-z0-9_.:-]+)/g, (full, rawId: string) => {
     const terminal = terminalMap.get(rawId.toLowerCase())
@@ -1877,7 +1878,10 @@ function encodeMentions(input: string, skills: SkillSummary[], terminals: Gatewa
   })
 
   const aliasMap = new Map(
-    buildTerminalMentionAliases(terminals)
+    [
+      ...buildSkillMentionAliases(skills),
+      ...buildTerminalMentionAliases(terminals),
+    ]
       .filter((item) => !!item.token)
       .map((item) => [item.insertText.toLowerCase(), item.token as string]),
   )
@@ -1887,6 +1891,18 @@ function encodeMentions(input: string, skills: SkillSummary[], terminals: Gatewa
   })
 
   return output
+}
+
+function buildSkillMentionAliases(skills: SkillSummary[]): MentionOption[] {
+  return skills
+    .filter((item) => item.enabled !== false)
+    .map((skill) => ({
+      key: `skill:${skill.name}`,
+      label: `@${skill.name}`,
+      insertText: `@${skill.name}`,
+      description: skill.description || 'Skill',
+      token: `[MENTION_SKILL:#${skill.name}#]`,
+    }))
 }
 
 function buildTerminalMentionAliases(terminals: GatewayTerminalSummary[]): MentionOption[] {

@@ -1,6 +1,4 @@
 // ============ Settings Types ============
-export type AppLanguage = 'en' | 'zh-CN'
-
 export interface ModelDefinition {
   /** Stable id used by profiles */
   id: string
@@ -97,30 +95,6 @@ export interface TunnelEntry {
   viaConnectionId?: string
 }
 
-export interface TerminalUiSettings {
-  fontSize: number
-  lineHeight: number
-  scrollback: number
-  cursorStyle: 'block' | 'underline' | 'bar'
-  cursorBlink: boolean
-  copyOnSelect: boolean
-  rightClickToPaste: boolean
-}
-
-export interface UiSettings {
-  /** UI settings schema version, used for UI-side migrations */
-  uiSchemaVersion: 1
-
-  /** UI language */
-  language: AppLanguage
-
-  /** Theme id (must be from built-in list) */
-  themeId: string
-
-  /** Terminal visual settings */
-  terminal: TerminalUiSettings
-}
-
 export type WsGatewayAccess = 'disabled' | 'localhost' | 'internet'
 
 export interface WsGatewaySettings {
@@ -186,8 +160,6 @@ export interface BackendSettings {
     ws: WsGatewaySettings
   }
 }
-
-export type AppSettings = BackendSettings & UiSettings
 
 // ============ Terminal Types ============
 export type ConnectionType = 'local' | 'ssh'

@@ -7,7 +7,9 @@
   "include": [
     "apps/electron/src/main/**/*",
     "apps/electron/src/preload/**/*",
+    "apps/gybackend/src/**/*",
     "packages/backend/src/**/*",
-    "packages/ui/src/shared/**/*"
+    "packages/electron/src/**/*",
+    "packages/shared/src/**/*"
   ]
 }

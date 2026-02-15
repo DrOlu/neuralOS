@@ -1,6 +1,6 @@
 import type { BrowserWindow, BrowserWindowConstructorOptions } from 'electron'
-import type { TerminalColorScheme } from '../../../../../../packages/ui/src/shared/theme/terminalColorSchemes'
-import { resolveTheme } from '../../../../../../packages/ui/src/shared/theme/themes'
+import type { TerminalColorScheme } from '../../../../../shared/src/theme/terminalColorSchemes'
+import { resolveTheme } from '../../../../../shared/src/theme/themes'
 
 export function getWindowsBrowserWindowOptions(
   themeId?: string,

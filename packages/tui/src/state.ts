@@ -27,10 +27,12 @@ export function applyUiUpdate(session: SessionState, update: UIUpdateAction): vo
     case 'ADD_MESSAGE': {
       const msg = update.message
       session.messages.push(msg)
+      if (msg.type !== 'tokens_count') {
+        session.isBusy = true
+      }
 
       if (msg.role === 'user') {
         session.isThinking = true
-        session.isBusy = true
         const firstUser = session.messages.filter((item) => item.role === 'user').length === 1
         if (firstUser) {
           session.title = autoTitle(msg.content)
@@ -46,6 +48,7 @@ export function applyUiUpdate(session: SessionState, update: UIUpdateAction): vo
       const msg = session.messages.find((item) => item.id === update.messageId)
       if (msg) {
         msg.content += update.content
+        session.isBusy = true
       }
       break
     }
@@ -56,12 +59,16 @@ export function applyUiUpdate(session: SessionState, update: UIUpdateAction): vo
           ...(msg.metadata ?? {}),
           output: `${msg.metadata?.output ?? ''}${update.outputDelta ?? ''}`,
         }
+        session.isBusy = true
       }
       break
     }
     case 'UPDATE_MESSAGE': {
       const msg = session.messages.find((item) => item.id === update.messageId)
-      if (msg) Object.assign(msg, update.patch)
+      if (msg) {
+        Object.assign(msg, update.patch)
+        session.isBusy = true
+      }
       break
     }
     case 'DONE': {
@@ -180,7 +187,7 @@ function summarizeDiff(diff: string): string {
 }
 
 function autoTitle(content: string): string {
-  const normalized = String(content || '').replace(/\s+/g, ' ').trim()
+  const normalized = normalizeCompactText(content || '')
   if (!normalized) return 'New Chat'
   if (normalized.length <= 48) return normalized
   return `${normalized.slice(0, 47)}...`

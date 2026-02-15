@@ -1,0 +1,66 @@
+import type { UiSettings } from './types'
+import { deepMerge, isObject } from './objectMerge'
+
+export const UI_SETTINGS_SCHEMA_VERSION = 1
+
+export const DEFAULT_UI_SETTINGS: UiSettings = {
+  uiSchemaVersion: UI_SETTINGS_SCHEMA_VERSION,
+  language: 'en',
+  themeId: 'gyshell-dark',
+  terminal: {
+    fontSize: 14,
+    lineHeight: 1.2,
+    scrollback: 5000,
+    cursorStyle: 'block',
+    cursorBlink: true,
+    copyOnSelect: true,
+    rightClickToPaste: true
+  }
+}
+
+function pickUiSnapshot(raw: unknown): Partial<UiSettings> {
+  if (!isObject(raw)) return {}
+  return {
+    uiSchemaVersion: raw.uiSchemaVersion,
+    language: raw.language,
+    themeId: raw.themeId,
+    terminal: raw.terminal
+  } as Partial<UiSettings>
+}
+
+function normalizeUiSettings(settings: UiSettings): UiSettings {
+  const next = deepMerge(DEFAULT_UI_SETTINGS, settings)
+  if (typeof next.terminal.lineHeight !== 'number' || next.terminal.lineHeight < 1) {
+    next.terminal.lineHeight = 1.2
+  }
+  if (typeof next.terminal.fontSize !== 'number' || next.terminal.fontSize < 6) {
+    next.terminal.fontSize = 14
+  }
+  if (typeof next.terminal.scrollback !== 'number' || next.terminal.scrollback < 0) {
+    next.terminal.scrollback = 5000
+  }
+  next.uiSchemaVersion = UI_SETTINGS_SCHEMA_VERSION
+  return next
+}
+
+function migrateUiToV1(settings: Partial<UiSettings>): Partial<UiSettings> {
+  const next = { ...(settings as any) }
+  next.uiSchemaVersion = UI_SETTINGS_SCHEMA_VERSION
+  return next
+}
+
+export function migrateUiSettings(raw: unknown, legacyRaw?: unknown): UiSettings {
+  const legacySnapshot = pickUiSnapshot(legacyRaw)
+  const rawSnapshot = pickUiSnapshot(raw)
+
+  const rawVersion = isObject(raw) && typeof raw.uiSchemaVersion === 'number' ? raw.uiSchemaVersion : 0
+
+  let merged = deepMerge(DEFAULT_UI_SETTINGS, legacySnapshot)
+  merged = deepMerge(merged, rawSnapshot)
+
+  if (rawVersion < UI_SETTINGS_SCHEMA_VERSION) {
+    merged = deepMerge(merged, migrateUiToV1(merged as any) as any)
+  }
+
+  return normalizeUiSettings(merged)
+}

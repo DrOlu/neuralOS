@@ -16,3 +16,7 @@ export interface GyBackendConnectionConfig {
   endpoint: GyBackendEndpoint
   token?: string
 }
+
+export * from './theme/terminalColorSchemes'
+export * from './theme/builtInSchemes'
+export * from './theme/themes'

@@ -8,7 +8,10 @@
   },
   "include": [
     "packages/ui/src/renderer_v2/**/*",
-    "packages/ui/src/shared/**/*",
+    "packages/mobile-web/src/**/*",
+    "packages/shared/src/**/*",
+    "apps/mobile-web/src/**/*",
+    "apps/mobile-web/vite.config.ts",
     "apps/electron/src/preload/index.d.ts"
   ]
 }

@@ -1,1 +1,1 @@
-export * from '../../shared/theme/builtInSchemes'
+export * from '../../../../shared/src/theme/builtInSchemes'

@@ -1,5 +1,5 @@
 import { BrowserWindow } from 'electron';
-import type { IClientTransport, GatewayEvent } from './types';
+import type { IClientTransport, GatewayEvent } from '../../../backend/src/services/Gateway/types';
 
 /**
  * ElectronWindowTransport implements communication for local Electron windows.

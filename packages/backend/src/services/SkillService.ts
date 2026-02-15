@@ -6,6 +6,7 @@ import {
   type SkillInfo,
   type CreateOrRewriteSkillResult
 } from '../skills/FileSkillStore'
+import { resolveDefaultSkillScanRoots } from '../skills/scanRoots'
 
 export type { SkillInfo, CreateOrRewriteSkillResult }
 
@@ -33,27 +34,14 @@ export class SkillService {
   }
 
   getSkillsDirs(): string[] {
-    const dirs: string[] = []
-
     const baseDir = app.getPath('userData')
-    dirs.push(path.join(baseDir, 'skills'))
-
-    const homeDir = app.getPath('home')
-    if (homeDir) {
-      dirs.push(path.join(homeDir, '.claude', 'skills'))
-      dirs.push(path.join(homeDir, '.agents', 'skills'))
-
-      if (process.platform === 'win32') {
-        const appData = process.env.APPDATA
-        if (appData) {
-          dirs.push(path.join(appData, 'agents', 'skills'))
-        }
-      } else {
-        dirs.push(path.join(homeDir, '.config', 'agents', 'skills'))
-      }
-    }
-
-    return [...new Set(dirs)]
+    return resolveDefaultSkillScanRoots({
+      primaryRoot: path.join(baseDir, 'skills'),
+      homeDir: app.getPath('home'),
+      platform: process.platform,
+      appData: process.env.APPDATA,
+      codexHome: process.env.CODEX_HOME
+    })
   }
 
   async ensureSkillsDir(): Promise<void> {

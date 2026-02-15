@@ -1,1 +1,1 @@
-export * from '../../shared/theme/terminalColorSchemes'
+export * from '../../../../shared/src/theme/terminalColorSchemes'
