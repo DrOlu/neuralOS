@@ -22,9 +22,13 @@ import {
 import type {
   BuiltInToolSummary,
   ChatMessage,
+  CreateTerminalTarget,
+  GatewayConnectionsSnapshot,
   GatewayProfileSummary,
   GatewaySessionSnapshot,
   GatewaySessionSummary,
+  GatewaySshConnectionEntry,
+  GatewaySshConnectionSummary,
   McpServerSummary,
   SkillSummary,
   GatewayTerminalSummary,
@@ -35,6 +39,8 @@ export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected'
 
 interface ViewState {
   terminals: GatewayTerminalSummary[]
+  connections: GatewayConnectionsSnapshot
+  sshConnections: GatewaySshConnectionSummary[]
   skills: SkillSummary[]
   mcpTools: McpServerSummary[]
   builtInTools: BuiltInToolSummary[]
@@ -49,6 +55,8 @@ interface ViewState {
 
 const INITIAL_VIEW_STATE: ViewState = {
   terminals: [],
+  connections: { ssh: [], proxies: [], tunnels: [] },
+  sshConnections: [],
   skills: [],
   mcpTools: [],
   builtInTools: [],
@@ -226,6 +234,143 @@ async function fetchToolsSnapshot(client: GatewayClient): Promise<{
   return { mcpTools, builtInTools }
 }
 
+function normalizeProxyEntry(raw: unknown): GatewayConnectionsSnapshot['proxies'][number] | null {
+  if (!raw || typeof raw !== 'object') return null
+  const item = raw as Record<string, unknown>
+  if (typeof item.id !== 'string' || !item.id.trim()) return null
+  if (typeof item.name !== 'string') return null
+  if (typeof item.host !== 'string' || !item.host.trim()) return null
+  if (typeof item.port !== 'number' || !Number.isInteger(item.port) || item.port <= 0) return null
+  if (item.type !== 'socks5' && item.type !== 'http') return null
+  return {
+    id: item.id,
+    name: item.name,
+    type: item.type,
+    host: item.host,
+    port: item.port,
+    username: typeof item.username === 'string' ? item.username : undefined,
+    password: typeof item.password === 'string' ? item.password : undefined
+  }
+}
+
+function normalizeTunnelEntry(raw: unknown): GatewayConnectionsSnapshot['tunnels'][number] | null {
+  if (!raw || typeof raw !== 'object') return null
+  const item = raw as Record<string, unknown>
+  if (typeof item.id !== 'string' || !item.id.trim()) return null
+  if (typeof item.name !== 'string') return null
+  if (typeof item.host !== 'string' || !item.host.trim()) return null
+  if (typeof item.port !== 'number' || !Number.isInteger(item.port) || item.port <= 0) return null
+  if (item.type !== 'Local' && item.type !== 'Remote' && item.type !== 'Dynamic') return null
+  return {
+    id: item.id,
+    name: item.name,
+    type: item.type,
+    host: item.host,
+    port: item.port,
+    targetAddress: typeof item.targetAddress === 'string' ? item.targetAddress : undefined,
+    targetPort: typeof item.targetPort === 'number' && Number.isInteger(item.targetPort) ? item.targetPort : undefined,
+    viaConnectionId: typeof item.viaConnectionId === 'string' ? item.viaConnectionId : undefined
+  }
+}
+
+function normalizeSshEntry(raw: unknown, depth = 0): GatewaySshConnectionEntry | null {
+  if (!raw || typeof raw !== 'object') return null
+  const item = raw as Record<string, unknown>
+  if (typeof item.id !== 'string' || !item.id.trim()) return null
+  if (typeof item.name !== 'string') return null
+  if (typeof item.host !== 'string' || !item.host.trim()) return null
+  if (typeof item.port !== 'number' || !Number.isInteger(item.port) || item.port <= 0) return null
+  if (typeof item.username !== 'string' || !item.username.trim()) return null
+  if (item.authMethod !== 'password' && item.authMethod !== 'privateKey') return null
+  const tunnelIds = Array.isArray(item.tunnelIds)
+    ? item.tunnelIds.filter((id): id is string => typeof id === 'string' && !!id)
+    : undefined
+  const jumpHost = depth < 3 ? normalizeSshEntry(item.jumpHost, depth + 1) : null
+  return {
+    id: item.id,
+    name: item.name,
+    host: item.host,
+    port: item.port,
+    username: item.username,
+    authMethod: item.authMethod,
+    password: typeof item.password === 'string' ? item.password : undefined,
+    privateKey: typeof item.privateKey === 'string' ? item.privateKey : undefined,
+    privateKeyPath: typeof item.privateKeyPath === 'string' ? item.privateKeyPath : undefined,
+    passphrase: typeof item.passphrase === 'string' ? item.passphrase : undefined,
+    proxyId: typeof item.proxyId === 'string' && item.proxyId ? item.proxyId : undefined,
+    tunnelIds,
+    jumpHost: jumpHost || undefined
+  }
+}
+
+function normalizeConnectionsSnapshot(raw: unknown): GatewayConnectionsSnapshot {
+  if (!raw || typeof raw !== 'object') {
+    return { ssh: [], proxies: [], tunnels: [] }
+  }
+  const settings = raw as Record<string, unknown>
+  const connections =
+    settings.connections && typeof settings.connections === 'object'
+      ? (settings.connections as Record<string, unknown>)
+      : null
+  if (!connections) {
+    return { ssh: [], proxies: [], tunnels: [] }
+  }
+  return {
+    ssh: Array.isArray(connections.ssh)
+      ? connections.ssh.map((item) => normalizeSshEntry(item)).filter((item): item is GatewaySshConnectionEntry => !!item)
+      : [],
+    proxies: Array.isArray(connections.proxies)
+      ? connections.proxies
+          .map((item) => normalizeProxyEntry(item))
+          .filter((item): item is GatewayConnectionsSnapshot['proxies'][number] => !!item)
+      : [],
+    tunnels: Array.isArray(connections.tunnels)
+      ? connections.tunnels
+          .map((item) => normalizeTunnelEntry(item))
+          .filter((item): item is GatewayConnectionsSnapshot['tunnels'][number] => !!item)
+      : []
+  }
+}
+
+function buildSshConnectionSummaries(connections: GatewayConnectionsSnapshot): GatewaySshConnectionSummary[] {
+  return connections.ssh
+    .map((item) => ({
+      id: item.id,
+      name: item.name,
+      host: item.host,
+      port: item.port,
+      username: item.username,
+      authMethod: item.authMethod
+    }))
+    .sort((left, right) => left.name.localeCompare(right.name))
+}
+
+function toSshConfig(entry: GatewaySshConnectionEntry, connections: GatewayConnectionsSnapshot): Record<string, unknown> {
+  const proxy = entry.proxyId ? connections.proxies.find((item) => item.id === entry.proxyId) : undefined
+  const tunnels =
+    entry.tunnelIds && entry.tunnelIds.length > 0
+      ? connections.tunnels.filter((item) => entry.tunnelIds?.includes(item.id))
+      : undefined
+  const jumpHost = entry.jumpHost ? toSshConfig(entry.jumpHost, connections) : undefined
+  return {
+    type: 'ssh',
+    title: entry.name || `${entry.username}@${entry.host}`,
+    cols: 120,
+    rows: 32,
+    host: entry.host,
+    port: entry.port,
+    username: entry.username,
+    authMethod: entry.authMethod,
+    password: entry.password,
+    privateKey: entry.privateKey,
+    privateKeyPath: entry.privateKeyPath,
+    passphrase: entry.passphrase,
+    proxy,
+    tunnels,
+    jumpHost
+  }
+}
+
 export interface MobileControllerState {
   gatewayInput: string
   connectionStatus: ConnectionStatus
@@ -235,6 +380,7 @@ export interface MobileControllerState {
   composerCursor: number
   mentionOptions: MentionOption[]
   terminals: GatewayTerminalSummary[]
+  sshConnections: GatewaySshConnectionSummary[]
   skills: SkillSummary[]
   mcpTools: McpServerSummary[]
   builtInTools: BuiltInToolSummary[]
@@ -271,7 +417,7 @@ export interface MobileControllerActions {
   setMcpEnabled: (name: string, enabled: boolean) => Promise<void>
   setBuiltInToolEnabled: (name: string, enabled: boolean) => Promise<void>
   replyAsk: (message: ChatMessage, decision: 'allow' | 'deny') => Promise<void>
-  createTerminalTab: () => Promise<void>
+  createTerminalTab: (target?: CreateTerminalTarget) => Promise<void>
   closeTerminalTab: (terminalId: string) => Promise<void>
 }
 
@@ -413,6 +559,7 @@ export function useMobileController(): {
       let mcpTools: McpServerSummary[] = []
       let builtInTools: BuiltInToolSummary[] = []
       let toolsUnavailable = false
+      let connections: GatewayConnectionsSnapshot = { ssh: [], proxies: [], tunnels: [] }
       try {
         const profilePayload = await client.request<{ activeProfileId: string; profiles: GatewayProfileSummary[] }>(
           'models:getProfiles',
@@ -440,6 +587,13 @@ export function useMobileController(): {
         mcpTools = []
         builtInTools = []
         toolsUnavailable = true
+      }
+
+      try {
+        const settingsPayload = await client.request<unknown>('settings:get', {})
+        connections = normalizeConnectionsSnapshot(settingsPayload)
+      } catch {
+        connections = { ssh: [], proxies: [], tunnels: [] }
       }
 
       const sessionPayload = await client.request<{ sessions: GatewaySessionSummary[] }>('session:list', {})
@@ -522,6 +676,8 @@ export function useMobileController(): {
 
       setView({
         terminals,
+        connections,
+        sshConnections: buildSshConnectionSummaries(connections),
         skills,
         mcpTools,
         builtInTools,
@@ -1205,7 +1361,7 @@ export function useMobileController(): {
     []
   )
 
-  const createTerminalTab = React.useCallback(async () => {
+  const createTerminalTab = React.useCallback(async (target: CreateTerminalTarget = { type: 'local' }) => {
     if (!client.isConnected()) {
       setConnectionError('Gateway is not connected')
       return
@@ -1213,28 +1369,28 @@ export function useMobileController(): {
 
     try {
       const snapshot = viewRef.current
-      const localCount = snapshot.terminals.filter((terminal) => terminal.type === 'local').length
-      const existingIds = new Set(snapshot.terminals.map((terminal) => terminal.id))
-      let suffix = Math.max(2, localCount + 1)
-      let nextId = `local-${suffix}`
-      while (existingIds.has(nextId)) {
-        suffix += 1
-        nextId = `local-${suffix}`
+      if (target.type === 'ssh') {
+        const entry = snapshot.connections.ssh.find((item) => item.id === target.connectionId)
+        if (!entry) {
+          setConnectionError('SSH connection not found. Please configure it in desktop settings first.')
+          return
+        }
+        await client.request<{ id: string }>('terminal:createTab', {
+          config: toSshConfig(entry, snapshot.connections)
+        })
+      } else {
+        await client.request<{ id: string }>('terminal:createTab', {
+          config: {
+            type: 'local',
+            cols: 120,
+            rows: 32
+          }
+        })
       }
 
-      const title = `Local (${localCount + 1})`
-      await client.request<{ id: string }>('terminal:createTab', {
-        config: {
-          type: 'local',
-          id: nextId,
-          title,
-          cols: 120,
-          rows: 32
-        }
-      })
-
       const payload = await client.request<{ terminals: GatewayTerminalSummary[] }>('terminal:list', {})
-      reconcileTerminals(payload.terminals || [], `Created terminal ${title}`)
+      const statusText = target.type === 'ssh' ? 'Created SSH terminal' : 'Created local terminal'
+      reconcileTerminals(payload.terminals || [], statusText)
     } catch (error) {
       setConnectionError(`Failed to create terminal: ${safeError(error)}`)
     }
@@ -1274,6 +1430,7 @@ export function useMobileController(): {
     composerCursor,
     mentionOptions: mentionState.options,
     terminals: view.terminals,
+    sshConnections: view.sshConnections,
     skills: view.skills,
     mcpTools: view.mcpTools,
     builtInTools: view.builtInTools,

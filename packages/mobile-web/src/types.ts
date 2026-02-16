@@ -119,6 +119,66 @@ export interface GatewayTerminalSummary {
   lastExitCode?: number
 }
 
+export type GatewayProxyType = 'socks5' | 'http'
+
+export interface GatewayProxyEntry {
+  id: string
+  name: string
+  type: GatewayProxyType
+  host: string
+  port: number
+  username?: string
+  password?: string
+}
+
+export type GatewayPortForwardType = 'Local' | 'Remote' | 'Dynamic'
+
+export interface GatewayTunnelEntry {
+  id: string
+  name: string
+  type: GatewayPortForwardType
+  host: string
+  port: number
+  targetAddress?: string
+  targetPort?: number
+  viaConnectionId?: string
+}
+
+export type GatewaySshAuthMethod = 'password' | 'privateKey'
+
+export interface GatewaySshConnectionEntry {
+  id: string
+  name: string
+  host: string
+  port: number
+  username: string
+  authMethod: GatewaySshAuthMethod
+  password?: string
+  privateKey?: string
+  privateKeyPath?: string
+  passphrase?: string
+  proxyId?: string
+  tunnelIds?: string[]
+  jumpHost?: GatewaySshConnectionEntry
+}
+
+export interface GatewayConnectionsSnapshot {
+  ssh: GatewaySshConnectionEntry[]
+  proxies: GatewayProxyEntry[]
+  tunnels: GatewayTunnelEntry[]
+}
+
+export interface GatewaySshConnectionSummary {
+  id: string
+  name: string
+  host: string
+  port: number
+  username: string
+  authMethod: GatewaySshAuthMethod
+}
+
+export type CreateTerminalTarget = { type: 'local' } | { type: 'ssh'; connectionId: string }
+
 export interface GatewayProfileSummary {
   id: string
   name: string

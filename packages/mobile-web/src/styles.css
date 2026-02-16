@@ -847,6 +847,22 @@ button:disabled {
   flex: 1;
 }
 
+.terminal-create-select {
+  width: 100%;
+  border: 1px solid var(--border);
+  background: var(--surface-soft);
+  color: var(--ink);
+  border-radius: 4px;
+  min-height: 32px;
+  padding: 0 8px;
+}
+
+.terminal-sub-hint {
+  margin: 0 0 10px;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
 .panel-toolbar-meta {
   margin: 0;
   color: var(--ink-soft);

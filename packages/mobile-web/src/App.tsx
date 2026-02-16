@@ -152,7 +152,8 @@ export const App: React.FC = () => {
         {activeTab === 'terminal' ? (
           <TerminalPanel
             terminals={state.terminals}
-            onCreateTerminal={() => void actions.createTerminalTab()}
+            sshConnections={state.sshConnections}
+            onCreateTerminal={(target) => void actions.createTerminalTab(target)}
             onCloseTerminal={(terminalId) => void actions.closeTerminalTab(terminalId)}
           />
         ) : null}
