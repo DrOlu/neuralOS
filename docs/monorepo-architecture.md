@@ -1,89 +1,147 @@
 # GyShell Monorepo Architecture
 
-This repository uses strict layering:
+GyShell uses strict layering:
 
-- `packages/*` owns implementation logic.
+- `packages/*` owns implementation and runtime logic.
 - `apps/*` owns composition/bootstrap/build wrappers only.
 
-Frontend implementation does not belong to `packages/backend`.
+Frontend implementation must not be placed under `packages/backend`.
 
 ## Runtime Surfaces
 
-1. Electron desktop app (`apps/electron`)  
-2. Standalone backend process (`apps/gybackend`, internal/development bootstrap)  
-3. TUI/CLI runtime (`apps/tui`, wrapper for core TUI package)
-4. Mobile web runtime (`apps/mobile-web`, wrapper for core mobile-web package)
+1. Electron desktop app (`apps/electron`)
+2. Standalone backend process (`apps/gybackend`)
+3. TUI runtime (`apps/tui` wrapper + `packages/tui` core)
+4. Mobile-web runtime (`apps/mobile-web` wrapper + `packages/mobile-web` core)
 
 ## Workspace Layout
 
 ```text
 GyShell/
 ├── apps/
-│   ├── electron/           # Electron wrapper: entrypoints, preload, build/package configs
-│   ├── gybackend/          # gybackend wrapper: process entry only
-│   ├── mobile-web/         # mobile-web wrapper: vite host + thin mount entry
-│   └── tui/                # tui wrapper: CLI/package entry + automation/build scripts
+│   ├── electron/           # thin wrapper: entry/preload/build/package config
+│   ├── gybackend/          # thin wrapper: backend process entry
+│   ├── mobile-web/         # thin wrapper: vite host + mount entry
+│   └── tui/                # thin wrapper: CLI entry + binary build scripts
 ├── packages/
-│   ├── backend/            # Backend domain/runtime core (gateway/agent/services/adapters)
-│   ├── electron/           # Electron-only implementation (main bootstrap/ipc/theme/settings)
-│   ├── mobile-web/         # Mobile web frontend implementation
-│   ├── tui/                # TUI frontend implementation
-│   ├── ui/                 # Electron renderer implementation
-│   └── shared/             # Cross-surface shared modules (e.g. theme models)
-├── package.json            # Workspace orchestrator scripts
-└── turbo.json              # Task graph scaffold
+│   ├── backend/            # core backend runtime (agent/gateway/terminal/services)
+│   ├── electron/           # electron-only implementation (main/gateway/settings/theme)
+│   ├── mobile-web/         # mobile-web UI implementation
+│   ├── tui/                # tui UI implementation
+│   ├── ui/                 # desktop renderer UI implementation
+│   └── shared/             # shared modules across surfaces
+├── docs/
+│   ├── monorepo-architecture.md
+│   └── build-commands.md
+└── package.json
 ```
 
 ## Ownership Boundaries
 
-- `packages/backend`
-  - Backend runtime logic only
-  - Agent/gateway/terminal services
-  - Command policy / skills / MCP core and node adapters
-  - Backend types and runtime contracts
-  - gybackend reusable bootstrap in `packages/backend/src/runtimes/gybackend`
-- `packages/electron`
-  - Electron-only runtime implementation
-  - Main process bootstrap (`startElectronMain`)
-  - IPC adapter / window transport
-  - Electron settings/theme stores and migration
-- `packages/ui`
-  - Electron renderer React app
-  - UI stores/components/platform views
-- `packages/tui`
-  - TUI/CLI implementation logic
-  - Session/input/mention/slash workflows
-- `packages/mobile-web`
-  - Mobile web implementation logic
-  - Chat/terminal/skills/settings panels and controller
-- `packages/shared`
-  - Shared modules used by multiple surfaces
-  - Theme model and built-in scheme resolution
-- `apps/electron`
-  - Thin composition root (`apps/electron/src/main/index.ts`)
-  - Preload bridge (`apps/electron/src/preload/*`)
-  - Electron build/package config (`apps/electron/electron.vite.config.ts`, `apps/electron/electron-builder.yml`)
-  - macOS signature workaround script (`apps/electron/scripts/fix-mac-signatures.sh`)
-- `apps/gybackend`
-  - Thin entry wrapper that calls backend package bootstrap
-- `apps/tui`
-  - Thin CLI wrapper entry
-  - TUI automation and CLI binary build scripts
-- `apps/mobile-web`
-  - Thin mount entry and vite runtime config only
+### `packages/backend`
 
-## Packaging/Signing Constraint
+- Owns transport-agnostic runtime core.
+- `GatewayService` is the session orchestrator and event source-of-truth.
+- `AgentService_v2`, `TerminalService`, `UIHistoryService`, MCP/skills/policy services live here.
+- Websocket transport implementation is in backend:
+  - `WebSocketGatewayAdapter` (RPC transport adapter)
+  - `WebSocketGatewayControlService` (access policy + lifecycle)
+- Standalone bootstrap entry:
+  - `packages/backend/src/runtimes/gybackend/startGyBackend.ts`
 
-`dist:mac` keeps the existing signature workaround chain unchanged in behavior:
+### `packages/electron`
 
-- `electron-builder --mac --dir`
-- `apps/electron/scripts/fix-mac-signatures.sh`
-- `electron-builder --mac --prepackaged ...`
+- Owns Electron-only runtime implementation.
+- Main process composition root:
+  - `startElectronMain`
+- Electron IPC adapter and window transport:
+  - `ElectronGatewayIpcAdapter`
+  - `ElectronWindowTransport`
+- Electron settings/theme migration and stores:
+  - `settings/*`, `theme/*`
 
-This preserves the previous macOS packaging behavior while moving configuration ownership into `apps/electron`.
+### `packages/ui`
 
-## Next Milestones
+- Desktop renderer React app.
+- UI stores/components consume gateway updates and runtime snapshots.
+- Handles profile-lock/readiness sync in chat state.
 
-- Move more protocol contracts from `packages/backend` into `packages/shared`
-- Add package-level unit tests for `packages/electron`, `packages/tui`, and `packages/mobile-web`
-- Keep `apps/*` as pure composition shells with zero business logic duplication
+### `packages/tui`
+
+- TUI runtime core:
+  - session state
+  - composer/input workflows
+  - gateway client integration
+- Mirrors profile-lock and readiness events from gateway updates.
+
+### `packages/mobile-web`
+
+- Mobile-first web client implementation.
+- Main controller:
+  - `useMobileController`
+- Includes chat/session/tools/skills/terminal/settings panels.
+- Supports tool management via gateway RPC (`tools:*`, `skills:*`, `terminal:*`).
+
+### `packages/shared`
+
+- Shared cross-surface modules (currently theme-centric shared models).
+
+### `apps/*`
+
+- Must stay thin wrappers with no business logic duplication.
+- Any reusable runtime logic must be implemented in `packages/*`.
+
+## Runtime Boot Flow (Desktop)
+
+The desktop runtime chain is intentionally layered:
+
+1. `apps/electron/src/main/index.ts`
+2. `packages/electron/src/main/startElectronMain.ts`
+3. `GatewayService` instance creation
+4. Register `ElectronWindowTransport` for desktop renderer bridge
+5. Create `WebSocketGatewayControlService`
+6. Apply websocket policy and start `WebSocketGatewayAdapter` if enabled
+7. TUI/mobile-web connect through websocket RPC surface
+
+## Gateway and Session Invariants
+
+- Session lifecycle is owned by `GatewayService`.
+- Profile lock is set at dispatch time and released when session returns to ready state.
+- UI synchronization events:
+  - `SESSION_PROFILE_LOCKED`
+  - `SESSION_READY`
+- Terminal tab operations are exposed through transport bridges (`terminal:list`, `terminal:createTab`, `terminal:kill`, etc.).
+
+## WebSocket Access Policy
+
+Policy values:
+
+- `disabled`
+- `localhost` (host resolves to `127.0.0.1`)
+- `internet` (host resolves to `0.0.0.0`)
+
+Policy is controlled by:
+
+- App settings (`gateway.ws`)
+- Environment variables in standalone backend mode (`GYBACKEND_WS_*`)
+
+## MCP Runtime Notes
+
+`McpRuntimeCore` stdio startup hardening:
+
+- merges required PATH entries with existing PATH
+- injects absolute command directory when command path is explicit
+- uses deterministic CWD fallback:
+  1. explicit config `cwd`
+  2. `$HOME`
+  3. `process.cwd()`
+
+This reduces "command not found" and unstable cwd behavior for MCP servers.
+
+## Packaging / Signing Constraint
+
+`dist:mac` chain must keep the signature workaround sequence:
+
+1. `electron-builder --mac --dir`
+2. `apps/electron/scripts/fix-mac-signatures.sh`
+3. `electron-builder --mac --prepackaged ...`

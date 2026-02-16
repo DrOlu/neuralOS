@@ -1,49 +1,81 @@
 # Build Commands
 
-## Root (`package.json`)
+This page maps root scripts and workspace scripts to their runtime ownership.
+
+## Root Scripts (`package.json`)
+
+### Development
 
 - `npm run dev`
-  - Electron dev mode using `apps/electron/electron.vite.config.ts`.
+  - Electron dev mode (`apps/electron/electron.vite.config.ts`).
+- `npm run dev:electron`
+  - Alias of `npm run dev`.
 - `npm run dev:mobile-web`
-  - Mobile-web dev server (`apps/mobile-web` wrapper; implementation in `packages/mobile-web`).
+  - Mobile-web dev server (`apps/mobile-web` wrapper, implementation in `packages/mobile-web`).
+- `npm run dev:tui`
+  - TUI development wrapper (`@gyshell/tui`).
+- `npm run start:tui`
+  - Start TUI runtime without dev watch mode.
+- `npm run start:backend`
+  - Start standalone gybackend runtime (`@gyshell/gybackend`).
+
+### Build
+
 - `npm run build`
-  - Electron build using `apps/electron/electron.vite.config.ts`.
+  - Electron production build.
+- `npm run build:electron`
+  - Alias of `npm run build`.
 - `npm run build:backend`
-  - Build gybackend wrapper workspace `@gyshell/gybackend` (internal runtime entry).
+  - Build `@gyshell/gybackend` wrapper.
 - `npm run build:tui`
-  - Build tui wrapper workspace `@gyshell/tui` (CLI runtime entry).
+  - Build `@gyshell/tui` wrapper.
 - `npm run build:mobile-web`
-  - Build mobile-web wrapper workspace `@gyshell/mobile-web`.
-- `npm run build:cli-binaries`
-  - Compile platform CLI binaries (`gyll` runtime) via Bun (`apps/tui/scripts/build-cli-binaries.ts`).
+  - Build `@gyshell/mobile-web` wrapper.
 - `npm run build:all`
   - Build Electron + backend + TUI wrappers.
+- `npm run build:cli-binaries`
+  - Build platform CLI binaries for `gyll` (`apps/tui/scripts/build-cli-binaries.ts`).
 - `npm run prepare:cli-runtime`
-  - Compile desktop-bundled CLI binary runtime under `apps/electron/cli-runtime`.
-  - Optional target override: `npm run prepare:cli-runtime -- --target windows-x64` (also supports `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`).
-- `npm run typecheck:all`
-  - Typecheck Electron node/web + backend + TUI + mobile-web.
-- `npm run test:backend-regression`
-  - Backend regression test suite.
-- `npm run test:backend-extreme`
-  - Backend extreme-path test suite.
+  - Prepare desktop-bundled CLI runtime under `apps/electron/cli-runtime`.
+  - Optional target override:
+    - `npm run prepare:cli-runtime -- --target darwin-arm64`
+    - `npm run prepare:cli-runtime -- --target darwin-x64`
+    - `npm run prepare:cli-runtime -- --target linux-arm64`
+    - `npm run prepare:cli-runtime -- --target linux-x64`
+    - `npm run prepare:cli-runtime -- --target windows-x64`
 
-## Dist / Packaging
+### Quality / Tests
+
+- `npm run typecheck`
+  - Combined node/web typecheck (`tsconfig.node.json` + `tsconfig.web.json`).
+- `npm run typecheck:all`
+  - Root typecheck + backend + TUI + mobile-web.
+- `npm run typecheck:backend`
+- `npm run typecheck:tui`
+- `npm run typecheck:mobile-web`
+- `npm run test:backend-regression`
+- `npm run test:backend-extreme`
+- `npm run test:tui`
+- `npm run test:tui-input-automation`
+
+### Packaging
 
 - `npm run dist`
-  - Build backend + Electron + compiled CLI runtime, then package via `apps/electron/electron-builder.yml`.
+  - Build backend + Electron + bundled CLI runtime, then package via `apps/electron/electron-builder.yml`.
 - `npm run dist:mac`
-  - Build backend + Electron, then run macOS packaging flow:
-  1. Build bundled CLI runtime
-  2. `electron-builder --mac --dir`
-  3. `apps/electron/scripts/fix-mac-signatures.sh`
-  4. `electron-builder --mac --prepackaged ...`
+  - macOS packaging chain:
+    1. Build backend + Electron + mac CLI runtime
+    2. `electron-builder --mac --dir`
+    3. `apps/electron/scripts/fix-mac-signatures.sh`
+    4. `electron-builder --mac --prepackaged ...`
 - `npm run dist:win`
-  - Build backend + Electron + compiled Windows CLI runtime, package Windows targets.
+  - Build backend + Electron + Windows CLI runtime, then package Windows targets.
 
-## Desktop Bundled CLI
+---
 
-After installing GyShell desktop app, `gyll` is bundled and available from the desktop runtime setup.
+## Desktop Bundled CLI (`gyll`)
+
+After desktop runtime setup:
 
 - `gyll --help`
 - `gyll --url 127.0.0.1:17888`
@@ -51,7 +83,40 @@ After installing GyShell desktop app, `gyll` is bundled and available from the d
 - `gyll run --url 127.0.0.1:17888 "message"`
 - `gyll hook --url 127.0.0.1:17888 "message"`
 
-## Workspace Commands (Development/Internal)
+If `--url` is omitted, `gyll` attempts local desktop backend on default port `17888`.
+
+---
+
+## Standalone Backend Runtime (gybackend)
+
+Runtime entry: `packages/backend/src/runtimes/gybackend/startGyBackend.ts`
+
+Common environment variables:
+
+- `GYBACKEND_WS_ENABLE`
+  - Enable/disable websocket endpoint (`true`/`false`).
+- `GYBACKEND_WS_HOST`
+  - Host policy input (`127.0.0.1`, `localhost`, `::1`, `0.0.0.0`, etc.).
+- `GYBACKEND_WS_PORT`
+  - Websocket port (default `17888`).
+- `GYBACKEND_DATA_DIR`
+  - Data directory override.
+- `GYBACKEND_BOOTSTRAP_LOCAL_TERMINAL`
+  - Auto-create local terminal at startup (`true` by default).
+- `GYBACKEND_TERMINAL_ID`
+- `GYBACKEND_TERMINAL_TITLE`
+- `GYBACKEND_TERMINAL_CWD`
+- `GYBACKEND_TERMINAL_SHELL`
+
+Access policy mapping is handled by `WebSocketGatewayControlService`:
+
+- `disabled`
+- `localhost`
+- `internet`
+
+---
+
+## Workspace Scripts (Development/Internal)
 
 - `npm --workspace @gyshell/gybackend run build|start|typecheck`
 - `npm --workspace @gyshell/tui run build|build:cli-binaries|dev|start|typecheck|test:smoke`
