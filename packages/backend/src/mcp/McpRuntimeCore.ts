@@ -14,6 +14,7 @@ export interface McpServerConfig {
   command?: string
   args?: string[]
   env?: Record<string, string>
+  cwd?: string
   url?: string
   serverUrl?: string
   headers?: Record<string, string>
@@ -195,6 +196,7 @@ export class McpRuntimeCore extends EventEmitter {
         command: typeof record.command === 'string' ? record.command : undefined,
         args: Array.isArray(record.args) ? record.args.map(String) : undefined,
         env: record.env && typeof record.env === 'object' ? (record.env as Record<string, string>) : undefined,
+        cwd: typeof record.cwd === 'string' ? record.cwd : undefined,
         url: typeof record.url === 'string' ? record.url : undefined,
         serverUrl: typeof record.serverUrl === 'string' ? record.serverUrl : undefined,
         headers:
@@ -250,6 +252,7 @@ export class McpRuntimeCore extends EventEmitter {
       tools: []
     }
     this.servers.set(name, state)
+    let stdioStderrTail = ''
 
     try {
       const transport = config.serverUrl
@@ -264,11 +267,25 @@ export class McpRuntimeCore extends EventEmitter {
               headers: config.headers || {}
             }
           })
-        : new StdioClientTransport({
-            command: config.command || '',
-            args: config.args || [],
-            env: this.buildEnv(config.env)
-          })
+        : (() => {
+            const stdioTransport = new StdioClientTransport({
+              command: config.command || '',
+              args: config.args || [],
+              env: this.buildEnv(config.command, config.env),
+              cwd: this.resolveServerCwd(config),
+              stderr: 'pipe'
+            })
+            const stderrStream = stdioTransport.stderr
+            if (stderrStream) {
+              stderrStream.on('data', (chunk: unknown) => {
+                stdioStderrTail += String(chunk)
+                if (stdioStderrTail.length > 4000) {
+                  stdioStderrTail = stdioStderrTail.slice(-4000)
+                }
+              })
+            }
+            return stdioTransport
+          })()
 
       const client = new Client({ name: `gyshell-mcp-${name}`, version: '1.0.0' }, { capabilities: {} })
       await client.connect(transport)
@@ -286,14 +303,16 @@ export class McpRuntimeCore extends EventEmitter {
       state.error = undefined
     } catch (error) {
       state.status = 'error'
-      state.error = error instanceof Error ? error.message : String(error)
+      const baseError = error instanceof Error ? error.message : String(error)
+      const stderr = stdioStderrTail.trim()
+      state.error = stderr ? `${baseError}\n[stderr] ${stderr}` : baseError
       state.tools = []
       await this.cleanupServer(name)
       this.logger.warn(`[McpRuntimeCore] Failed to start MCP server ${name}.`, error)
     }
   }
 
-  private buildEnv(extra?: Record<string, string>): Record<string, string> {
+  private buildEnv(command?: string, extra?: Record<string, string>): Record<string, string> {
     const env: Record<string, string> = {}
     for (const [key, value] of Object.entries(process.env)) {
       if (typeof value === 'string') {
@@ -309,7 +328,61 @@ export class McpRuntimeCore extends EventEmitter {
       }
     }
 
+    const delimiter = path.delimiter
+    const normalizedCommand = typeof command === 'string' ? command.trim() : ''
+    const requiredPathEntries: string[] = []
+    if (normalizedCommand && path.isAbsolute(normalizedCommand)) {
+      requiredPathEntries.push(path.dirname(normalizedCommand))
+    }
+    if (process.platform !== 'win32') {
+      requiredPathEntries.push('/usr/local/bin', '/opt/homebrew/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin')
+    }
+
+    const currentPath = (env.PATH || env.Path || '').trim()
+    const mergedPath = this.mergePathEntries(currentPath, requiredPathEntries, delimiter)
+    env.PATH = mergedPath
+    if (typeof env.Path === 'string') {
+      env.Path = mergedPath
+    }
+
     return env
+  }
+
+  private mergePathEntries(currentPath: string, requiredEntries: string[], delimiter: string): string {
+    const result: string[] = []
+    const seen = new Set<string>()
+
+    const append = (entry: string): void => {
+      const normalized = entry.trim()
+      if (!normalized) return
+      const dedupeKey = process.platform === 'win32' ? normalized.toLowerCase() : normalized
+      if (seen.has(dedupeKey)) return
+      seen.add(dedupeKey)
+      result.push(normalized)
+    }
+
+    for (const entry of currentPath.split(delimiter)) {
+      append(entry)
+    }
+    for (const entry of requiredEntries) {
+      append(entry)
+    }
+
+    return result.join(delimiter)
+  }
+
+  private resolveServerCwd(config: McpServerConfig): string {
+    const explicitCwd = typeof config.cwd === 'string' ? config.cwd.trim() : ''
+    if (explicitCwd) {
+      return explicitCwd
+    }
+
+    const homeDir = (process.env.HOME || '').trim()
+    if (homeDir) {
+      return homeDir
+    }
+
+    return process.cwd()
   }
 
   private renameTool(serverName: string, tool: StructuredTool): StructuredTool {
