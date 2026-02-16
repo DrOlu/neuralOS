@@ -59,9 +59,6 @@ export const App: React.FC = () => {
   const topBarSessionTitle = formatTopBarSessionTitle(state.activeSession?.title || 'No Session')
   const sessionShortId = state.activeSessionId ? state.activeSessionId.slice(0, 8) : undefined
   const canSend = state.connectionStatus === 'connected' && state.composerValue.trim().length > 0
-  const sessionHint = state.activeSessionId
-    ? `Session ${state.activeSessionId.slice(0, 8)} · @ mention`
-    : 'No active session'
   const activeSessionLockedProfileId = state.activeSession?.lockedProfileId || null
   const activeDetailTurn = React.useMemo<AgentTimelineItem | null>(() => {
     if (!detailTurnId) return null
@@ -91,6 +88,11 @@ export const App: React.FC = () => {
           onOpenSessions={() => {
             setChatSubView('sessions')
           }}
+          onBack={
+            activeTab === 'chat' && chatSubView === 'conversation'
+              ? () => setChatSubView('sessions')
+              : undefined
+          }
           showSessionMeta={activeTab === 'chat' && chatSubView === 'conversation'}
           showSessionAction={activeTab === 'chat' && chatSubView === 'conversation'}
         />
@@ -137,7 +139,6 @@ export const App: React.FC = () => {
                 lockedProfileId={activeSessionLockedProfileId}
                 tokenUsagePercent={state.tokenUsagePercent}
                 onUpdateProfile={(profileId) => void actions.updateProfile(profileId)}
-                sessionHint={sessionHint}
                 mentionOptions={state.mentionOptions}
                 onPickMention={actions.pickMention}
               />
@@ -177,9 +178,7 @@ export const App: React.FC = () => {
         <BottomNav
           activeTab={activeTab}
           onChange={(nextTab) => {
-            if (nextTab !== 'chat') {
-              setDetailTurnId(null)
-            } else {
+            if (nextTab === 'chat' && activeTab === 'chat') {
               setChatSubView('sessions')
             }
             setActiveTab(nextTab)

@@ -16,41 +16,39 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   return (
     <section className="panel-scroll terminal-panel">
       <div className="panel-toolbar">
-        <p className="panel-toolbar-meta">Manage backend terminal tabs.</p>
+        <div className="panel-title-spacer" />
         <button
           type="button"
           className="panel-icon-btn"
-          aria-label="Create terminal tab"
-          title="Create terminal tab"
+          aria-label="New terminal"
+          title="New terminal"
           onClick={onCreateTerminal}
         >
-          <Plus size={15} />
+          <Plus size={16} />
         </button>
       </div>
 
       {terminals.length === 0 ? (
-        <p className="panel-empty">No terminal tab available.</p>
+        <p className="panel-empty">No active terminals.</p>
       ) : (
         <div className="terminal-list">
           {terminals.map((terminal) => {
             return (
-              <article key={terminal.id} className="terminal-item">
+              <article key={terminal.id} className="terminal-item-flat">
                 <div className="terminal-item-main">
                   <strong>{terminal.title}</strong>
                   <p>{terminal.type}</p>
                 </div>
-                <div className="terminal-item-flags actions">
-                  <button
-                    type="button"
-                    className="terminal-mini-btn danger"
-                    aria-label={`Close ${terminal.title}`}
-                    title={`Close ${terminal.title}`}
-                    onClick={() => onCloseTerminal(terminal.id)}
-                    disabled={terminals.length <= 1}
-                  >
-                    <X size={14} />
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  className="terminal-close-btn"
+                  aria-label={`Close ${terminal.title}`}
+                  title={`Close ${terminal.title}`}
+                  onClick={() => onCloseTerminal(terminal.id)}
+                  disabled={terminals.length <= 1}
+                >
+                  <X size={14} />
+                </button>
               </article>
             )
           })}

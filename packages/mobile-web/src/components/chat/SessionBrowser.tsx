@@ -72,17 +72,13 @@ export const SessionBrowser: React.FC<SessionBrowserProps> = ({
                 className={`session-chat-item ${isActive ? 'active' : ''}`}
                 onClick={() => onOpenSession(item.id)}
               >
-                <span className="session-avatar">{titleInitial(item.title)}</span>
+                <div className={`session-status-indicator ${item.isRunning ? 'running' : 'idle'}`} />
                 <div className="session-chat-main">
                   <div className="session-chat-head">
-                    <h3>{item.title}</h3>
-                    <span>{formatRelativeTime(item.updatedAt)}</span>
+                    <h3 className="session-chat-title">{item.title}</h3>
+                    <span className="session-chat-time">{formatRelativeTime(item.updatedAt)}</span>
                   </div>
-                  <p>{item.preview || 'No updates yet.'}</p>
-                  <div className="session-chat-meta">
-                    <span>{item.messagesCount} messages</span>
-                    <span className={item.isRunning ? 'busy' : 'idle'}>{item.isRunning ? 'RUNNING' : 'IDLE'}</span>
-                  </div>
+                  <p className="session-chat-preview">{item.preview || 'No updates yet.'}</p>
                 </div>
               </button>
             )

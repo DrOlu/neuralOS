@@ -18,7 +18,6 @@ interface ComposerBarProps {
   lockedProfileId: string | null
   tokenUsagePercent: number | null
   onUpdateProfile: (profileId: string) => void
-  sessionHint: string
   mentionOptions: MentionOption[]
   onPickMention: (option: MentionOption) => void
 }
@@ -37,7 +36,6 @@ export const ComposerBar: React.FC<ComposerBarProps> = ({
   lockedProfileId,
   tokenUsagePercent,
   onUpdateProfile,
-  sessionHint,
   mentionOptions,
   onPickMention
 }) => {
@@ -47,7 +45,7 @@ export const ComposerBar: React.FC<ComposerBarProps> = ({
     const input = textareaRef.current
     if (!input) return
     input.style.height = '0px'
-    const next = Math.min(Math.max(input.scrollHeight, 36), 128)
+    const next = Math.min(Math.max(input.scrollHeight, 36), 160)
     input.style.height = `${next}px`
   }, [value])
 
@@ -71,39 +69,9 @@ export const ComposerBar: React.FC<ComposerBarProps> = ({
 
   return (
     <footer className="composer-modern">
-      <div className="composer-status-row">
-        <span className="composer-session-hint">{sessionHint}</span>
-        <div className="composer-status-right">
-          {tokenUsagePercent !== null ? <span className="composer-token-mini">{tokenUsagePercent}%</span> : null}
-          <span
-            className={`composer-run-indicator ${isRunning ? 'running' : 'idle'}`}
-            aria-label={isRunning ? 'Running' : 'Idle'}
-            title={isRunning ? 'Running' : 'Idle'}
-          ></span>
-        </div>
-      </div>
+      <MentionSuggestions options={mentionOptions} onPick={onPickMention} />
 
-      <div className="composer-input-shell">
-        <MentionSuggestions options={mentionOptions} onPick={onPickMention} />
-
-        <div className={`composer-profile-mini ${profileLocked ? 'locked' : ''}`}>
-          <span className="composer-profile-prefix">
-            {profileLocked ? <Lock size={10} /> : null}
-            <span>Model</span>
-          </span>
-          <select
-            value={profileValue}
-            disabled={profileLocked || profiles.length === 0}
-            onChange={(event) => onUpdateProfile(event.target.value)}
-          >
-            {profiles.map((profile) => (
-              <option key={profile.id} value={profile.id}>
-                {profile.name}
-              </option>
-            ))}
-          </select>
-        </div>
-
+      <div className="composer-textarea-row">
         <textarea
           ref={textareaRef}
           value={value}
@@ -132,8 +100,28 @@ export const ComposerBar: React.FC<ComposerBarProps> = ({
           autoCorrect="off"
           autoCapitalize="sentences"
         />
+      </div>
 
-        <div className="composer-actions">
+      <div className="composer-bottom-row">
+        <div className="composer-row-left">
+          <div className={`composer-profile-selector ${profileLocked ? 'locked' : ''}`}>
+            {profileLocked ? <Lock size={10} /> : null}
+            <select
+              value={profileValue}
+              disabled={profileLocked || profiles.length === 0}
+              onChange={(event) => onUpdateProfile(event.target.value)}
+            >
+              {profiles.map((profile) => (
+                <option key={profile.id} value={profile.id}>
+                  {profile.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          {tokenUsagePercent !== null ? <span className="composer-token-label">{tokenUsagePercent}%</span> : null}
+        </div>
+
+        <div className="composer-row-right">
           <button
             type="button"
             className="composer-icon-button stop"
