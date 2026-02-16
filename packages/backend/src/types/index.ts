@@ -207,6 +207,8 @@ export interface TerminalTab {
   rows: number
   type: ConnectionType
   isInitializing?: boolean // Silence mode flag
+  runtimeState?: 'initializing' | 'ready' | 'exited'
+  lastExitCode?: number
   remoteOs?: 'unix' | 'windows'
   systemInfo?: TerminalSystemInfo
 }

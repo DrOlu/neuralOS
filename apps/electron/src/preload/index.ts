@@ -279,6 +279,8 @@ export interface GyShellAPI {
         type: ConnectionType
         cols: number
         rows: number
+        runtimeState?: 'initializing' | 'ready' | 'exited'
+        lastExitCode?: number
       }>
     }>
     createTab: (config: TerminalConfig) => Promise<{ id: string }>
@@ -297,6 +299,8 @@ export interface GyShellAPI {
           type: ConnectionType
           cols: number
           rows: number
+          runtimeState?: 'initializing' | 'ready' | 'exited'
+          lastExitCode?: number
         }>
       }) => void
     ) => () => void
@@ -441,6 +445,8 @@ const api: GyShellAPI = {
             type: ConnectionType
             cols: number
             rows: number
+            runtimeState?: 'initializing' | 'ready' | 'exited'
+            lastExitCode?: number
           }>
         }
       ) => callback(data)

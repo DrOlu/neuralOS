@@ -346,12 +346,14 @@ export class ElectronGatewayIpcAdapter {
     // Terminal
     ipcMain.handle('terminal:list', async () => {
       return {
-        terminals: this.terminalService.getAllTerminals().map((terminal) => ({
+        terminals: this.terminalService.getDisplayTerminals().map((terminal) => ({
           id: terminal.id,
           title: terminal.title,
           type: terminal.type,
           cols: terminal.cols,
-          rows: terminal.rows
+          rows: terminal.rows,
+          runtimeState: terminal.runtimeState,
+          lastExitCode: terminal.lastExitCode
         }))
       }
     })

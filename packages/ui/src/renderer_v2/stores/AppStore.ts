@@ -36,6 +36,8 @@ export interface TerminalTabModel {
   title: string
   config: TerminalConfig
   connectionRef?: { type: 'local' } | { type: 'ssh'; entryId: string }
+  runtimeState?: 'initializing' | 'ready' | 'exited'
+  lastExitCode?: number
 }
 type TerminalListPayload = Awaited<ReturnType<Window['gyshell']['terminal']['list']>>
 
@@ -202,6 +204,8 @@ export class AppStore {
         return {
           ...existing,
           title: item.title,
+          runtimeState: item.runtimeState,
+          lastExitCode: item.lastExitCode,
           config: {
             ...existing.config,
             title: item.title,
@@ -214,7 +218,9 @@ export class AppStore {
         id: item.id,
         title: item.title,
         config: this.toTerminalConfig(item),
-        connectionRef: item.type === 'local' ? { type: 'local' } : undefined
+        connectionRef: item.type === 'local' ? { type: 'local' } : undefined,
+        runtimeState: item.runtimeState,
+        lastExitCode: item.lastExitCode
       }
     })
 
@@ -715,18 +721,9 @@ export class AppStore {
         this.chat.handleUiUpdate(action)
       })
 
-      // Setup Terminal Exit Listener
-      window.gyshell.terminal.onExit(({ terminalId }) => {
-        // Only automatically close tab if it's NOT in initializing state.
-        // If it was initializing (e.g. SSH connecting), we want to keep it open
-        // so the user can see the error message.
-        const tab = this.terminalTabs.find(t => t.id === terminalId)
-        // Note: We can't easily check backend state here without a sync call,
-        // but we can assume if it's an SSH tab that just failed, we should keep it.
-        // A better way is to let the user manually close failed connections.
-        if (tab && tab.config.type === 'local') {
-          this.closeTab(terminalId)
-        }
+      // Terminal exit should not auto-close tabs. UI tab lifecycle is user-driven.
+      window.gyshell.terminal.onExit(() => {
+        // No-op: runtime state is synchronized through terminal:tabs updates.
       })
 
       window.gyshell.terminal.onTabsUpdated((payload) => {
@@ -789,7 +786,13 @@ export class AppStore {
     const id = `local-${uuidv4()}`
     const title = this.getUniqueTitle('Local')
     const cfg: TerminalConfig = { type: 'local', id, title, cols: 80, rows: 24 }
-    const tab: TerminalTabModel = { id, title, config: cfg, connectionRef: { type: 'local' } }
+    const tab: TerminalTabModel = {
+      id,
+      title,
+      config: cfg,
+      connectionRef: { type: 'local' },
+      runtimeState: 'initializing'
+    }
     this.terminalTabs.push(tab)
     this.activeTerminalId = id
   }
@@ -828,7 +831,13 @@ export class AppStore {
       tunnels,
       jumpHost
     } as any
-    const tab: TerminalTabModel = { id, title, config: cfg, connectionRef: { type: 'ssh', entryId } }
+    const tab: TerminalTabModel = {
+      id,
+      title,
+      config: cfg,
+      connectionRef: { type: 'ssh', entryId },
+      runtimeState: 'initializing'
+    }
     this.terminalTabs.push(tab)
     this.activeTerminalId = id
   }

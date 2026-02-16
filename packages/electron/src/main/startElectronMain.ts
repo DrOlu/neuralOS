@@ -245,13 +245,17 @@ export async function startElectronMain(): Promise<void> {
         port,
         terminalBridge: {
           listTerminals: () =>
-            terminalService.getAllTerminals().map((terminal) => ({
+            terminalService.getDisplayTerminals().map((terminal) => ({
               id: terminal.id,
               title: terminal.title,
-              type: terminal.type
+              type: terminal.type,
+              cols: terminal.cols,
+              rows: terminal.rows,
+              runtimeState: terminal.runtimeState,
+              lastExitCode: terminal.lastExitCode
             })),
           createTab: async (config) => {
-            const snapshot = terminalService.getAllTerminals()
+            const snapshot = terminalService.getDisplayTerminals()
             const normalized = createAutoTerminalConfig(snapshot, config)
             const tab = await terminalService.createTerminal(normalized as any)
             return { id: tab.id }
@@ -266,7 +270,7 @@ export async function startElectronMain(): Promise<void> {
             terminalService.resize(terminalId, cols, rows)
           },
           kill: async (terminalId) => {
-            if (terminalService.getAllTerminals().length <= 1) {
+            if (terminalService.getDisplayTerminals().length <= 1) {
               throw new Error('Cannot close the last terminal tab.')
             }
             terminalService.kill(terminalId)

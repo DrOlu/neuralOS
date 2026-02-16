@@ -33,6 +33,8 @@ type TerminalTabSnapshot = {
   type: ConnectionType
   cols: number
   rows: number
+  runtimeState?: 'initializing' | 'ready' | 'exited'
+  lastExitCode?: number
 }
 
 export class TerminalService {
@@ -58,12 +60,14 @@ export class TerminalService {
   }
 
   private listRenderableTerminals(): TerminalTabSnapshot[] {
-    return this.getAllTerminals().map((terminal) => ({
+    return Array.from(this.terminals.values()).map((terminal) => ({
       id: terminal.id,
       title: terminal.title,
       type: terminal.type,
       cols: terminal.cols,
-      rows: terminal.rows
+      rows: terminal.rows,
+      runtimeState: terminal.runtimeState,
+      lastExitCode: terminal.lastExitCode
     }))
   }
 
@@ -125,7 +129,8 @@ export class TerminalService {
       cols: config.cols,
       rows: config.rows,
       type: config.type,
-      isInitializing: config.type === 'ssh' || (config.type === 'local' && os.platform() === 'win32') // Enable silence mode for SSH and local Windows
+      isInitializing: config.type === 'ssh' || (config.type === 'local' && os.platform() === 'win32'), // Enable silence mode for SSH and local Windows
+      runtimeState: config.type === 'ssh' || (config.type === 'local' && os.platform() === 'win32') ? 'initializing' : 'ready'
     }
 
     // Initialize Headless Terminal for AI context
@@ -167,6 +172,8 @@ export class TerminalService {
       if (tab.isInitializing) {
         // If we received data, it means backend's silence mode passed
         tab.isInitializing = false
+        tab.runtimeState = 'ready'
+        this.publishTerminalTabsChanged()
       }
 
       if (tab.type === 'ssh') {
@@ -278,22 +285,12 @@ export class TerminalService {
       this.onTaskFinishedCallbacks.delete(activeTaskId)
     }
 
-    // If terminal was still initializing, we do NOT delete it from the map.
-    // This allows the error message to remain visible in the UI.
-    // We only delete if it was a normally running terminal.
-    if (tab && !tab.isInitializing) {
-      this.terminals.delete(terminalId)
-      this.buffers.delete(terminalId)
-      this.selectionByTerminal.delete(terminalId)
-      this.oscParseBufByTerminal.delete(terminalId)
-      this.tasksByTerminal.delete(terminalId)
-      this.activeTaskByTerminal.delete(terminalId)
-      
-      const headless = this.headlessPtys.get(terminalId)
-      if (headless) {
-        headless.dispose()
-        this.headlessPtys.delete(terminalId)
-      }
+    // UI lifecycle is user-driven. Do not auto-remove tab metadata on backend exit.
+    // We only update runtime state and keep captured output until user closes the tab.
+    if (tab) {
+      tab.isInitializing = false
+      tab.runtimeState = 'exited'
+      tab.lastExitCode = typeof code === 'number' ? code : -1
     }
     
     this.sendToRenderer('terminal:exit', { terminalId, code })
@@ -302,7 +299,7 @@ export class TerminalService {
 
   write(terminalId: string, data: string): void {
     const terminal = this.terminals.get(terminalId)
-    if (terminal) {
+    if (terminal && terminal.runtimeState === 'ready') {
       const backend = this.getBackend(terminal.type)
       backend.write(terminal.ptyId, data)
     }
@@ -496,8 +493,12 @@ export class TerminalService {
 
   // dynGetRecentOutput is no longer needed as getRecentOutput handles it
 
+  getDisplayTerminals(): TerminalTab[] {
+    return Array.from(this.terminals.values())
+  }
+
   getAllTerminals(): TerminalTab[] {
-    return Array.from(this.terminals.values()).filter(t => !t.isInitializing)
+    return Array.from(this.terminals.values()).filter((t) => !t.isInitializing && t.runtimeState === 'ready')
   }
 
   getCommandTask(terminalId: string, commandId: string): CommandTask | undefined {
@@ -628,6 +629,9 @@ export class TerminalService {
     const terminal = this.terminals.get(terminalId)
     if (!terminal) {
       throw new Error(`Terminal ${terminalId} not found`)
+    }
+    if (terminal.runtimeState !== 'ready') {
+      throw new Error(`Terminal ${terminal.title || terminal.id} is not ready (state=${terminal.runtimeState || 'unknown'}).`)
     }
 
     if (this.activeTaskByTerminal.has(terminalId)) {

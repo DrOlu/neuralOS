@@ -72,6 +72,10 @@ export const TerminalPanel: React.FC<{ store: AppStore }> = observer(({ store })
                   <Icon size={14} strokeWidth={2} />
                 </span>
                 <span className="tab-title">{tab.title}</span>
+                <span
+                  className={`tab-runtime-state tab-runtime-state-${tab.runtimeState || 'initializing'}`}
+                  title={tab.runtimeState || 'initializing'}
+                />
                 <button
                   className="tab-close"
                   title={t.common.close}

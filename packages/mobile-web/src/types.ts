@@ -113,6 +113,10 @@ export interface GatewayTerminalSummary {
   id: string
   title: string
   type: string
+  cols?: number
+  rows?: number
+  runtimeState?: 'initializing' | 'ready' | 'exited'
+  lastExitCode?: number
 }
 
 export interface GatewayProfileSummary {

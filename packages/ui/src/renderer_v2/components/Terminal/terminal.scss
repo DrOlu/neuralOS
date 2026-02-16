@@ -65,6 +65,26 @@
   white-space: nowrap;
 }
 
+.tab-runtime-state {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+
+.tab-runtime-state-initializing {
+  background: #f6c244;
+}
+
+.tab-runtime-state-ready {
+  background: #3ccf6f;
+}
+
+.tab-runtime-state-exited {
+  background: #8a8f98;
+}
+
 .tab-close {
   margin: 0;
   height: 18px;
