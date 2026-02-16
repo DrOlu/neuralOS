@@ -94,7 +94,7 @@ export const App: React.FC = () => {
               : undefined
           }
           showSessionMeta={activeTab === 'chat' && chatSubView === 'conversation'}
-          showSessionAction={activeTab === 'chat' && chatSubView === 'conversation'}
+          showSessionAction={false}
         />
 
         {state.connectionError ? <section className="error-strip-modern">{state.connectionError}</section> : null}

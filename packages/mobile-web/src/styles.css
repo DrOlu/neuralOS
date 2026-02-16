@@ -1103,13 +1103,16 @@ button:disabled {
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 12px;
 }
 
 .detail-screen-header h2 {
   margin: 0;
   color: var(--ink);
-  font-size: 17px;
+  font-size: 16px;
+  font-weight: 700;
+  flex: 1;
+  text-align: center;
 }
 
 .sheet-icon-btn {
