@@ -53,7 +53,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   return (
     <section className="panel-scroll terminal-panel">
       <div className="panel-toolbar">
-        <div className="panel-title-spacer">
+        <div className="panel-title-spacer terminal-create-field">
           <select
             className="terminal-create-select"
             value={createTarget}
@@ -67,15 +67,6 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
             ))}
           </select>
         </div>
-        <button
-          type="button"
-          className="panel-icon-btn"
-          aria-label="New terminal"
-          title="New terminal"
-          onClick={handleCreate}
-        >
-          <Plus size={16} />
-        </button>
       </div>
 
       {sshConnections.length === 0 ? <p className="terminal-sub-hint">No saved SSH connection found.</p> : null}
@@ -106,6 +97,18 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
           })}
         </div>
       )}
+
+      <div className="panel-action-dock">
+        <button
+          type="button"
+          className="panel-icon-btn panel-action-btn"
+          aria-label="New terminal"
+          title="New terminal"
+          onClick={handleCreate}
+        >
+          <Plus size={18} />
+        </button>
+      </div>
     </section>
   )
 }

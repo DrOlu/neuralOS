@@ -4,11 +4,11 @@ import type { NodeSettingsService } from './NodeSettingsService'
 import {
   FileSkillStore,
   type SkillInfo,
-  type CreateOrRewriteSkillResult
+  type CreateSkillResult
 } from '../../skills/FileSkillStore'
 import { resolveDefaultSkillScanRoots } from '../../skills/scanRoots'
 
-export type { SkillInfo, CreateOrRewriteSkillResult }
+export type { SkillInfo, CreateSkillResult }
 
 export class NodeSkillService {
   private readonly skillsDir: string
@@ -48,8 +48,8 @@ export class NodeSkillService {
     return this.core.readSkillContentByName(name)
   }
 
-  async createOrRewriteSkill(name: string, description: string, content: string): Promise<CreateOrRewriteSkillResult> {
-    return this.core.createOrRewriteSkill(name, description, content)
+  async createSkill(name: string, description: string, content: string): Promise<CreateSkillResult> {
+    return this.core.createSkill(name, description, content)
   }
 
   async createSkillFromTemplate(): Promise<SkillInfo> {

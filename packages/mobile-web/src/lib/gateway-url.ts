@@ -1,4 +1,5 @@
 export const GATEWAY_URL_STORAGE_KEY = 'gyshell-mobile-gateway-url'
+export const GATEWAY_AUTO_CONNECT_STORAGE_KEY = 'gyshell-mobile-gateway-auto-connect'
 
 export function defaultGatewayUrl(): string {
   const host = window.location.hostname || '127.0.0.1'
@@ -20,4 +21,12 @@ export function loadGatewayUrlFromStorage(): string {
 
 export function saveGatewayUrlToStorage(url: string): void {
   window.localStorage.setItem(GATEWAY_URL_STORAGE_KEY, url)
+}
+
+export function loadGatewayAutoConnectFromStorage(): boolean {
+  return window.localStorage.getItem(GATEWAY_AUTO_CONNECT_STORAGE_KEY) === '1'
+}
+
+export function saveGatewayAutoConnectToStorage(enabled: boolean): void {
+  window.localStorage.setItem(GATEWAY_AUTO_CONNECT_STORAGE_KEY, enabled ? '1' : '0')
 }

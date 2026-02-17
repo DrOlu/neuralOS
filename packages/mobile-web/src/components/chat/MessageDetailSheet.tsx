@@ -27,6 +27,10 @@ export const MessageDetailSheet: React.FC<MessageDetailSheetProps> = ({
   const messages = turn?.detailMessages || []
   const detailListRef = React.useRef<HTMLElement>(null)
   const shouldStickDetailListToBottomRef = React.useRef(true)
+  const previousDetailContextRef = React.useRef<{
+    open: boolean
+    turnId: string | null
+  } | null>(null)
   const detailUpdateSignature = React.useMemo(() => {
     return messages
       .map((message) => {
@@ -53,19 +57,33 @@ export const MessageDetailSheet: React.FC<MessageDetailSheetProps> = ({
   }, [open, turn?.id])
 
   React.useEffect(() => {
-    if (!open) return
+    const currentContext = {
+      open,
+      turnId: turn?.id || null
+    }
+    if (!open) {
+      previousDetailContextRef.current = currentContext
+      return
+    }
     const element = detailListRef.current
-    if (!element) return
-    element.scrollTop = element.scrollHeight
-    shouldStickDetailListToBottomRef.current = true
-  }, [open, turn?.id])
+    if (!element) {
+      previousDetailContextRef.current = currentContext
+      return
+    }
 
-  React.useEffect(() => {
-    if (!open || !shouldStickDetailListToBottomRef.current) return
-    const element = detailListRef.current
-    if (!element) return
-    element.scrollTop = element.scrollHeight
-  }, [open, detailUpdateSignature])
+    const previousContext = previousDetailContextRef.current
+    const hasContextChanged =
+      !previousContext ||
+      previousContext.open !== currentContext.open ||
+      previousContext.turnId !== currentContext.turnId
+
+    if (hasContextChanged || shouldStickDetailListToBottomRef.current) {
+      element.scrollTop = element.scrollHeight
+      shouldStickDetailListToBottomRef.current = true
+    }
+
+    previousDetailContextRef.current = currentContext
+  }, [open, turn?.id, detailUpdateSignature])
 
   return (
     <aside className={`detail-screen ${open ? 'is-open' : ''}`} aria-hidden={!open}>

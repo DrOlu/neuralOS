@@ -22,8 +22,8 @@ import { waitSchema, waitTerminalIdleSchema, waitCommandEndSchema, wait, waitTer
 import { 
   skillToolSchema, 
   buildSkillToolDescription,
-  createOrRewriteSkillSchema,
-  runCreateOrRewriteSkillTool
+  createSkillSchema,
+  runCreateSkillTool
 } from './tools/skill_tools'
 
 // Re-export schemas for AgentService to use
@@ -41,7 +41,7 @@ export {
 
 export { readFileSchema } from './tools/read_tools'
 export { waitSchema, waitTerminalIdleSchema, waitCommandEndSchema } from './tools/wait_tools'
-export { skillToolSchema, createOrRewriteSkillSchema, buildSkillToolDescription } from './tools/skill_tools'
+export { skillToolSchema, createSkillSchema, buildSkillToolDescription } from './tools/skill_tools'
 
 export { BUILTIN_TOOL_INFO } from './prompts'
 
@@ -86,9 +86,9 @@ export function buildToolsForModel(readFileSupport: ReadFileSupport) {
       schema: skillToolSchema
     },
     {
-      name: 'create_or_rewrite_skill',
-      description: 'Create a new skill or fully rewrite an existing skill in GyShell skills. If the same skill name already exists in GyShell\'s own skills directory, this tool overwrites that skill in place. For modifications, output the complete new skill content in `content` and replace the old content entirely.',
-      schema: createOrRewriteSkillSchema
+      name: 'create_skill',
+      description: 'Create a new skill in GyShell skills. This tool only creates new skills and does not modify or overwrite existing ones. If the skill name already exists, the call must fail and you should choose a different name. If you need to modify an existing skill, use the create_or_edit tool to edit that skill\'s md file directly.',
+      schema: createSkillSchema
     },
     {
       name: 'wait',
@@ -121,6 +121,6 @@ export const toolImplementations = {
   waitTerminalIdle,
   writeAndEdit,
   runReadFile,
-  runCreateOrRewriteSkillTool,
+  runCreateSkillTool,
   waitCommandEnd
 }

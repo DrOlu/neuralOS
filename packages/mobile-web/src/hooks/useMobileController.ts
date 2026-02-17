@@ -1,6 +1,12 @@
 import React from 'react'
 import { GatewayClient } from '../gateway-client'
-import { loadGatewayUrlFromStorage, normalizeGatewayUrl, saveGatewayUrlToStorage } from '../lib/gateway-url'
+import {
+  loadGatewayAutoConnectFromStorage,
+  loadGatewayUrlFromStorage,
+  normalizeGatewayUrl,
+  saveGatewayAutoConnectToStorage,
+  saveGatewayUrlToStorage
+} from '../lib/gateway-url'
 import {
   applyMentionToInput,
   encodeMentions,
@@ -453,6 +459,7 @@ export function useMobileController(): {
   const reconnectInFlightRef = React.useRef(false)
   const reconnectAttemptRunnerRef = React.useRef<() => Promise<void>>(async () => {})
   const reconnectAttemptRef = React.useRef(0)
+  const autoConnectBootstrappedRef = React.useRef(false)
   const connectFlowRef = React.useRef<Promise<void> | null>(null)
   const heartbeatTimerRef = React.useRef<ReturnType<typeof setInterval> | null>(null)
   const heartbeatInFlightRef = React.useRef(false)
@@ -949,10 +956,35 @@ export function useMobileController(): {
     }
   }, [clearReconnectTimer, client, scheduleReconnect])
 
+  React.useEffect(() => {
+    if (autoConnectBootstrappedRef.current) return
+    autoConnectBootstrappedRef.current = true
+    if (!loadGatewayAutoConnectFromStorage()) return
+
+    const target = normalizeGatewayUrl(gatewayInputRef.current)
+    setActionPending(true)
+    setConnectionError('')
+    manualDisconnectRef.current = false
+    autoReconnectEnabledRef.current = true
+    reconnectInFlightRef.current = false
+    reconnectAttemptRef.current = 0
+    clearReconnectTimer()
+
+    void runConnectFlow(target, 'reconnect')
+      .catch((error) => {
+        setConnectionError(safeError(error))
+        scheduleReconnect(safeError(error))
+      })
+      .finally(() => {
+        setActionPending(false)
+      })
+  }, [clearReconnectTimer, runConnectFlow, scheduleReconnect])
+
   const connectGateway = React.useCallback(async () => {
     const target = normalizeGatewayUrl(gatewayInput)
     setActionPending(true)
     setConnectionError('')
+    saveGatewayAutoConnectToStorage(true)
     manualDisconnectRef.current = false
     autoReconnectEnabledRef.current = true
     reconnectInFlightRef.current = false
@@ -970,6 +1002,7 @@ export function useMobileController(): {
   }, [clearReconnectTimer, gatewayInput, runConnectFlow, scheduleReconnect])
 
   const disconnectGateway = React.useCallback(() => {
+    saveGatewayAutoConnectToStorage(false)
     manualDisconnectRef.current = true
     autoReconnectEnabledRef.current = false
     reconnectInFlightRef.current = false

@@ -1,7 +1,7 @@
 import type { StructuredTool } from '@langchain/core/tools'
 import type { AgentEvent, BackendSettings, ChatSession, TerminalTab } from '../types'
 import type { CommandPolicyListName, CommandPolicyLists, CommandPolicyMode } from './CommandPolicy/CommandPolicyService'
-import type { SkillInfo, CreateOrRewriteSkillResult } from './SkillService'
+import type { SkillInfo, CreateSkillResult } from './SkillService'
 import type { McpServerSummary } from './McpToolService'
 
 export interface ISettingsRuntime {
@@ -41,7 +41,7 @@ export interface ISkillRuntime {
   getAll(): Promise<SkillInfo[]>
   getEnabledSkills(): Promise<SkillInfo[]>
   readSkillContentByName(name: string): Promise<{ info: SkillInfo; content: string }>
-  createOrRewriteSkill(name: string, description: string, content: string): Promise<CreateOrRewriteSkillResult>
+  createSkill(name: string, description: string, content: string): Promise<CreateSkillResult>
   createSkillFromTemplate?(): Promise<SkillInfo>
   openSkillsFolder?(): Promise<void>
   openSkillFile?(fileName: string): Promise<void>

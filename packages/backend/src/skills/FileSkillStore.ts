@@ -13,9 +13,8 @@ export interface SkillInfo {
   supportingFiles?: string[]
 }
 
-export type CreateOrRewriteSkillResult = {
+export interface CreateSkillResult {
   skill: SkillInfo
-  action: 'created' | 'rewritten'
 }
 
 interface ParsedMarkdown {
@@ -226,20 +225,17 @@ export class FileSkillStore {
     return created
   }
 
-  async createOrRewriteSkill(name: string, description: string, content: string): Promise<CreateOrRewriteSkillResult> {
+  async createSkill(name: string, description: string, content: string): Promise<CreateSkillResult> {
     const primary = await this.resolvePrimaryRoot()
     await fs.mkdir(primary, { recursive: true })
     await this.reload()
 
-    const existing = this.cache.find((item) => item.name === name && item.scanRoot === primary)
-    const body = ['---', `name: ${name}`, `description: ${description}`, '---', '', content].join('\n')
-
+    const existing = this.cache.find((item) => item.name === name)
     if (existing) {
-      await fs.writeFile(existing.filePath, body, 'utf8')
-      await this.reload()
-      const updated = this.cache.find((item) => item.filePath === existing.filePath) || existing
-      return { skill: updated, action: 'rewritten' }
+      throw new Error(`Skill "${name}" already exists. Please use a different name.`)
     }
+
+    const body = ['---', `name: ${name}`, `description: ${description}`, '---', '', content].join('\n')
 
     const preferredName = toSafeSkillFileName(name)
     let filePath = path.join(primary, preferredName)
@@ -260,10 +256,7 @@ export class FileSkillStore {
       throw new Error('Skill file created but metadata cache lookup failed')
     }
 
-    return {
-      skill: created,
-      action: 'created'
-    }
+    return { skill: created }
   }
 
   async reload(): Promise<SkillInfo[]> {

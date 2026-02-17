@@ -34,9 +34,10 @@ const UserBubble: React.FC<{ message: ChatMessage }> = ({ message }) => {
 
 const AgentTurnBubble: React.FC<{
   item: AgentTimelineItem
+  isLastItem: boolean
   onAskDecision: (message: ChatMessage, decision: 'allow' | 'deny') => void
   onOpenDetail: (turnId: string) => void
-}> = ({ item, onAskDecision, onOpenDetail }) => {
+}> = ({ item, isLastItem, onAskDecision, onOpenDetail }) => {
   const message = item.latestMessage
   const messageTitle = messageTypeTitle(message)
   const preview = trimOuterBlankLines(messageDetail(message))
@@ -51,18 +52,24 @@ const AgentTurnBubble: React.FC<{
   const decision = message.metadata?.decision
   const showDecisionButtons = isAsk && decision !== 'allow' && decision !== 'deny'
   const markdownPreview = trimOuterBlankLines(normalizeDisplayText(message.content || ''))
+  const textPreview = markdownPreview || (item.streaming ? '...' : '')
+  const eventPreview = preview || (item.streaming ? '...' : '')
+  const shouldClampTextPreview = item.streaming || !isLastItem
 
   return (
     <article className="bubble-row assistant">
       <div className="bubble assistant agent-turn">
         {isText ? (
-          <MarkdownContent className="bubble-markdown" content={markdownPreview} />
+          <MarkdownContent
+            className={`bubble-markdown ${shouldClampTextPreview ? 'streaming-clamped' : ''} ${
+              markdownPreview ? '' : 'placeholder'
+            }`}
+            content={textPreview}
+          />
         ) : (
           <div className="agent-event-preview">
             <div className="agent-event-title">{messageTitle}</div>
-            {preview ? (
-              <pre className={`agent-event-body ${isToolLike ? 'tool-fixed' : ''}`}>{preview}</pre>
-            ) : null}
+            {eventPreview ? <pre className={`agent-event-body ${isToolLike ? 'tool-fixed' : ''}`}>{eventPreview}</pre> : null}
           </div>
         )}
 
@@ -105,7 +112,13 @@ export const MessageList: React.FC<MessageListProps> = ({ items, onAskDecision, 
             return <UserBubble key={item.id} message={item.message} />
           }
           return (
-            <AgentTurnBubble key={item.id} item={item} onAskDecision={onAskDecision} onOpenDetail={onOpenDetail} />
+            <AgentTurnBubble
+              key={item.id}
+              item={item}
+              isLastItem={item.id === items[items.length - 1]?.id}
+              onAskDecision={onAskDecision}
+              onOpenDetail={onOpenDetail}
+            />
           )
         })
       )}

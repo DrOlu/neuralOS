@@ -46,18 +46,6 @@ export const ToolsPanel: React.FC<ToolsPanelProps> = ({
         <p className="panel-toolbar-meta">
           MCP {enabledMcpCount}/{mcpTools.length} enabled, built-in {enabledBuiltInCount}/{builtInTools.length} enabled
         </p>
-        <div className="panel-toolbar-actions">
-          <button
-            type="button"
-            className="panel-icon-btn"
-            disabled={!canMutate || reloading}
-            onClick={() => void handleReload()}
-            aria-label="Reload tools"
-            title="Reload tools"
-          >
-            <RefreshCw size={16} className={reloading ? 'spin' : ''} />
-          </button>
-        </div>
       </div>
 
       <div className="skill-source-group">
@@ -124,6 +112,19 @@ export const ToolsPanel: React.FC<ToolsPanelProps> = ({
             })}
           </div>
         )}
+      </div>
+
+      <div className="panel-action-dock">
+        <button
+          type="button"
+          className="panel-icon-btn panel-action-btn"
+          disabled={!canMutate || reloading}
+          onClick={() => void handleReload()}
+          aria-label="Reload tools"
+          title="Reload tools"
+        >
+          <RefreshCw size={18} className={reloading ? 'spin' : ''} />
+        </button>
       </div>
     </section>
   )

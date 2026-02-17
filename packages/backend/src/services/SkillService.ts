@@ -4,11 +4,11 @@ import { SettingsService } from './SettingsService'
 import {
   FileSkillStore,
   type SkillInfo,
-  type CreateOrRewriteSkillResult
+  type CreateSkillResult
 } from '../skills/FileSkillStore'
 import { resolveDefaultSkillScanRoots } from '../skills/scanRoots'
 
-export type { SkillInfo, CreateOrRewriteSkillResult }
+export type { SkillInfo, CreateSkillResult }
 
 export class SkillService {
   private settingsService?: SettingsService
@@ -60,12 +60,12 @@ export class SkillService {
     await this.core.deleteSkillFile(fileName)
   }
 
-  async createOrRewriteSkill(
+  async createSkill(
     name: string,
     description: string,
     content: string
-  ): Promise<CreateOrRewriteSkillResult> {
-    return this.core.createOrRewriteSkill(name, description, content)
+  ): Promise<CreateSkillResult> {
+    return this.core.createSkill(name, description, content)
   }
 
   async createSkillFromTemplate(): Promise<SkillInfo> {

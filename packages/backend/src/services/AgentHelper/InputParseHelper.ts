@@ -54,8 +54,8 @@ export class InputParseHelper {
       const skillNames = Array.from(new Set(skillMatches.map(m => m[1])));
       for (const name of skillNames) {
         try {
-          const { content } = await skillService.readSkillContentByName(name);
-          skillDetails += `${USEFUL_SKILL_TAG}Skill Name: ${name}\nContent:\n${content}\n\n`;
+          const { info, content } = await skillService.readSkillContentByName(name);
+          skillDetails += `${USEFUL_SKILL_TAG}Skill Name: ${name}\nSkill Path: ${info.filePath}\nContent:\n${content}\n\n`;
         } catch (err) {
           console.warn(`[InputParseHelper] Failed to fetch skill: ${name}`, err);
         }

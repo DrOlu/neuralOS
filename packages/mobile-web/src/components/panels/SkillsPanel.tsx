@@ -77,21 +77,7 @@ export const SkillsPanel: React.FC<SkillsPanelProps> = ({ skills, connectionStat
   return (
     <section className="panel-scroll skills-panel">
       <div className="panel-toolbar">
-        <p className="panel-toolbar-meta">
-          {enabledCount}/{skills.length} enabled
-        </p>
-        <div className="panel-toolbar-actions">
-          <button
-            type="button"
-            className="panel-icon-btn"
-            disabled={!canMutate || reloading}
-            onClick={handleReload}
-            aria-label="Reload skills"
-            title="Reload skills"
-          >
-            <RefreshCw size={16} className={reloading ? 'spin' : ''} />
-          </button>
-        </div>
+        <p className="panel-toolbar-meta">{enabledCount}/{skills.length} enabled</p>
       </div>
 
       {skills.length === 0 ? (
@@ -131,6 +117,19 @@ export const SkillsPanel: React.FC<SkillsPanelProps> = ({ skills, connectionStat
           })}
         </div>
       )}
+
+      <div className="panel-action-dock">
+        <button
+          type="button"
+          className="panel-icon-btn panel-action-btn"
+          disabled={!canMutate || reloading}
+          onClick={handleReload}
+          aria-label="Reload skills"
+          title="Reload skills"
+        >
+          <RefreshCw size={18} className={reloading ? 'spin' : ''} />
+        </button>
+      </div>
     </section>
   )
 }

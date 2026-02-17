@@ -1,4 +1,5 @@
 import React from 'react'
+import { LoaderCircle } from 'lucide-react'
 
 interface SettingsPanelProps {
   gatewayInput: string
@@ -20,6 +21,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   onDisconnect
 }) => {
   const connected = connectionStatus === 'connected'
+  const connecting = connectionStatus === 'connecting' || actionPending
 
   return (
     <section className="panel-scroll settings-panel">
@@ -46,8 +48,15 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 Disconnect
               </button>
             ) : (
-              <button type="button" className="accent-btn-flat" onClick={onConnect} disabled={actionPending}>
-                {actionPending ? 'Connecting...' : 'Connect'}
+              <button type="button" className="accent-btn-flat" onClick={onConnect} disabled={connecting}>
+                {connecting ? (
+                  <>
+                    <LoaderCircle size={14} className="spin" />
+                    Connecting...
+                  </>
+                ) : (
+                  'Connect'
+                )}
               </button>
             )}
           </div>
