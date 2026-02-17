@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react'
-import { ArrowLeft, Cpu, Palette, Settings, Plus, Trash2, X, Key, Globe, Box, Tag, Shield, Image, Loader2, Wrench, RefreshCw, BookOpenText, Pencil, Info, AlertTriangle } from 'lucide-react'
+import { ArrowLeft, Cpu, Palette, Settings, Plus, Trash2, X, Key, Globe, Box, Tag, Shield, Loader2, Wrench, RefreshCw, BookOpenText, Pencil, Info, AlertTriangle } from 'lucide-react'
 import { observer } from 'mobx-react-lite'
 import type { AppStore } from '../../stores/AppStore'
 import type { ModelDefinition } from '../../lib/ipcTypes'
@@ -41,6 +41,16 @@ function ThemeTile(props: {
 }
 
 const RULES_PREVIEW_LIMIT = 28
+const TAG_WIDTH_CHAR_PX = 7
+const TAG_WIDTH_PADDING_PX = 10
+const TAG_WIDTH_BORDER_PX = 2
+
+function computeTagColumnWidth(labels: readonly string[]): string {
+  const longestLabelLength = labels.reduce((max, label) => Math.max(max, label.length), 0)
+  const widthPx =
+    longestLabelLength * TAG_WIDTH_CHAR_PX + TAG_WIDTH_PADDING_PX + TAG_WIDTH_BORDER_PX
+  return `${Math.ceil(widthPx)}px`
+}
 
 function RuleChipList(props: {
   t: any
@@ -86,8 +96,11 @@ const ModelEditor = observer(({ store, modelId, onClose }: { store: AppStore; mo
         if (existing) {
             return {
                 ...existing,
-                maxTokens: typeof existing.maxTokens === 'number' ? existing.maxTokens : 200000,
-                supportsStructuredOutput: existing.supportsStructuredOutput === true
+                structuredOutputMode:
+                  existing.structuredOutputMode === 'on' || existing.structuredOutputMode === 'off'
+                    ? existing.structuredOutputMode
+                    : 'auto',
+                maxTokens: typeof existing.maxTokens === 'number' ? existing.maxTokens : 200000
             }
         }
         return {
@@ -97,7 +110,9 @@ const ModelEditor = observer(({ store, modelId, onClose }: { store: AppStore; mo
             baseUrl: '',
             apiKey: '',
             maxTokens: 200000,
-            supportsStructuredOutput: false
+            structuredOutputMode: 'auto',
+            supportsStructuredOutput: false,
+            supportsObjectToolChoice: false
         }
     })
     const [isSaving, setIsSaving] = useState(false)
@@ -188,16 +203,23 @@ const ModelEditor = observer(({ store, modelId, onClose }: { store: AppStore; mo
                         <Shield size={16} strokeWidth={2} />
                       </span>
                       <span className="editor-toggle-label">{t.settings.supportStructuredOutput}</span>
-                      <label className="switch">
-                        <input
-                          type="checkbox"
-                          aria-label={t.settings.supportStructuredOutput}
-                          checked={draft.supportsStructuredOutput === true}
-                          onChange={(e) => setDraft({ ...draft, supportsStructuredOutput: e.target.checked })}
-                          disabled={isSaving}
-                        />
-                        <span className="switch-slider" />
-                      </label>
+                      <div className="tri-switch" role="group" aria-label={t.settings.supportStructuredOutput}>
+                        {(['auto', 'on', 'off'] as const).map((mode) => {
+                          const active = (draft.structuredOutputMode || 'auto') === mode
+                          const label = mode === 'auto' ? 'Auto' : mode === 'on' ? 'On' : 'Off'
+                          return (
+                            <button
+                              key={mode}
+                              type="button"
+                              className={active ? 'tri-switch-btn is-active' : 'tri-switch-btn'}
+                              onClick={() => setDraft({ ...draft, structuredOutputMode: mode })}
+                              disabled={isSaving}
+                            >
+                              {label}
+                            </button>
+                          )
+                        })}
+                      </div>
                     </div>
                 </div>
                 <div className="editor-footer">
@@ -215,6 +237,15 @@ export const SettingsView: React.FC<{ store: AppStore }> = observer(({ store }) 
   const t = store.i18n.t
   const [editingModelId, setEditingModelId] = useState<string | null>(null)
   const [showModelEditor, setShowModelEditor] = useState(false)
+  const modelMetaColumnVars = useMemo(
+    () =>
+      ({
+        '--model-meta-col-status': computeTagColumnWidth(['Active', 'Stateless', 'NoActive']),
+        '--model-meta-col-image': computeTagColumnWidth(['Image']),
+        '--model-meta-col-structured': computeTagColumnWidth(['Structured'])
+      }) as React.CSSProperties,
+    []
+  )
 
   const [cpDraft, setCpDraft] = useState<{ allowlist: string; denylist: string; asklist: string }>({
     allowlist: '',
@@ -679,13 +710,16 @@ export const SettingsView: React.FC<{ store: AppStore }> = observer(({ store }) 
                   </button>
               </div>
               
-              <div className="models-list">
+              <div className="models-list" style={modelMetaColumnVars}>
                 {store.settings?.models.items.map((item) => (
                   <div key={item.id} className="model-item" onClick={() => openModelEditor(item.id)}>
                     {/** Active: text probe passed. Stateless: text failed but /v1/models passed. */}
                     {(() => {
                       const isActive = Boolean(item.profile?.textOutputs)
                       const supportsImage = Boolean(item.profile?.imageInputs)
+                      const supportsStructured =
+                        item.profile?.supportsStructuredOutput === true ||
+                        item.supportsStructuredOutput === true
                       const isStateless =
                         Boolean(item.profile?.ok) &&
                         item.profile?.textOutputs === false &&
@@ -707,8 +741,15 @@ export const SettingsView: React.FC<{ store: AppStore }> = observer(({ store }) 
                                   <span className="tag inactive">NoActive</span>
                               )}
                               {supportsImage ? (
-                                  <span className="tag image"><Image size={10} /> Image</span>
-                              ) : null}
+                                  <span className="tag image">Image</span>
+                              ) : (
+                                  <span className="tag ghost" aria-hidden="true">Image</span>
+                              )}
+                              {supportsStructured ? (
+                                  <span className="tag structured">Structured</span>
+                              ) : (
+                                  <span className="tag ghost" aria-hidden="true">Structured</span>
+                              )}
                           </div>
                         </>
                       )

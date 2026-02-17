@@ -73,7 +73,12 @@ function normalizeBackendSettings(settings: BackendSettings): BackendSettings {
   next.models.items = next.models.items.map((item) => ({
     ...item,
     maxTokens: typeof item.maxTokens === 'number' && item.maxTokens > 0 ? item.maxTokens : 200000,
-    supportsStructuredOutput: item.supportsStructuredOutput === true
+    structuredOutputMode:
+      item.structuredOutputMode === 'on' || item.structuredOutputMode === 'off'
+        ? item.structuredOutputMode
+        : 'auto',
+    supportsStructuredOutput: item.supportsStructuredOutput === true,
+    supportsObjectToolChoice: item.supportsObjectToolChoice === true
   }))
 
   const builtIn = { ...(next.tools?.builtIn ?? {}) }

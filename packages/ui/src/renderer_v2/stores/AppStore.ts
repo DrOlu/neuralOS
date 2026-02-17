@@ -875,15 +875,23 @@ export class AppStore {
     const current = this.settings ?? (await this.fetchCombinedSettings())
     const items = current.models.items.slice().map((x) => toJS(x))
     const modelSnapshot = toJS(model)
+    const structuredOutputMode: 'auto' | 'on' | 'off' =
+      modelSnapshot.structuredOutputMode === 'on' || modelSnapshot.structuredOutputMode === 'off'
+        ? modelSnapshot.structuredOutputMode
+        : 'auto'
     const plainModel: ModelDefinition = {
       ...modelSnapshot,
-      supportsStructuredOutput: modelSnapshot.supportsStructuredOutput === true,
+      structuredOutputMode,
+      supportsStructuredOutput: structuredOutputMode === 'on',
+      supportsObjectToolChoice: false,
       // Ensure profile is a plain object for IPC cloning
       profile: modelSnapshot.profile ? toJS(modelSnapshot.profile) : undefined
     }
     let nextProfile: ModelDefinition['profile'] = {
       imageInputs: false,
       textOutputs: false,
+      supportsStructuredOutput: false,
+      supportsObjectToolChoice: false,
       testedAt: Date.now(),
       ok: false,
       error: 'Probe failed'
@@ -893,6 +901,8 @@ export class AppStore {
       nextProfile = {
         imageInputs: probeResult.imageInputs,
         textOutputs: probeResult.textOutputs,
+        supportsStructuredOutput: probeResult.supportsStructuredOutput,
+        supportsObjectToolChoice: probeResult.supportsObjectToolChoice,
         testedAt: probeResult.testedAt,
         ok: probeResult.ok,
         error: probeResult.error
@@ -901,6 +911,8 @@ export class AppStore {
       nextProfile = {
         imageInputs: false,
         textOutputs: false,
+        supportsStructuredOutput: false,
+        supportsObjectToolChoice: false,
         testedAt: Date.now(),
         ok: false,
         error: err instanceof Error ? err.message : String(err)
@@ -908,6 +920,11 @@ export class AppStore {
     }
     const nextModel: ModelDefinition = {
       ...plainModel,
+      supportsStructuredOutput:
+        structuredOutputMode === 'auto'
+          ? nextProfile.supportsStructuredOutput === true
+          : structuredOutputMode === 'on',
+      supportsObjectToolChoice: nextProfile.supportsObjectToolChoice === true,
       profile: nextProfile
     }
     const nextItems = upsertById(items, nextModel)

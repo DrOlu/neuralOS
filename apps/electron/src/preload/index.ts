@@ -16,10 +16,14 @@ interface BackendSettings {
       apiKey?: string
       baseUrl?: string
       maxTokens: number
+      structuredOutputMode?: 'auto' | 'on' | 'off'
       supportsStructuredOutput: boolean
+      supportsObjectToolChoice: boolean
       profile?: {
         imageInputs?: boolean
         textOutputs?: boolean
+        supportsStructuredOutput?: boolean
+        supportsObjectToolChoice?: boolean
         testedAt?: number
         ok?: boolean
         error?: string
@@ -350,6 +354,8 @@ export interface GyShellAPI {
     probe: (model: BackendSettings['models']['items'][number]) => Promise<{
       imageInputs: boolean
       textOutputs: boolean
+      supportsStructuredOutput: boolean
+      supportsObjectToolChoice: boolean
       testedAt: number
       ok: boolean
       error?: string

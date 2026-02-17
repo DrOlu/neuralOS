@@ -12,8 +12,12 @@ export interface ModelDefinition {
   baseUrl?: string
   /** Max tokens for context management */
   maxTokens: number
+  /** Structured output mode: auto probe or manual override */
+  structuredOutputMode?: 'auto' | 'on' | 'off'
   /** Whether this model supports OpenAI JSON Schema structured output */
   supportsStructuredOutput: boolean
+  /** Whether this model accepts object-style tool_choice payloads */
+  supportsObjectToolChoice: boolean
   /** Cached capability profile detected by backend */
   profile?: {
     imageInputs?: boolean

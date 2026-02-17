@@ -5,7 +5,12 @@ import type { ToolExecutionContext } from '../types'
 
 export const execCommandSchema = z.object({
   tabIdOrName: z.string().describe('The ID or Name of the terminal tab'),
-  command: z.string().describe('The shell command to execute')
+  command: z.string().describe('The shell command to execute'),
+  waitMode: z
+    .enum(['wait', 'nowait'])
+    .optional()
+    .default('wait')
+    .describe('Execution mode: "wait" runs synchronously and waits for completion; "nowait" runs asynchronously and returns immediately.')
 })
 
 export const readTerminalTabSchema = z.object({
@@ -60,7 +65,16 @@ const COMMAND_READ_MAX_BYTES = 50 * 1024
 
 // --- Implementations ---
 
-export async function runCommand(args: z.infer<typeof execCommandSchema>, context: ToolExecutionContext): Promise<string> {
+type RunCommandOptions = {
+  shouldSkipWait?: () => boolean
+  getSkipWaitReason?: () => string | undefined
+}
+
+export async function runCommand(
+  args: z.infer<typeof execCommandSchema>,
+  context: ToolExecutionContext,
+  options?: RunCommandOptions
+): Promise<string> {
   const { tabIdOrName, command } = args
   const { terminalService, sessionId, messageId } = context
   
@@ -120,14 +134,17 @@ export async function runCommand(args: z.infer<typeof execCommandSchema>, contex
     const result = await terminalService.runCommandAndWait(bestMatch.id, command, {
       signal: context.signal,
       interruptOnAbort: false,
-      shouldSkip: () => userSkipped
+      shouldSkip: () => userSkipped || options?.shouldSkipWait?.() === true
     })
     const historyCommandMatchId = result.history_command_match_id
     const truncatedOutput = truncateCommandOutput(result.stdoutDelta || '', historyCommandMatchId, bestMatch.id)
     
     let finalResult = ''
     if (result.exitCode === -3 || result.stdoutDelta === 'USER_SKIPPED_WAIT') {
-      finalResult = `The user has chosen to run the command "${command}" asynchronously. The command is currently running in the background. Please DO NOT wait for it to finish unless specifically asked. You can use read_command_output to check its progress if needed. history_command_match_id=${historyCommandMatchId}, terminalId=${bestMatch.id}`
+      const autoSwitchReason = options?.getSkipWaitReason?.()?.trim()
+      finalResult = autoSwitchReason
+        ? `This command has been switched to nowait mode because ${autoSwitchReason}. The command is currently running in the background. Please DO NOT wait for it to finish unless specifically asked. You can use read_command_output to check its progress if needed. history_command_match_id=${historyCommandMatchId}, terminalId=${bestMatch.id}`
+        : `The user has chosen to run the command "${command}" asynchronously. The command is currently running in the background. Please DO NOT wait for it to finish unless specifically asked. You can use read_command_output to check its progress if needed. history_command_match_id=${historyCommandMatchId}, terminalId=${bestMatch.id}`
       
       // Update the finished event to mark it as isNowait: true so the UI banner switches to Async style
       context.sendEvent(sessionId, { 

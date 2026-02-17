@@ -29,7 +29,9 @@ function bootstrapPatchFromEnv(): Partial<BackendSettings> {
           apiKey,
           baseUrl,
           maxTokens: 200000,
-          supportsStructuredOutput: false
+          structuredOutputMode: 'auto',
+          supportsStructuredOutput: false,
+          supportsObjectToolChoice: false
         }
       ],
       profiles: [

@@ -1,6 +1,7 @@
 import { ChatOpenAI } from '@langchain/openai'
 import { HumanMessage, AIMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages'
 import { mapChatMessagesToStoredMessages, mapStoredMessagesToChatMessages } from '@langchain/core/messages'
+import { convertToOpenAITool } from '@langchain/core/utils/function_calling'
 import { StateGraph, START, END, Annotation, MemorySaver } from '@langchain/langgraph'
 import { RunnableLambda } from '@langchain/core/runnables'
 import type { ChatSession, BackendSettings } from '../types'
@@ -145,7 +146,9 @@ interface SessionModelBinding {
   actionModel: ChatOpenAI
   thinkingModel: ChatOpenAI
   actionModelSupportsStructuredOutput: boolean
+  actionModelSupportsObjectToolChoice: boolean
   thinkingModelSupportsStructuredOutput: boolean
+  thinkingModelSupportsObjectToolChoice: boolean
   readFileSupport: { image: boolean }
   toolsForModel: any[]
   globalMaxTokens: number
@@ -308,9 +311,15 @@ export class AgentService_v2 {
     const actionModelSupportsStructuredOutput = actionItem?.apiKey
       ? actionItem.supportsStructuredOutput === true
       : globalItem.supportsStructuredOutput === true
+    const actionModelSupportsObjectToolChoice = actionItem?.apiKey
+      ? actionItem.supportsObjectToolChoice === true
+      : globalItem.supportsObjectToolChoice === true
     const thinkingModelSupportsStructuredOutput = thinkingItem?.apiKey
       ? thinkingItem.supportsStructuredOutput === true
       : globalItem.supportsStructuredOutput === true
+    const thinkingModelSupportsObjectToolChoice = thinkingItem?.apiKey
+      ? thinkingItem.supportsObjectToolChoice === true
+      : globalItem.supportsObjectToolChoice === true
     const readFileSupport = this.helpers.computeReadFileSupport(
       globalItem.profile,
       thinkingItem?.profile ?? globalItem.profile
@@ -323,7 +332,9 @@ export class AgentService_v2 {
       actionModel,
       thinkingModel,
       actionModelSupportsStructuredOutput,
+      actionModelSupportsObjectToolChoice,
       thinkingModelSupportsStructuredOutput,
+      thinkingModelSupportsObjectToolChoice,
       readFileSupport,
       toolsForModel,
       globalMaxTokens: typeof globalItem.maxTokens === 'number' ? globalItem.maxTokens : 200000,
@@ -965,41 +976,73 @@ export class AgentService_v2 {
         }
       }
 
-      const recent = this.terminalService.getRecentOutput(bestMatch.id) || ''
-
-      // Build context for Action Model
-      const finalActionMessages = this.helpers.buildActionModelHistory(state.full_messages as BaseMessage[])
-
-      const user = createCommandPolicyUserPrompt({
-        tabTitle: bestMatch.title,
-        tabId: bestMatch.id,
-        tabType: bestMatch.type,
-        command: validated.command,
-        recentOutput: recent
-      })
-
-      const finalMessagesForActionModel = [...finalActionMessages, user]
-
-      let decision: z.infer<typeof COMMAND_POLICY_DECISION_SCHEMA>
-      try {
-        decision = await this.getActionModelPolicyDecision(
-          sessionId,
-          finalMessagesForActionModel,
-          COMMAND_POLICY_DECISION_SCHEMA,
-          config?.signal,
-          'exec_command'
-        )
-      } catch (err: any) {
-        console.warn('[AgentService_v2] Action model decision for exec_command failed after retries, falling back to wait:', err)
-        decision = { decision: 'wait', reason: 'Action model error' }
-      }
-
       let resultText = ''
-      if (decision.decision === 'wait') {
-        resultText = await toolImplementations.runCommand(validated, executionContext)
-      } else if (decision.decision === 'nowait') {
+      if (validated.waitMode === 'nowait') {
         const res = await toolImplementations.runCommandNowait(validated, executionContext)
         resultText = res + "\nThis command may hang, so it is run asynchronously. Please use read_terminal_tab to check the result/status!"
+      } else {
+        const recent = this.terminalService.getRecentOutput(bestMatch.id) || ''
+
+        let autoSwitchToNowait = false
+        let autoSwitchReason = ''
+        let waitActive = true
+
+        const actionDecisionController = new AbortController()
+        const forwardAbortToActionModel = () => actionDecisionController.abort()
+        if (config?.signal) {
+          if (config.signal.aborted) {
+            actionDecisionController.abort()
+          } else {
+            config.signal.addEventListener('abort', forwardAbortToActionModel, { once: true })
+          }
+        }
+
+        const actionDecisionTask = (async () => {
+          // Keep action-model judgment independent: do not include global waitMode choice in prompt.
+          const finalActionMessages = this.helpers.buildActionModelHistory(state.full_messages as BaseMessage[])
+          const user = createCommandPolicyUserPrompt({
+            tabTitle: bestMatch.title,
+            tabId: bestMatch.id,
+            tabType: bestMatch.type,
+            command: validated.command,
+            recentOutput: recent
+          })
+          const finalMessagesForActionModel = [...finalActionMessages, user]
+
+          const decision = await this.getActionModelPolicyDecision(
+            sessionId,
+            finalMessagesForActionModel,
+            COMMAND_POLICY_DECISION_SCHEMA,
+            actionDecisionController.signal,
+            'exec_command_parallel_audit'
+          )
+
+          console.log('[AgentService_v2] Parallel action model decision for exec_command:', decision)
+
+          if (waitActive && decision.decision === 'nowait') {
+            autoSwitchToNowait = true
+            autoSwitchReason = String(decision.reason || '').trim()
+          }
+
+        })()
+          .catch((err: any) => {
+            if (this.helpers.isAbortError(err) || actionDecisionController.signal.aborted) return
+            console.warn('[AgentService_v2] Parallel action model decision for exec_command failed, keep wait mode:', err)
+          })
+
+        try {
+          resultText = await toolImplementations.runCommand(validated, executionContext, {
+            shouldSkipWait: () => autoSwitchToNowait,
+            getSkipWaitReason: () => (autoSwitchToNowait ? (autoSwitchReason || 'action model decided this command should not block') : undefined)
+          })
+        } finally {
+          waitActive = false
+          actionDecisionController.abort()
+          if (config?.signal) {
+            config.signal.removeEventListener('abort', forwardAbortToActionModel)
+          }
+          await actionDecisionTask
+        }
       }
 
       toolMessage.content = resultText
@@ -1458,12 +1501,23 @@ export class AgentService_v2 {
       })
     }
 
-    return await this.invokeActionModelPolicyDecisionWithoutSchema(
+    if (sessionBinding.actionModelSupportsObjectToolChoice) {
+      return await this.invokeActionModelPolicyDecisionWithoutSchema(
+        sessionId,
+        messages,
+        schema,
+        signal,
+        decisionName
+      )
+    }
+
+    return await this.invokeModelDecisionByFunctionCallingAuto(
       sessionId,
       messages,
       schema,
       signal,
-      decisionName
+      decisionName,
+      'action'
     )
   }
 
@@ -1520,21 +1574,79 @@ export class AgentService_v2 {
       })
     }
 
-    const functionCallingModel = model.withStructuredOutput(schema, { method: 'functionCalling' })
+    if (sessionBinding.thinkingModelSupportsObjectToolChoice) {
+      const functionCallingModel = model.withStructuredOutput(schema, { method: 'functionCalling' })
+      return await invokeWithRetryAndSanitizedInput({
+        helpers: this.helpers,
+        messages,
+        signal,
+        operation: async (sanitizedMessages) => {
+          return await functionCallingModel.invoke(sanitizedMessages, { signal }) as any
+        },
+        onRetry: (attempt) => {
+          console.log(`[AgentService_v2] Retrying tool-call thinking decision for ${decisionName} (attempt ${attempt + 1})...`)
+        },
+        maxRetries: MODEL_RETRY_MAX,
+        delaysMs: MODEL_RETRY_DELAYS_MS
+      })
+    }
+
+    return await this.invokeModelDecisionByFunctionCallingAuto(
+      sessionId,
+      messages,
+      schema,
+      signal,
+      decisionName,
+      'thinking'
+    )
+  }
+
+  private async invokeModelDecisionByFunctionCallingAuto<T extends z.ZodTypeAny>(
+    sessionId: string,
+    messages: BaseMessage[],
+    schema: T,
+    signal: AbortSignal | undefined,
+    decisionName: string,
+    kind: 'action' | 'thinking'
+  ): Promise<z.infer<T>> {
+    const sessionBinding = this.getSessionModelBinding(sessionId)
+    const model = kind === 'action'
+      ? sessionBinding.actionModel
+      : (sessionBinding.thinkingModel || sessionBinding.model)
+    const toolName = `decision_${decisionName.replace(/[^a-zA-Z0-9_]/g, '_')}`.slice(0, 60)
+    const tool = convertToOpenAITool({
+      name: toolName,
+      description: `Return the structured decision payload for ${decisionName}.`,
+      schema
+    } as any)
+    const modelWithTool = model.bindTools([tool], {
+      tool_choice: 'auto'
+    })
+
     return await invokeWithRetryAndSanitizedInput({
       helpers: this.helpers,
       messages,
       signal,
       operation: async (sanitizedMessages) => {
-        return await functionCallingModel.invoke(sanitizedMessages, { signal }) as any
+        const response = await modelWithTool.invoke(sanitizedMessages, { signal }) as any
+        const toolCalls = Array.isArray(response?.tool_calls) ? response.tool_calls : []
+        const call = toolCalls.find((item: any) => item?.name === toolName) || toolCalls[0]
+        if (!call) {
+          throw new Error(`No tool call was returned for ${decisionName}`)
+        }
+        const rawArgs = typeof call.args === 'string'
+          ? this.helpers.parseStrictJsonObject(call.args)
+          : call.args
+        return schema.parse(rawArgs) as z.infer<T>
       },
       onRetry: (attempt) => {
-        console.log(`[AgentService_v2] Retrying tool-call thinking decision for ${decisionName} (attempt ${attempt + 1})...`)
+        console.log(`[AgentService_v2] Retrying auto-tool ${kind} decision for ${decisionName} (attempt ${attempt + 1})...`)
       },
       maxRetries: MODEL_RETRY_MAX,
       delaysMs: MODEL_RETRY_DELAYS_MS
     })
   }
+
 
   // --- Execution Core ---
 

@@ -101,7 +101,7 @@ export const CREATE_OR_EDIT_TOOL_DESCRIPTION = [
 ].join('\n')
 
 export const EXEC_COMMAND_DESCRIPTION =
-  'Execute a shell command in a specific terminal tab. This appends a trailing "\\n" to run the command automatically. If you do NOT want auto-execute, use write_stdin instead. The system will decide whether to wait for completion. Command output may be truncated; use read_command_output with history_command_match_id and terminalId to read full output.'
+  'Execute a shell command in a specific terminal tab. This appends a trailing "\\n" to run the command automatically. If you do NOT want auto-execute, use write_stdin instead. You must provide waitMode: "wait" (synchronous; wait for command result) or "nowait" (asynchronous; return immediately). Command output may be truncated; use read_command_output with history_command_match_id and terminalId to read full output.'
 export const READ_TERMINAL_TAB_DESCRIPTION = 'Read the recent visible output of a specific terminal tab.'
 export const READ_COMMAND_OUTPUT_DESCRIPTION =
   'Read historical output of a specific command by history_command_match_id and terminal tab. Supports offset/limit for paging large outputs.'
