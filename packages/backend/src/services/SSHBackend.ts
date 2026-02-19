@@ -798,8 +798,8 @@ Write-Output "__GYSHELL_READY__"
     // Minified script to reduce payload size and potential TTY buffer issues
     const script = `
 if [ -n "$ZSH_VERSION" ]; then
-  gyshell_preexec() { printf '%b' '\\x1b]1337;gyshell_preexec\\x07'; }
-  gyshell_precmd() { local ec=$?; printf '%b' "\\x1b]1337;gyshell_precmd;ec=\${ec};cwd_b64=$(printf "%s" "$PWD" | base64 | tr -d "\\n");home_b64=$(printf "%s" "$HOME" | base64 | tr -d "\\n")\\x07"; }
+  gyshell_preexec() { builtin printf "\\033]1337;gyshell_preexec\\007"; }
+  gyshell_precmd() { local ec=$? cwd_b64 home_b64; cwd_b64=$(printf "%s" "$PWD" | base64 | tr -d "\\n"); home_b64=$(printf "%s" "$HOME" | base64 | tr -d "\\n"); builtin printf "\\033]1337;gyshell_precmd;ec=%s;cwd_b64=%s;home_b64=%s\\007" "$ec" "$cwd_b64" "$home_b64"; }
   autoload -Uz add-zsh-hook 2>/dev/null || true
   add-zsh-hook preexec gyshell_preexec
   add-zsh-hook precmd gyshell_precmd
@@ -811,14 +811,17 @@ elif [ -n "$BASH_VERSION" ]; then
     esac
     if [ "$__gyshell_in_command" = "0" ]; then
       __gyshell_in_command=1
-      printf "%b" "\\x1b]1337;gyshell_preexec\\x07"
+      builtin printf "\\033]1337;gyshell_preexec\\007"
     fi
   }
   trap '__gyshell_preexec' DEBUG
   __gyshell_precmd() {
     local ec=$?
+    local cwd_b64 home_b64
     __gyshell_in_command=0
-    printf "%b" "\\x1b]1337;gyshell_precmd;ec=\${ec};cwd_b64=$(printf "%s" "$PWD" | base64 | tr -d "\\n");home_b64=$(printf "%s" "$HOME" | base64 | tr -d "\\n")\\x07"
+    cwd_b64=$(printf "%s" "$PWD" | base64 | tr -d "\\n")
+    home_b64=$(printf "%s" "$HOME" | base64 | tr -d "\\n")
+    builtin printf "\\033]1337;gyshell_precmd;ec=%s;cwd_b64=%s;home_b64=%s\\007" "$ec" "$cwd_b64" "$home_b64"
   }
   PROMPT_COMMAND="__gyshell_precmd\${PROMPT_COMMAND:+; \$PROMPT_COMMAND}"
 fi
