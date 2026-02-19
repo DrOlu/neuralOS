@@ -38,6 +38,7 @@ export const en = {
     terminal: 'Terminal',
     tools: 'Tools',
     skills: 'Skills',
+    accessTokens: 'Gateway',
     version: 'Version',
     language: 'Language',
     fontSize: 'Font Size',
@@ -100,6 +101,17 @@ export const en = {
     reloadSkills: 'Reload',
     addSkill: 'Add Skill',
     noSkills: 'No skills found',
+    accessTokenNamePlaceholder: 'Token name (e.g. mobile-web)',
+    accessTokenNameRequired: 'Token name is required.',
+    accessTokenCopyFailed: 'Failed to copy token to clipboard. Please copy it manually.',
+    accessTokenCreatedTitle: 'Token Created (Shown Once)',
+    copyAccessToken: 'Copy Token',
+    accessTokenCreatedHint:
+      'This plaintext token is only shown once. If you lose it, delete this token and create a new one.',
+    accessTokenIssuedList: 'Issued Tokens',
+    noAccessTokens: 'No access tokens created',
+    confirmDeleteAccessToken: (name: string) =>
+      `Delete access token "${name}"? Existing clients using it will be disconnected on next reconnect.`,
     checkVersion: 'Check Updates',
     checkingVersion: 'Checking',
     currentVersion: 'Current Version',
@@ -162,6 +174,8 @@ export const en = {
       modelProfile: 'Profiles are configured after adding Base Models. You can assign different models to specific tasks:\n\n1. [Global Model]: The core model for regular chat and task processing. If you want to use the same model for everything, just set this and leave others as None.\n2. [Thinking Model]: Used only in "Thinking Mode" for deep reasoning and complex planning.\n3. [Action Model]: Specifically used to decide how commands should be executed (e.g., judging if a command will hang and should run asynchronously).\n\n[IMPORTANT]: It is currently NOT recommended to use models with native "Chain of Thought" (CoT) (like o1, r1) as Global or Action models. This will make responses very slow, and the app does not yet support displaying their internal reasoning chains.',
       mcpConfig: 'Open the MCP (Model Context Protocol) config. Use this to connect external tools like Google Search or File Indexers.\n\nNOTE: The app may not automatically find your system PATH. When configuring mcpServers, please use [ABSOLUTE PATHS] for the command field (e.g., npm, node, uv, python)!\nExample: Use "/usr/local/bin/node" instead of just "node".',
       skills: 'Skills are predefined instruction templates for complex tasks. AI loads them to perform better in specific domains.\n\nGyShell scans the following directories for skills:\n1. [GyShell Custom]: User-created skills (stored in GyShell data directory).\n2. [Claude/Goose Compatible]: ~/.claude/skills, ~/.agents/skills, and platform-specific config paths.\n\nNote: For skills outside the "GyShell Custom" folder, please manage (edit/delete) them manually in your file explorer.',
+      accessTokens:
+        'Configure websocket gateway exposure and port, and manage access tokens for remote clients. Tokens are shown in plaintext only once when created, and only salted hashes are stored on disk.',
     },
     skillSections: {
       custom: 'GyShell Custom',

@@ -249,10 +249,12 @@ export const App: React.FC = () => {
         {activeTab === 'settings' ? (
           <SettingsPanel
             gatewayInput={state.gatewayInput}
+            accessTokenInput={state.accessTokenInput}
             connectionStatus={state.connectionStatus}
             actionPending={state.actionPending}
             connectionError={state.connectionError}
             onGatewayInputChange={actions.setGatewayInput}
+            onAccessTokenInputChange={actions.setAccessTokenInput}
             onConnect={() => void actions.connectGateway()}
             onDisconnect={actions.disconnectGateway}
           />

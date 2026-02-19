@@ -20,6 +20,12 @@ import type { WebSocketGatewayControlService } from '../../../backend/src/servic
 import type { UiSettingsStore } from '../settings/UiSettingsStore'
 import type { ThemeConfigStore } from '../theme/ThemeConfigStore'
 
+type AccessTokenRuntime = {
+  listTokens: () => Promise<Array<{ id: string; name: string; createdAt: number }>>
+  createToken: (name: string) => Promise<{ id: string; name: string; createdAt: number; token: string }>
+  deleteToken: (id: string) => Promise<boolean>
+}
+
 export class ElectronGatewayIpcAdapter {
   constructor(
     private gateway: IGatewayRuntime,
@@ -35,7 +41,14 @@ export class ElectronGatewayIpcAdapter {
     private mcpToolService: McpToolService,
     private themeStore: ThemeConfigStore,
     private versionService: VersionService,
-    private wsGatewayControlService: WebSocketGatewayControlService
+    private wsGatewayControlService: WebSocketGatewayControlService,
+    private accessTokenService: AccessTokenRuntime = {
+      listTokens: async () => [],
+      createToken: async () => {
+        throw new Error('Access token service is not configured.')
+      },
+      deleteToken: async () => false
+    }
   ) {}
 
   private updateWindowsThemeIfNeeded(): void {
@@ -254,6 +267,18 @@ export class ElectronGatewayIpcAdapter {
 
     ipcMain.handle('settings:setWsGatewayConfig', async (_: any, ws: { access: WsGatewayAccess; port: number }) => {
       return this.applyWsGatewayConfig(ws)
+    })
+
+    ipcMain.handle('access-tokens:list', async () => {
+      return await this.accessTokenService.listTokens()
+    })
+
+    ipcMain.handle('access-tokens:create', async (_: any, name: string) => {
+      return await this.accessTokenService.createToken(name)
+    })
+
+    ipcMain.handle('access-tokens:delete', async (_: any, id: string) => {
+      return await this.accessTokenService.deleteToken(id)
     })
 
     ipcMain.handle('ui-settings:get', async () => {

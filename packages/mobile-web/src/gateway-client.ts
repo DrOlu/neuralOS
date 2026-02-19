@@ -66,7 +66,16 @@ export class GatewayClient {
     this.emit('status', 'connecting')
 
     await new Promise<void>((resolve, reject) => {
-      const socket = new WebSocket(url)
+      let socket: WebSocket
+      try {
+        socket = new WebSocket(url)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        this.emit('error', `WebSocket open failed: ${message}`)
+        this.emit('status', 'disconnected', `open failed: ${message}`)
+        reject(error instanceof Error ? error : new Error(message))
+        return
+      }
       this.socket = socket
       let settled = false
 

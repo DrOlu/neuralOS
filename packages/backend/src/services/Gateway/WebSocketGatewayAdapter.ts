@@ -54,6 +54,11 @@ interface WebSocketRpcRequest {
   params?: Record<string, any>;
 }
 
+export interface WebSocketAccessTokenAuth {
+  verifyToken: (token: string) => Promise<boolean> | boolean;
+  allowLocalhostWithoutToken?: boolean;
+}
+
 export interface IWebSocketServerLike {
   on(event: 'connection', listener: (socket: IWebSocketConnectionLike, request?: any) => void): void;
   on(event: 'error', listener: (error: unknown) => void): void;
@@ -71,6 +76,7 @@ export interface IWebSocketGatewayAdapterLogger {
 export interface WebSocketGatewayAdapterOptions {
   host: string;
   port: number;
+  accessTokenAuth?: WebSocketAccessTokenAuth;
   agentBridge?: {
     exportHistory?: (sessionId: string, mode: 'simple' | 'detailed') => unknown | Promise<unknown>;
     getAllChatHistory?: () => unknown | Promise<unknown>;
@@ -196,23 +202,169 @@ export class WebSocketGatewayAdapter {
   }
 
   private handleConnection(socket: IWebSocketConnectionLike, request?: any): void {
-    const remote = request?.socket?.remoteAddress || 'unknown';
-    const transport = new WebSocketClientTransport(socket, this.logger);
-    this.transportIdBySocket.set(socket, transport.id);
-    this.gateway.registerTransport(transport);
-    this.logger.info(`[WebSocketGatewayAdapter] Client connected: ${remote} (${transport.id})`);
+    const pendingMessages: unknown[] = [];
+    const state = {
+      authorized: false,
+      closed: false
+    };
 
     socket.on('message', (raw: unknown) => {
+      if (!state.authorized) {
+        pendingMessages.push(raw);
+        return;
+      }
       void this.handleIncomingMessage(socket, raw);
     });
 
     socket.on('close', () => {
+      state.closed = true;
+      if (!state.authorized) return;
       this.cleanupSocket(socket);
     });
 
     socket.on('error', (error: unknown) => {
-      this.logger.warn(`[WebSocketGatewayAdapter] Client socket error (${transport.id}).`, error);
+      if (!state.authorized) {
+        this.logger.warn('[WebSocketGatewayAdapter] Client socket error before authorization.', error);
+        return;
+      }
+      const transportId = this.transportIdBySocket.get(socket) || 'unknown';
+      this.logger.warn(`[WebSocketGatewayAdapter] Client socket error (${transportId}).`, error);
     });
+
+    void this.authorizeAndAttach(socket, request, state, pendingMessages);
+  }
+
+  private async authorizeAndAttach(
+    socket: IWebSocketConnectionLike,
+    request: any | undefined,
+    state: { authorized: boolean; closed: boolean },
+    pendingMessages: unknown[]
+  ): Promise<void> {
+    const remote = request?.socket?.remoteAddress || 'unknown';
+
+    const authError = await this.resolveConnectionAuthError(request);
+    if (authError) {
+      this.logger.warn(`[WebSocketGatewayAdapter] Rejected client ${remote}: ${authError}`);
+      this.closeSocketUnauthorized(socket);
+      return;
+    }
+    if (state.closed) {
+      return;
+    }
+
+    const transport = new WebSocketClientTransport(socket, this.logger);
+    this.transportIdBySocket.set(socket, transport.id);
+    this.gateway.registerTransport(transport);
+    state.authorized = true;
+    this.logger.info(`[WebSocketGatewayAdapter] Client connected: ${remote} (${transport.id})`);
+
+    for (const raw of pendingMessages.splice(0)) {
+      void this.handleIncomingMessage(socket, raw);
+    }
+  }
+
+  private async resolveConnectionAuthError(request?: any): Promise<string | null> {
+    const auth = this.options.accessTokenAuth;
+    if (!auth) return null;
+
+    const allowLocalWithoutToken = auth.allowLocalhostWithoutToken !== false;
+    const isLocalConnection = this.isLoopbackAddress(String(request?.socket?.remoteAddress || ''));
+    if (allowLocalWithoutToken && isLocalConnection) {
+      return null;
+    }
+
+    const token = this.extractAccessToken(request);
+    if (!token) {
+      return 'missing access token';
+    }
+
+    try {
+      const valid = await auth.verifyToken(token);
+      if (!valid) {
+        return 'invalid access token';
+      }
+      return null;
+    } catch (error) {
+      this.logger.warn('[WebSocketGatewayAdapter] Access token verification failed.', error);
+      return 'token verification failed';
+    }
+  }
+
+  private extractAccessToken(request?: any): string | null {
+    const fromAuthHeader = this.readBearerToken(request?.headers?.authorization);
+    if (fromAuthHeader) return fromAuthHeader;
+
+    const fromHeader = this.readHeaderToken(request?.headers?.['x-access-token']);
+    if (fromHeader) return fromHeader;
+
+    const rawUrl = typeof request?.url === 'string' ? request.url : '';
+    if (!rawUrl) return null;
+    try {
+      const parsed = new URL(rawUrl, 'ws://localhost');
+      const fromQuery = parsed.searchParams.get('access_token');
+      if (fromQuery && fromQuery.trim()) {
+        return fromQuery.trim();
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
+  private readBearerToken(raw: unknown): string | null {
+    const header = this.readHeaderToken(raw);
+    if (!header) return null;
+    const matched = /^Bearer\s+(.+)$/i.exec(header);
+    if (!matched) return null;
+    const token = matched[1].trim();
+    return token || null;
+  }
+
+  private readHeaderToken(raw: unknown): string | null {
+    if (typeof raw === 'string') {
+      const token = raw.trim();
+      return token || null;
+    }
+    if (Array.isArray(raw)) {
+      for (const entry of raw) {
+        if (typeof entry !== 'string') continue;
+        const token = entry.trim();
+        if (token) return token;
+      }
+    }
+    return null;
+  }
+
+  private isLoopbackAddress(rawAddress: string): boolean {
+    const normalized = rawAddress.trim().toLowerCase().replace(/^\[|\]$/g, '');
+    if (!normalized) return false;
+
+    const withoutZone = normalized.split('%')[0];
+    if (withoutZone === 'localhost' || withoutZone === '::1') return true;
+    if (withoutZone.startsWith('127.')) return true;
+    if (withoutZone.startsWith('::ffff:')) {
+      return this.isLoopbackAddress(withoutZone.slice('::ffff:'.length));
+    }
+    return false;
+  }
+
+  private closeSocketUnauthorized(socket: IWebSocketConnectionLike): void {
+    try {
+      if (typeof socket.close === 'function') {
+        socket.close(1008, 'Unauthorized');
+        return;
+      }
+    } catch {
+      // noop
+    }
+
+    try {
+      if (typeof socket.terminate === 'function') {
+        socket.terminate();
+      }
+    } catch {
+      // noop
+    }
   }
 
   private cleanupSocket(socket: IWebSocketConnectionLike): void {

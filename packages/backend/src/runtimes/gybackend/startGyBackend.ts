@@ -16,6 +16,7 @@ import { NodeSettingsService } from '../../adapters/node/NodeSettingsService'
 import { NodeCommandPolicyService } from '../../adapters/node/NodeCommandPolicyService'
 import { NodeMcpToolService } from '../../adapters/node/NodeMcpToolService'
 import { NodeSkillService } from '../../adapters/node/NodeSkillService'
+import { NodeAccessTokenService } from '../../adapters/node/NodeAccessTokenService'
 import { ModelCapabilityService } from '../../services/ModelCapabilityService'
 import {
   buildBuiltInToolStatusSummary,
@@ -118,6 +119,7 @@ export async function startGyBackend(): Promise<void> {
   const commandPolicyService = new NodeCommandPolicyService(dataDir)
   const mcpToolService = new NodeMcpToolService(dataDir)
   const skillService = new NodeSkillService(dataDir, settingsService)
+  const accessTokenService = new NodeAccessTokenService(dataDir)
   const modelCapabilityService = new ModelCapabilityService()
 
   const terminalService = new TerminalService()
@@ -172,6 +174,10 @@ export async function startGyBackend(): Promise<void> {
       new WebSocketGatewayAdapter(gatewayService, {
         host,
         port,
+        accessTokenAuth: {
+          verifyToken: (token: string) => accessTokenService.verifyToken(token),
+          allowLocalhostWithoutToken: true
+        },
         terminalBridge: {
           listTerminals: () =>
             terminalService.getDisplayTerminals().map((terminal) => ({
@@ -428,4 +434,5 @@ export async function startGyBackend(): Promise<void> {
   }
   console.log(`[gybackend] Data directory: ${dataDir}`)
   console.log(`[gybackend] Settings file: ${settingsService.getSettingsPath()}`)
+  console.log(`[gybackend] Access token file: ${accessTokenService.getStorageFilePath()}`)
 }

@@ -22,6 +22,7 @@ import {
 } from '../../../backend/src/services/Gateway/WebSocketGatewayControlService'
 import { TempFileService } from '../../../backend/src/services/TempFileService'
 import { VersionService } from '../../../backend/src/services/VersionService'
+import { AccessTokenService } from '../../../backend/src/services/AccessToken/AccessTokenService'
 import { ElectronAppSettingsMigration } from '../settings/ElectronAppSettingsMigration'
 import { installCliLaunchers } from './CliInstallService'
 import {
@@ -42,6 +43,7 @@ let skillService: SkillService
 let uiHistoryService: UIHistoryService
 let tempFileService: TempFileService
 let versionService: VersionService
+let accessTokenService: AccessTokenService
 let webSocketGatewayControlService: WebSocketGatewayControlService | null = null
 
 function createAutoTerminalConfig(
@@ -209,6 +211,7 @@ export async function startElectronMain(): Promise<void> {
   uiHistoryService = new UIHistoryService()
   tempFileService = new TempFileService()
   versionService = new VersionService()
+  accessTokenService = new AccessTokenService()
 
   await themeStore.loadCustomThemes()
   
@@ -243,6 +246,10 @@ export async function startElectronMain(): Promise<void> {
       new WebSocketGatewayAdapter(gatewayService, {
         host,
         port,
+        accessTokenAuth: {
+          verifyToken: (token: string) => accessTokenService.verifyToken(token),
+          allowLocalhostWithoutToken: true
+        },
         terminalBridge: {
           listTerminals: () =>
             terminalService.getDisplayTerminals().map((terminal) => ({
@@ -474,7 +481,8 @@ export async function startElectronMain(): Promise<void> {
     mcpToolService,
     themeStore,
     versionService,
-    webSocketGatewayControlService
+    webSocketGatewayControlService,
+    accessTokenService
   )
   ipcAdapter.registerHandlers()
 

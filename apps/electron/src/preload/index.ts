@@ -195,6 +195,16 @@ interface SkillStatusSummary {
   enabled: boolean
 }
 
+interface AccessTokenSummary {
+  id: string
+  name: string
+  createdAt: number
+}
+
+interface CreateAccessTokenResult extends AccessTokenSummary {
+  token: string
+}
+
 interface TerminalColorScheme {
   name: string
   foreground: string
@@ -267,6 +277,12 @@ export interface GyShellAPI {
     getCommandPolicyLists: () => Promise<CommandPolicyLists>
     addCommandPolicyRule: (listName: 'allowlist' | 'denylist' | 'asklist', rule: string) => Promise<CommandPolicyLists>
     deleteCommandPolicyRule: (listName: 'allowlist' | 'denylist' | 'asklist', rule: string) => Promise<CommandPolicyLists>
+  }
+
+  accessTokens: {
+    list: () => Promise<AccessTokenSummary[]>
+    create: (name: string) => Promise<CreateAccessTokenResult>
+    delete: (id: string) => Promise<boolean>
   }
 
   uiSettings: {
@@ -414,6 +430,11 @@ const api: GyShellAPI = {
     getCommandPolicyLists: () => ipcRenderer.invoke('settings:getCommandPolicyLists'),
     addCommandPolicyRule: (listName, rule) => ipcRenderer.invoke('settings:addCommandPolicyRule', listName, rule),
     deleteCommandPolicyRule: (listName, rule) => ipcRenderer.invoke('settings:deleteCommandPolicyRule', listName, rule)
+  },
+  accessTokens: {
+    list: () => ipcRenderer.invoke('access-tokens:list'),
+    create: (name: string) => ipcRenderer.invoke('access-tokens:create', name),
+    delete: (id: string) => ipcRenderer.invoke('access-tokens:delete', id)
   },
   uiSettings: {
     get: () => ipcRenderer.invoke('ui-settings:get'),

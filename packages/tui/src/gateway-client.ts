@@ -27,13 +27,21 @@ export class GatewayClient {
   private readonly pending = new Map<string, PendingRequest>()
   private nextRequestId = 1
 
-  constructor(private readonly url: string) {}
+  constructor(
+    private readonly url: string,
+    private readonly accessToken?: string
+  ) {}
 
   async connect(timeoutMs = 3000): Promise<void> {
     if (this.socket) return
 
     await new Promise<void>((resolve, reject) => {
-      const socket = new WebSocket(this.url)
+      const headers: Record<string, string> = {}
+      const token = String(this.accessToken || '').trim()
+      if (token) {
+        headers.authorization = `Bearer ${token}`
+      }
+      const socket = new WebSocket(this.url, { headers })
       this.socket = socket
 
       const timer = setTimeout(() => {

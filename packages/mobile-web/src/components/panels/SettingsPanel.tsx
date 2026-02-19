@@ -3,20 +3,24 @@ import { LoaderCircle } from 'lucide-react'
 
 interface SettingsPanelProps {
   gatewayInput: string
+  accessTokenInput: string
   connectionStatus: 'connecting' | 'connected' | 'disconnected'
   actionPending: boolean
   connectionError: string
   onGatewayInputChange: (value: string) => void
+  onAccessTokenInputChange: (value: string) => void
   onConnect: () => void
   onDisconnect: () => void
 }
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   gatewayInput,
+  accessTokenInput,
   connectionStatus,
   actionPending,
   connectionError,
   onGatewayInputChange,
+  onAccessTokenInputChange,
   onConnect,
   onDisconnect
 }) => {
@@ -37,6 +41,17 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
               value={gatewayInput}
               onChange={(event) => onGatewayInputChange(event.target.value)}
               placeholder="ws://192.168.1.8:17888"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+            />
+          </div>
+          <div className="settings-input-row">
+            <input
+              type="password"
+              value={accessTokenInput}
+              onChange={(event) => onAccessTokenInputChange(event.target.value)}
+              placeholder="Access token (optional for localhost)"
               autoCapitalize="off"
               autoCorrect="off"
               spellCheck={false}

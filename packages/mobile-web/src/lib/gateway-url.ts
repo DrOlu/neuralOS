@@ -1,5 +1,6 @@
 export const GATEWAY_URL_STORAGE_KEY = 'gyshell-mobile-gateway-url'
 export const GATEWAY_AUTO_CONNECT_STORAGE_KEY = 'gyshell-mobile-gateway-auto-connect'
+export const GATEWAY_ACCESS_TOKEN_STORAGE_KEY = 'gyshell-mobile-gateway-access-token'
 
 export function defaultGatewayUrl(): string {
   const host = window.location.hostname || '127.0.0.1'
@@ -23,10 +24,43 @@ export function saveGatewayUrlToStorage(url: string): void {
   window.localStorage.setItem(GATEWAY_URL_STORAGE_KEY, url)
 }
 
+export function loadGatewayAccessTokenFromStorage(): string {
+  return window.localStorage.getItem(GATEWAY_ACCESS_TOKEN_STORAGE_KEY) || ''
+}
+
+export function saveGatewayAccessTokenToStorage(token: string): void {
+  window.localStorage.setItem(GATEWAY_ACCESS_TOKEN_STORAGE_KEY, String(token || '').trim())
+}
+
 export function loadGatewayAutoConnectFromStorage(): boolean {
   return window.localStorage.getItem(GATEWAY_AUTO_CONNECT_STORAGE_KEY) === '1'
 }
 
 export function saveGatewayAutoConnectToStorage(enabled: boolean): void {
   window.localStorage.setItem(GATEWAY_AUTO_CONNECT_STORAGE_KEY, enabled ? '1' : '0')
+}
+
+export function withGatewayAccessToken(url: string, accessTokenRaw: string): string {
+  const accessToken = String(accessTokenRaw || '').trim()
+  if (!accessToken) return url
+
+  const normalized = normalizeGatewayUrl(url)
+  try {
+    const parsed = new URL(normalized)
+    parsed.searchParams.set('access_token', accessToken)
+    return parsed.toString()
+  } catch {
+    return normalized
+  }
+}
+
+export function withoutGatewayAccessToken(url: string): string {
+  const normalized = normalizeGatewayUrl(url)
+  try {
+    const parsed = new URL(normalized)
+    parsed.searchParams.delete('access_token')
+    return parsed.toString()
+  } catch {
+    return normalized
+  }
 }

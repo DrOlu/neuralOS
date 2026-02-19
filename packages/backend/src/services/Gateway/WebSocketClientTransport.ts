@@ -4,6 +4,8 @@ import type { GatewayEvent, IClientTransport } from './types';
 export interface IWebSocketConnectionLike {
   on(event: 'message' | 'close' | 'error', listener: (...args: any[]) => void): void;
   send(data: string): void;
+  close?(code?: number, reason?: string): void;
+  terminate?(): void;
 }
 
 export interface IWebSocketTransportLogger {
@@ -52,4 +54,3 @@ export class WebSocketClientTransport implements IClientTransport {
     }
   }
 }
-

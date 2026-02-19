@@ -6,6 +6,7 @@ export type CliMode = 'tui' | 'run' | 'hook'
 
 export interface CliOptions {
   url?: string
+  token?: string
   mode: CliMode
   message?: string
   sessionId?: string
@@ -44,6 +45,11 @@ export function parseCliOptions(argv: string[]): CliOptions {
       i += 1
       continue
     }
+    if (token === '--token' && next) {
+      options.token = next.trim() || undefined
+      i += 1
+      continue
+    }
     if (token === '--timeout' && next) {
       const parsed = Number(next)
       if (Number.isInteger(parsed) && parsed > 250) {
@@ -76,9 +82,9 @@ export function printCliHelp(): void {
     '',
     'Usage:',
     '  gyll [--url 127.0.0.1:17888] [--timeout 3000] [--sessionid <id>]',
-    '  gyll [--url 127.0.0.1:17888] [--timeout 3000] "message"',
-    '  gyll run [--url 127.0.0.1:17888] [--timeout 3000] "message"',
-    '  gyll hook [--url 127.0.0.1:17888] [--timeout 3000] "message"',
+    '  gyll [--url 127.0.0.1:17888] [--token <access_token>] [--timeout 3000] "message"',
+    '  gyll run [--url 127.0.0.1:17888] [--token <access_token>] [--timeout 3000] "message"',
+    '  gyll hook [--url 127.0.0.1:17888] [--token <access_token>] [--timeout 3000] "message"',
     '',
     'Commands:',
     '  run         Send one message and stream output in terminal, then exit',
@@ -87,6 +93,7 @@ export function printCliHelp(): void {
     '',
     'Options:',
     '  --url        Gateway websocket URL (ip:port or ws://ip:port)',
+    '  --token      Access token for non-local websocket gateways',
     '  --sessionid  Prefer this session id when entering TUI',
     '  --timeout  Probe/connect timeout in milliseconds (default: 3000)',
     '  --help,-h  Show this message',
@@ -99,7 +106,7 @@ export async function resolveGatewayConnection(options: CliOptions): Promise<{ c
   const candidates = buildProbeCandidates(options)
 
   for (const candidate of candidates) {
-    const connected = await tryConnect(candidate, options.timeoutMs)
+    const connected = await tryConnect(candidate, options.timeoutMs, options.token)
     if (connected) return connected
   }
 
@@ -107,7 +114,7 @@ export async function resolveGatewayConnection(options: CliOptions): Promise<{ c
 
   while (true) {
     const manual = await promptForUrl(defaultUrl)
-    const connected = await tryConnect(manual, options.timeoutMs)
+    const connected = await tryConnect(manual, options.timeoutMs, options.token)
     if (connected) return connected
     output.write(`Unable to connect to ${manual}. Please try again.\n`)
   }
@@ -157,8 +164,12 @@ function parsePort(raw: string | undefined): number | null {
   return value
 }
 
-async function tryConnect(url: string, timeoutMs: number): Promise<{ client: GatewayClient; url: string } | null> {
-  const client = new GatewayClient(url)
+async function tryConnect(
+  url: string,
+  timeoutMs: number,
+  accessToken?: string
+): Promise<{ client: GatewayClient; url: string } | null> {
+  const client = new GatewayClient(url, accessToken)
   try {
     await client.connect(timeoutMs)
     await client.ping()

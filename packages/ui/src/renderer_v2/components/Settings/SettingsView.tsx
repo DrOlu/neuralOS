@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { ArrowLeft, Cpu, Palette, Settings, Plus, Trash2, X, Key, Globe, Box, Tag, Shield, Loader2, Wrench, RefreshCw, BookOpenText, Pencil, Info, AlertTriangle } from 'lucide-react'
 import { observer } from 'mobx-react-lite'
 import type { AppStore } from '../../stores/AppStore'
@@ -233,6 +234,49 @@ const ModelEditor = observer(({ store, modelId, onClose }: { store: AppStore; mo
     )
 })
 
+function AccessTokenRevealDialog(props: {
+  open: boolean
+  title: string
+  token: string
+  hint: string
+  copyText: string
+  closeText: string
+  copyError: string
+  onCopy: () => void
+  onClose: () => void
+}): React.ReactElement | null {
+  if (!props.open) return null
+
+  return createPortal(
+    <div className="gy-confirm-overlay" role="dialog" aria-modal="true" onClick={props.onClose}>
+      <div className="gy-confirm-card access-token-reveal-dialog" onClick={(event) => event.stopPropagation()}>
+        <div className="gy-confirm-header">
+          <div className="gy-confirm-title">{props.title}</div>
+          <button className="icon-btn-sm" onClick={props.onClose} title={props.closeText}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="gy-confirm-body access-token-reveal-body">
+          <pre className="access-token-created-value">{props.token}</pre>
+          <div className="gy-confirm-message access-token-reveal-hint">{props.hint}</div>
+          {props.copyError ? <div className="settings-error access-token-reveal-error">{props.copyError}</div> : null}
+        </div>
+
+        <div className="gy-confirm-footer">
+          <button className="gy-btn gy-btn-secondary" onClick={props.onClose}>
+            {props.closeText}
+          </button>
+          <button className="gy-btn gy-btn-primary" onClick={props.onCopy}>
+            {props.copyText}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  )
+}
+
 export const SettingsView: React.FC<{ store: AppStore }> = observer(({ store }) => {
   const t = store.i18n.t
   const [editingModelId, setEditingModelId] = useState<string | null>(null)
@@ -252,6 +296,12 @@ export const SettingsView: React.FC<{ store: AppStore }> = observer(({ store }) 
     denylist: '',
     asklist: ''
   })
+  const [accessTokenName, setAccessTokenName] = useState('')
+  const [accessTokenError, setAccessTokenError] = useState('')
+  const [accessTokenBusy, setAccessTokenBusy] = useState(false)
+  const [createdAccessToken, setCreatedAccessToken] = useState<string | null>(null)
+  const [accessTokenModalError, setAccessTokenModalError] = useState('')
+  const [deleteAccessTokenConfirm, setDeleteAccessTokenConfirm] = useState<null | { id: string; name: string }>(null)
 
   const cpLists = useMemo(() => store.commandPolicyLists, [store.commandPolicyLists])
   const versionInfo = store.versionInfo
@@ -268,8 +318,57 @@ export const SettingsView: React.FC<{ store: AppStore }> = observer(({ store }) 
   const [deleteConfirm, setDeleteConfirm] = useState<null | { kind: 'model' | 'profile'; id: string }>(null)
   const [deleteSkillConfirm, setDeleteSkillConfirm] = useState<null | { fileName: string }>(null)
 
+  const createAccessToken = async () => {
+    const normalizedName = accessTokenName.trim()
+    if (!normalizedName) {
+      setAccessTokenError(t.settings.accessTokenNameRequired)
+      return
+    }
+
+    setAccessTokenBusy(true)
+    setAccessTokenError('')
+    setAccessTokenModalError('')
+    try {
+      const created = await store.createAccessToken(normalizedName)
+      setCreatedAccessToken(created.token)
+      setAccessTokenName('')
+    } catch (error) {
+      setAccessTokenError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setAccessTokenBusy(false)
+    }
+  }
+
+  const copyCreatedAccessToken = async () => {
+    if (!createdAccessToken) return
+    try {
+      await navigator.clipboard.writeText(createdAccessToken)
+      setAccessTokenModalError('')
+    } catch {
+      setAccessTokenModalError(t.settings.accessTokenCopyFailed)
+    }
+  }
+
+  const closeCreatedAccessTokenDialog = () => {
+    setCreatedAccessToken(null)
+    setAccessTokenModalError('')
+  }
+
   return (
     <div className="settings">
+      <AccessTokenRevealDialog
+        open={!!createdAccessToken}
+        title={t.settings.accessTokenCreatedTitle}
+        token={createdAccessToken || ''}
+        hint={t.settings.accessTokenCreatedHint}
+        copyText={t.settings.copyAccessToken}
+        closeText={t.common.close}
+        copyError={accessTokenModalError}
+        onCopy={() => {
+          void copyCreatedAccessToken()
+        }}
+        onClose={closeCreatedAccessTokenDialog}
+      />
       <ConfirmDialog
         open={!!deleteConfirm}
         title={t.common.confirmDeleteTitle}
@@ -297,6 +396,20 @@ export const SettingsView: React.FC<{ store: AppStore }> = observer(({ store }) 
           if (!deleteSkillConfirm) return
           void store.deleteSkill(deleteSkillConfirm.fileName)
           setDeleteSkillConfirm(null)
+        }}
+      />
+      <ConfirmDialog
+        open={!!deleteAccessTokenConfirm}
+        title={t.common.confirmDeleteTitle}
+        message={t.settings.confirmDeleteAccessToken(deleteAccessTokenConfirm?.name || '')}
+        confirmText={t.common.delete}
+        cancelText={t.common.cancel}
+        danger
+        onCancel={() => setDeleteAccessTokenConfirm(null)}
+        onConfirm={() => {
+          if (!deleteAccessTokenConfirm) return
+          void store.deleteAccessToken(deleteAccessTokenConfirm.id)
+          setDeleteAccessTokenConfirm(null)
         }}
       />
 
@@ -381,6 +494,17 @@ export const SettingsView: React.FC<{ store: AppStore }> = observer(({ store }) 
             <span>{t.settings.skills}</span>
           </div>
           <div
+            className={store.settingsSection === 'accessTokens' ? 'settings-nav-item is-active' : 'settings-nav-item'}
+            onClick={() => store.setSettingsSection('accessTokens')}
+            role="button"
+            tabIndex={0}
+          >
+            <span className="icon">
+              <Key size={16} strokeWidth={2} />
+            </span>
+            <span>{t.settings.accessTokens}</span>
+          </div>
+          <div
             className={store.settingsSection === 'version' ? 'settings-nav-item is-active' : 'settings-nav-item'}
             onClick={() => store.setSettingsSection('version')}
             role="button"
@@ -454,36 +578,6 @@ export const SettingsView: React.FC<{ store: AppStore }> = observer(({ store }) 
                     />
                     <span className="switch-slider" />
                   </label>
-                </div>
-                <div className="settings-row">
-                  <div className="settings-row-label-with-info">
-                    <label>{t.settings.wsGatewayAccess}</label>
-                    <InfoTooltip content={t.settings.tooltips.wsGatewayAccess} />
-                  </div>
-                  <Select
-                    className="settings-native-select"
-                    value={store.settings?.gateway?.ws?.access || 'localhost'}
-                    onChange={(value) => store.setWsGatewayAccess(value as any)}
-                    options={[
-                      { value: 'localhost', label: t.settings.wsGatewayAccessModes.localhost },
-                      { value: 'internet', label: t.settings.wsGatewayAccessModes.internet },
-                      { value: 'disabled', label: t.settings.wsGatewayAccessModes.disabled }
-                    ]}
-                  />
-                </div>
-                <div className="settings-row">
-                  <div className="settings-row-label-with-info">
-                    <label>{t.settings.wsGatewayPort}</label>
-                    <InfoTooltip content={t.settings.tooltips.wsGatewayPort} />
-                  </div>
-                  <NumericInput
-                    className="settings-inline-input"
-                    style={{ width: 110 }}
-                    value={store.settings?.gateway?.ws?.port || 17888}
-                    onChange={(value) => store.setWsGatewayPort(value)}
-                    min={1}
-                    max={65535}
-                  />
                 </div>
               </div>
 
@@ -1194,6 +1288,94 @@ export const SettingsView: React.FC<{ store: AppStore }> = observer(({ store }) 
                 })
               })()}
               {store.skills.length === 0 ? <div className="tool-empty">{t.settings.noSkills}</div> : null}
+            </>
+          ) : null}
+
+          {store.settingsSection === 'accessTokens' ? (
+            <>
+              <div className="settings-section-header">
+                <div className="settings-section-title">
+                  {t.settings.accessTokens}
+                  <InfoTooltip content={t.settings.tooltips.accessTokens} />
+                </div>
+                <div className="settings-actions">
+                  <button className="btn-icon-reload" onClick={() => store.loadAccessTokens()} title={t.common.refresh}>
+                    <RefreshCw size={14} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="settings-rows">
+                <div className="settings-row">
+                  <div className="settings-row-label-with-info">
+                    <label>{t.settings.wsGatewayAccess}</label>
+                    <InfoTooltip content={t.settings.tooltips.wsGatewayAccess} />
+                  </div>
+                  <Select
+                    className="settings-native-select"
+                    value={store.settings?.gateway?.ws?.access || 'localhost'}
+                    onChange={(value) => store.setWsGatewayAccess(value as any)}
+                    options={[
+                      { value: 'localhost', label: t.settings.wsGatewayAccessModes.localhost },
+                      { value: 'internet', label: t.settings.wsGatewayAccessModes.internet },
+                      { value: 'disabled', label: t.settings.wsGatewayAccessModes.disabled }
+                    ]}
+                  />
+                </div>
+                <div className="settings-row">
+                  <div className="settings-row-label-with-info">
+                    <label>{t.settings.wsGatewayPort}</label>
+                    <InfoTooltip content={t.settings.tooltips.wsGatewayPort} />
+                  </div>
+                  <NumericInput
+                    className="settings-inline-input"
+                    style={{ width: 110 }}
+                    value={store.settings?.gateway?.ws?.port || 17888}
+                    onChange={(value) => store.setWsGatewayPort(value)}
+                    min={1}
+                    max={65535}
+                  />
+                </div>
+              </div>
+              <div className="settings-subsection-header">
+                <input
+                  className="settings-inline-input"
+                  placeholder={t.settings.accessTokenNamePlaceholder}
+                  value={accessTokenName}
+                  onChange={(event) => setAccessTokenName(event.target.value)}
+                  disabled={accessTokenBusy}
+                />
+                <button className="btn-secondary" onClick={createAccessToken} disabled={accessTokenBusy}>
+                  {accessTokenBusy ? <Loader2 size={14} className="spin" /> : t.common.create}
+                </button>
+              </div>
+
+              {accessTokenError ? <div className="settings-error">{accessTokenError}</div> : null}
+
+              <div className="settings-divider settings-divider-spaced">
+                <span>{t.settings.accessTokenIssuedList}</span>
+                <i />
+              </div>
+              <div className="tools-list">
+                {store.accessTokens.map((tokenInfo) => (
+                  <div key={tokenInfo.id} className="tool-item access-token-item">
+                    <div className="tool-info">
+                      <div className="tool-name">{tokenInfo.name}</div>
+                      <div className="tool-meta">{new Date(tokenInfo.createdAt).toLocaleString()}</div>
+                    </div>
+                    <div className="tool-actions">
+                      <button
+                        className="icon-btn-sm danger"
+                        title={t.common.delete}
+                        onClick={() => setDeleteAccessTokenConfirm({ id: tokenInfo.id, name: tokenInfo.name })}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {store.accessTokens.length === 0 ? <div className="tool-empty">{t.settings.noAccessTokens}</div> : null}
+              </div>
             </>
           ) : null}
 

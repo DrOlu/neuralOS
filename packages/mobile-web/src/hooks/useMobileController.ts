@@ -1,11 +1,15 @@
 import React from 'react'
 import { GatewayClient } from '../gateway-client'
 import {
+  loadGatewayAccessTokenFromStorage,
   loadGatewayAutoConnectFromStorage,
   loadGatewayUrlFromStorage,
   normalizeGatewayUrl,
+  saveGatewayAccessTokenToStorage,
   saveGatewayAutoConnectToStorage,
-  saveGatewayUrlToStorage
+  saveGatewayUrlToStorage,
+  withGatewayAccessToken,
+  withoutGatewayAccessToken
 } from '../lib/gateway-url'
 import {
   applyMentionToInput,
@@ -78,6 +82,7 @@ const INITIAL_VIEW_STATE: ViewState = {
 const RECONNECT_BASE_DELAY_MS = 800
 const RECONNECT_MAX_DELAY_MS = 15000
 const RECONNECT_JITTER_MS = 500
+const RECONNECT_MAX_ATTEMPTS = 3
 const HEARTBEAT_INTERVAL_MS = 25000
 const HEARTBEAT_RPC_TIMEOUT_MS = 5000
 const HEARTBEAT_MAX_FAILURES = 2
@@ -379,6 +384,7 @@ function toSshConfig(entry: GatewaySshConnectionEntry, connections: GatewayConne
 
 export interface MobileControllerState {
   gatewayInput: string
+  accessTokenInput: string
   connectionStatus: ConnectionStatus
   connectionError: string
   actionPending: boolean
@@ -407,6 +413,7 @@ export interface MobileControllerState {
 
 export interface MobileControllerActions {
   setGatewayInput: (value: string) => void
+  setAccessTokenInput: (value: string) => void
   setComposerValue: (value: string, cursor: number) => void
   setComposerCursor: (cursor: number) => void
   pickMention: (option: MentionOption) => void
@@ -438,7 +445,8 @@ export function useMobileController(): {
   }
   const client = clientRef.current
 
-  const [gatewayInput, setGatewayInput] = React.useState<string>(() => loadGatewayUrlFromStorage())
+  const [gatewayInput, setGatewayInputRaw] = React.useState<string>(() => loadGatewayUrlFromStorage())
+  const [accessTokenInput, setAccessTokenInputRaw] = React.useState<string>(() => loadGatewayAccessTokenFromStorage())
   const [connectionStatus, setConnectionStatus] = React.useState<ConnectionStatus>('disconnected')
   const [connectionError, setConnectionError] = React.useState('')
   const [actionPending, setActionPending] = React.useState(false)
@@ -455,6 +463,10 @@ export function useMobileController(): {
   React.useEffect(() => {
     gatewayInputRef.current = gatewayInput
   }, [gatewayInput])
+  const accessTokenInputRef = React.useRef(accessTokenInput)
+  React.useEffect(() => {
+    accessTokenInputRef.current = accessTokenInput
+  }, [accessTokenInput])
 
   const reconnectTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const reconnectInFlightRef = React.useRef(false)
@@ -484,6 +496,11 @@ export function useMobileController(): {
     }
     heartbeatInFlightRef.current = false
     heartbeatFailuresRef.current = 0
+  }, [])
+
+  const buildGatewayTarget = React.useCallback((rawUrl: string): string => {
+    const normalized = normalizeGatewayUrl(rawUrl)
+    return withGatewayAccessToken(normalized, accessTokenInputRef.current)
   }, [])
 
   const activeSession = React.useMemo(() => {
@@ -681,6 +698,7 @@ export function useMobileController(): {
         sortedSummaries.map((summary) => summary.id),
         sessionMeta
       )
+      const statusLineTarget = withoutGatewayAccessToken(target)
 
       setView({
         terminals,
@@ -697,10 +715,10 @@ export function useMobileController(): {
         activeSessionId,
         statusLine:
           source === 'reconnect'
-            ? `Recovered: ${target}`
+            ? `Recovered: ${statusLineTarget}`
             : skillsUnavailable || toolsUnavailable
-              ? `Connected: ${target} (skills unavailable)`
-              : `Connected: ${target}`
+              ? `Connected: ${statusLineTarget} (skills unavailable)`
+              : `Connected: ${statusLineTarget}`
       })
     },
     [client]
@@ -718,6 +736,21 @@ export function useMobileController(): {
       }
 
       const nextAttempt = reconnectAttemptRef.current + 1
+      if (nextAttempt > RECONNECT_MAX_ATTEMPTS) {
+        const stopMessage = `Auto-reconnect stopped after ${RECONNECT_MAX_ATTEMPTS} failed attempts.`
+        reconnectAttemptRef.current = 0
+        reconnectInFlightRef.current = false
+        autoReconnectEnabledRef.current = false
+        clearReconnectTimer()
+        setConnectionStatus('disconnected')
+        setConnectionError(stopMessage)
+        setView((previous) => ({
+          ...previous,
+          statusLine: `Disconnected: ${reason || 'connection failed'}. ${stopMessage}`
+        }))
+        return
+      }
+
       const delay = immediate ? 0 : computeReconnectDelayMs(nextAttempt)
       reconnectAttemptRef.current = nextAttempt
       setView((previous) => ({
@@ -775,7 +808,7 @@ export function useMobileController(): {
       const flow = (async () => {
         await client.connect(target)
         if (source === 'manual') {
-          saveGatewayUrlToStorage(target)
+          saveGatewayUrlToStorage(withoutGatewayAccessToken(target))
         }
         await bootstrapAfterConnect(target, source)
         lastConnectedAtRef.current = Date.now()
@@ -802,7 +835,7 @@ export function useMobileController(): {
     }
 
     reconnectInFlightRef.current = true
-    const target = normalizeGatewayUrl(gatewayInputRef.current)
+    const target = buildGatewayTarget(gatewayInputRef.current)
     try {
       setConnectionError('')
       await runConnectFlow(target, 'reconnect')
@@ -810,7 +843,7 @@ export function useMobileController(): {
       reconnectInFlightRef.current = false
       scheduleReconnect(safeError(error))
     }
-  }, [runConnectFlow, scheduleReconnect])
+  }, [buildGatewayTarget, runConnectFlow, scheduleReconnect])
   reconnectAttemptRunnerRef.current = runAutoReconnectAttempt
 
   React.useEffect(() => {
@@ -962,7 +995,7 @@ export function useMobileController(): {
     autoConnectBootstrappedRef.current = true
     if (!loadGatewayAutoConnectFromStorage()) return
 
-    const target = normalizeGatewayUrl(gatewayInputRef.current)
+    const target = buildGatewayTarget(gatewayInputRef.current)
     setActionPending(true)
     setConnectionError('')
     manualDisconnectRef.current = false
@@ -979,10 +1012,10 @@ export function useMobileController(): {
       .finally(() => {
         setActionPending(false)
       })
-  }, [clearReconnectTimer, runConnectFlow, scheduleReconnect])
+  }, [buildGatewayTarget, clearReconnectTimer, runConnectFlow, scheduleReconnect])
 
   const connectGateway = React.useCallback(async () => {
-    const target = normalizeGatewayUrl(gatewayInput)
+    const target = buildGatewayTarget(gatewayInput)
     setActionPending(true)
     setConnectionError('')
     saveGatewayAutoConnectToStorage(true)
@@ -1000,7 +1033,7 @@ export function useMobileController(): {
     } finally {
       setActionPending(false)
     }
-  }, [clearReconnectTimer, gatewayInput, runConnectFlow, scheduleReconnect])
+  }, [buildGatewayTarget, clearReconnectTimer, gatewayInput, runConnectFlow, scheduleReconnect])
 
   const disconnectGateway = React.useCallback(() => {
     saveGatewayAutoConnectToStorage(false)
@@ -1522,8 +1555,18 @@ export function useMobileController(): {
     [client, reconcileTerminals]
   )
 
+  const setGatewayInput = React.useCallback((value: string) => {
+    setGatewayInputRaw(value)
+  }, [])
+
+  const setAccessTokenInput = React.useCallback((value: string) => {
+    setAccessTokenInputRaw(value)
+    saveGatewayAccessTokenToStorage(value)
+  }, [])
+
   const state: MobileControllerState = {
     gatewayInput,
+    accessTokenInput,
     connectionStatus,
     connectionError,
     actionPending,
@@ -1552,6 +1595,7 @@ export function useMobileController(): {
 
   const actions: MobileControllerActions = {
     setGatewayInput,
+    setAccessTokenInput,
     setComposerValue,
     setComposerCursor,
     pickMention,

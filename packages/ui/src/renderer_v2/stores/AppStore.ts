@@ -22,12 +22,21 @@ const removeById = <T extends { id: string }>(list: T[], id: string): T[] =>
   list.filter((x) => x.id !== id)
 
 export type AppView = 'main' | 'settings' | 'connections'
-export type SettingsSection = 'general' | 'theme' | 'models' | 'security' | 'tools' | 'skills' | 'version'
+export type SettingsSection =
+  | 'general'
+  | 'theme'
+  | 'models'
+  | 'security'
+  | 'tools'
+  | 'skills'
+  | 'accessTokens'
+  | 'version'
 
 export type McpToolSummary = Awaited<ReturnType<Window['gyshell']['tools']['getMcp']>>[number]
 export type BuiltInToolSummary = Awaited<ReturnType<Window['gyshell']['tools']['getBuiltIn']>>[number]
 export type SkillSummary = Awaited<ReturnType<Window['gyshell']['skills']['getAll']>>[number]
 export type SkillStatusSummary = Awaited<ReturnType<Window['gyshell']['skills']['setEnabled']>>[number]
+export type AccessTokenSummary = Awaited<ReturnType<Window['gyshell']['accessTokens']['list']>>[number]
 export type CommandPolicyLists = Awaited<ReturnType<Window['gyshell']['settings']['getCommandPolicyLists']>>
 export type VersionCheckResult = Awaited<ReturnType<Window['gyshell']['version']['check']>>
 
@@ -59,6 +68,7 @@ export class AppStore {
   mcpTools: McpToolSummary[] = []
   builtInTools: BuiltInToolSummary[] = []
   skills: SkillSummary[] = []
+  accessTokens: AccessTokenSummary[] = []
   commandPolicyLists: CommandPolicyLists = { allowlist: [], denylist: [], asklist: [] }
   versionInfo: VersionCheckResult | null = null
   versionCheckInProgress = false
@@ -81,6 +91,7 @@ export class AppStore {
       mcpTools: observable,
       builtInTools: observable,
       skills: observable,
+      accessTokens: observable,
       commandPolicyLists: observable,
       versionInfo: observable,
       versionCheckInProgress: observable,
@@ -126,6 +137,9 @@ export class AppStore {
       createSkill: action,
       editSkill: action,
       deleteSkill: action,
+      loadAccessTokens: action,
+      createAccessToken: action,
+      deleteAccessToken: action,
       openCustomThemeFile: action,
       reloadCustomThemes: action,
       openMcpConfig: action,
@@ -537,6 +551,37 @@ export class AppStore {
     })
   }
 
+  async loadAccessTokens(): Promise<void> {
+    try {
+      const items = await window.gyshell.accessTokens.list()
+      runInAction(() => {
+        this.accessTokens = [...items].sort((left, right) => right.createdAt - left.createdAt)
+      })
+    } catch (error) {
+      console.error('Failed to load access tokens', error)
+    }
+  }
+
+  async createAccessToken(name: string): Promise<Awaited<ReturnType<Window['gyshell']['accessTokens']['create']>>> {
+    const created = await window.gyshell.accessTokens.create(name)
+    runInAction(() => {
+      this.accessTokens = [
+        { id: created.id, name: created.name, createdAt: created.createdAt },
+        ...this.accessTokens.filter((item) => item.id !== created.id)
+      ]
+    })
+    return created
+  }
+
+  async deleteAccessToken(id: string): Promise<boolean> {
+    const deleted = await window.gyshell.accessTokens.delete(id)
+    if (!deleted) return false
+    runInAction(() => {
+      this.accessTokens = this.accessTokens.filter((item) => item.id !== id)
+    })
+    return true
+  }
+
   async openMcpConfig(): Promise<void> {
     await window.gyshell.tools.openMcpConfig()
   }
@@ -764,6 +809,7 @@ export class AppStore {
       void this.loadTools()
       void this.loadSkills()
       void this.loadCommandPolicyLists()
+      void this.loadAccessTokens()
       void this.loadVersionState()
       void this.checkVersion({ showPopupOnVersionChange: true })
     } catch (err) {
@@ -777,6 +823,7 @@ export class AppStore {
       void this.loadTools()
       void this.loadSkills()
       void this.loadCommandPolicyLists()
+      void this.loadAccessTokens()
       void this.loadVersionState()
       void this.checkVersion({ showPopupOnVersionChange: true })
     }
