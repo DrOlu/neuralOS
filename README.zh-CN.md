@@ -7,7 +7,7 @@
 [![Shell](https://img.shields.io/badge/Shell-Zsh%20%7C%20Bash%20%7C%20PowerShell-orange)](#核心能力)
 
 [English README](./README.md) | 中文 README  
-最新发布说明：[`changelogs/v0.1.7.md`](./changelogs/v0.1.7.md)
+最新发布说明：[`changelogs/v1.0.0.md`](./changelogs/v1.0.0.md)
 使用教程:
 [`docs/mobile-web-usage.md`](./docs/mobile-web-usage.md) ·
 [`docs/tui-usage.md`](./docs/tui-usage.md) ·
@@ -19,6 +19,13 @@
 <p align="center">
   <img src="./demo_imgs/demo.png" width="100%">
 </p>
+<p align="center">
+  <video controls="controls" width="100%">
+    <source src="./demo_imgs/gyshell_demo.mp4?raw=1" type="video/mp4">
+    当前浏览器不支持 HTML video。
+  </video>
+</p>
+演示视频：[`demo_imgs/gyshell_demo.mp4`](./demo_imgs/gyshell_demo.mp4)
 
 ---
 
@@ -43,7 +50,7 @@ GyShell 的定位是“运行在真实终端中的持续执行系统”：
 - **面向真实基础设施**：Shell、SSH、端口转发、多标签交互式终端控制。
 - **面向多设备协作**：桌面端 + TUI + Mobile Web 共用网关语义。
 
-## v0.1.7 关键亮点
+## v1.0.0 关键亮点
 
 - **chat-first TUI 打磨**
   - 布局更清晰，信息更易扫读
@@ -233,7 +240,7 @@ GyShell 采用严格分层：
 
 ## 延伸阅读
 
-- 发布说明：`changelogs/v0.1.7.md`
+- 发布说明：`changelogs/v1.0.0.md`
 - 构建与打包命令矩阵：`docs/build-commands.md`
 - Monorepo 边界与运行链路：`docs/monorepo-architecture.md`
 

@@ -7,7 +7,7 @@
 [![Shell](https://img.shields.io/badge/Shell-Zsh%20%7C%20Bash%20%7C%20PowerShell-orange)](#key-capabilities)
 
 English README | [中文 README](./README.zh-CN.md)  
-Latest release notes: [`changelogs/v0.1.7.md`](./changelogs/v0.1.7.md)
+Latest release notes: [`changelogs/v1.0.0.md`](./changelogs/v1.0.0.md)
 Usage guides:
 [`docs/mobile-web-usage.md`](./docs/mobile-web-usage.md) ·
 [`docs/tui-usage.md`](./docs/tui-usage.md) ·
@@ -19,6 +19,13 @@ Usage guides:
 <p align="center">
   <img src="./demo_imgs/demo.png" width="100%">
 </p>
+<p align="center">
+  <video controls="controls" width="100%">
+    <source src="./demo_imgs/gyshell_demo.mp4?raw=1" type="video/mp4">
+    Your browser does not support HTML video.
+  </video>
+</p>
+Demo video: [`demo_imgs/gyshell_demo.mp4`](./demo_imgs/gyshell_demo.mp4)
 
 ---
 
@@ -43,7 +50,7 @@ GyShell is built for **persistent execution in your real terminal runtime**:
 - **For real infrastructure**: shell, SSH, forwarding, and multi-tab interactive terminal control.
 - **For multi-device flow**: desktop + TUI + mobile-web with shared gateway semantics.
 
-## v0.1.7 Key Highlights
+## v1.0.0 Key Highlights
 
 - **Refined chat-first TUI**
   - cleaner layout and scanability
@@ -233,7 +240,7 @@ See:
 
 ## Read More
 
-- Release notes: `changelogs/v0.1.7.md`
+- Release notes: `changelogs/v1.0.0.md`
 - Build matrix and packaging: `docs/build-commands.md`
 - Monorepo boundaries and runtime flow: `docs/monorepo-architecture.md`
 
