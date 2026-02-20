@@ -624,10 +624,7 @@ function formatCommandOutputSlice(params: { output: string; offset: number; limi
   }
 
   const content = raw.map((line, index) => `${(index + safeOffset + 1).toString().padStart(5, '0')}| ${line}`)
-  let result = `
-<terminal_content>
-${content.join('\n')}
-</terminal_content>`
+  let result = content.join('\n')
 
   const totalLines = lines.length
   const lastReadLine = safeOffset + raw.length
@@ -642,7 +639,5 @@ ${content.join('\n')}
   } else {
     result += `\n\n(End of output - total ${totalLines} lines)`
   }
-
-  result += '\n</command_output>'
   return result
 }

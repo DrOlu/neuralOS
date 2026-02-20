@@ -27,6 +27,11 @@ interface RingBuffer {
 }
 
 type RawEventPublisher = (channel: string, data: unknown) => void
+type PendingTaskFinish = {
+  requiredWriteSeq: number
+  exitCode?: number
+}
+
 type TerminalTabSnapshot = {
   id: string
   title: string
@@ -46,6 +51,10 @@ export class TerminalService {
   private tasksByTerminal: Map<string, Record<string, CommandTask>> = new Map()
   private activeTaskByTerminal: Map<string, string> = new Map()
   private oscParseBufByTerminal: Map<string, string> = new Map()
+  private headlessWriteSeqByTerminal: Map<string, number> = new Map()
+  private headlessFlushedSeqByTerminal: Map<string, number> = new Map()
+  private pendingTaskFinishByTerminal: Map<string, PendingTaskFinish> = new Map()
+  private startMarkerByTaskId: Map<string, any> = new Map()
   private onTaskFinishedCallbacks: Map<string, (result: CommandResult) => void> = new Map()
   private hasPrintedBanner = false
   private rawEventPublisher: RawEventPublisher | null = null
@@ -214,12 +223,19 @@ export class TerminalService {
 
     // Write to headless terminal for rendering/normalization
     const headless = this.headlessPtys.get(terminalId)
+    let writeSeq = 0
     if (headless) {
-      headless.write(data)
+      writeSeq = (this.headlessWriteSeqByTerminal.get(terminalId) || 0) + 1
+      this.headlessWriteSeqByTerminal.set(terminalId, writeSeq)
+      headless.write(data, () => {
+        const flushed = Math.max(this.headlessFlushedSeqByTerminal.get(terminalId) || 0, writeSeq)
+        this.headlessFlushedSeqByTerminal.set(terminalId, flushed)
+        this.tryFlushPendingTaskFinish(terminalId)
+      })
     }
 
     // Process OSC markers and strip markers from visual output
-    const cleanedData = this.processIncomingData(terminalId, data)
+    const cleanedData = this.processIncomingData(terminalId, data, writeSeq)
 
     // Update ring buffer
     const buffer = this.buffers.get(terminalId)
@@ -240,7 +256,7 @@ export class TerminalService {
     }
   }
 
-  private processIncomingData(terminalId: string, rawChunk: string): string {
+  private processIncomingData(terminalId: string, rawChunk: string, writeSeq: number): string {
     let buf = this.oscParseBufByTerminal.get(terminalId) || ''
     buf += rawChunk
 
@@ -270,18 +286,42 @@ export class TerminalService {
       const markerContent = buf.slice(precmdIdx, suffixIdx)
       const ecMatch = markerContent.match(/ec=(\d+)/)
       const exitCode = ecMatch ? parseInt(ecMatch[1], 10) : undefined
-      
-      // Give headless xterm a tiny bit of time to finish rendering the last chunk
-      // before we finalize the task and extract its output.
-      setTimeout(() => {
-        this.finishActiveTask(terminalId, exitCode)
-      }, 50)
+
+      this.scheduleTaskFinishAfterHeadlessFlush(terminalId, exitCode, writeSeq)
 
       buf = buf.slice(suffixIdx + OSC_SUFFIX.length)
     }
 
     this.oscParseBufByTerminal.set(terminalId, buf)
     return cleanedData
+  }
+
+  private scheduleTaskFinishAfterHeadlessFlush(terminalId: string, exitCode: number | undefined, writeSeq: number): void {
+    const headless = this.headlessPtys.get(terminalId)
+    if (!headless || writeSeq <= 0) {
+      this.finishActiveTask(terminalId, exitCode)
+      return
+    }
+
+    const flushedSeq = this.headlessFlushedSeqByTerminal.get(terminalId) || 0
+    if (flushedSeq >= writeSeq) {
+      this.finishActiveTask(terminalId, exitCode)
+      return
+    }
+
+    this.pendingTaskFinishByTerminal.set(terminalId, {
+      requiredWriteSeq: writeSeq,
+      exitCode
+    })
+  }
+
+  private tryFlushPendingTaskFinish(terminalId: string): void {
+    const pending = this.pendingTaskFinishByTerminal.get(terminalId)
+    if (!pending) return
+    const flushedSeq = this.headlessFlushedSeqByTerminal.get(terminalId) || 0
+    if (flushedSeq < pending.requiredWriteSeq) return
+    this.pendingTaskFinishByTerminal.delete(terminalId)
+    this.finishActiveTask(terminalId, pending.exitCode)
   }
 
   private handleExit(terminalId: string, code: number): void {
@@ -298,7 +338,11 @@ export class TerminalService {
       }
       this.activeTaskByTerminal.delete(terminalId)
       this.onTaskFinishedCallbacks.delete(activeTaskId)
+      this.startMarkerByTaskId.delete(activeTaskId)
     }
+    this.pendingTaskFinishByTerminal.delete(terminalId)
+    this.headlessWriteSeqByTerminal.delete(terminalId)
+    this.headlessFlushedSeqByTerminal.delete(terminalId)
 
     // UI lifecycle is user-driven. Do not auto-remove tab metadata on backend exit.
     // We only update runtime state and keep captured output until user closes the tab.
@@ -362,7 +406,14 @@ export class TerminalService {
       this.selectionByTerminal.delete(terminalId)
       this.oscParseBufByTerminal.delete(terminalId)
       this.tasksByTerminal.delete(terminalId)
+      const activeTaskId = this.activeTaskByTerminal.get(terminalId)
+      if (activeTaskId) {
+        this.startMarkerByTaskId.delete(activeTaskId)
+      }
       this.activeTaskByTerminal.delete(terminalId)
+      this.headlessWriteSeqByTerminal.delete(terminalId)
+      this.headlessFlushedSeqByTerminal.delete(terminalId)
+      this.pendingTaskFinishByTerminal.delete(terminalId)
     }
     this.publishTerminalTabsChanged()
   }
@@ -676,6 +727,12 @@ export class TerminalService {
 
     const taskMap = this.getTaskMap(terminalId)
     taskMap[taskId] = task
+    if (headless && typeof (headless as any).registerMarker === 'function') {
+      const marker = (headless as any).registerMarker(0)
+      if (marker) {
+        this.startMarkerByTaskId.set(taskId, marker)
+      }
+    }
     this.activeTaskByTerminal.set(terminalId, taskId)
     if (onFinished) {
       this.onTaskFinishedCallbacks.set(taskId, onFinished)
@@ -714,22 +771,13 @@ export class TerminalService {
     const task = this.getTaskMap(terminalId)[taskId]
     if (!task || (task.status !== 'running' && task.status !== 'timeout')) return
 
-    // Scheme 1: Extract rendered text from headless xterm buffer
-    const headless = this.headlessPtys.get(terminalId)
-    if (headless && task.startAbsLine !== undefined) {
-      const buffer = headless.buffer.active
-      const endAbsLine = buffer.baseY + buffer.cursorY
-      const lines: string[] = []
-      for (let i = task.startAbsLine; i <= endAbsLine; i++) {
-        const line = buffer.getLine(i)
-        if (line) {
-          lines.push(line.translateToString(true))
-        }
-      }
-      task.output = lines.join('\n').trimEnd()
+    const renderedOutput = this.getRenderedTaskOutput(terminalId, task)
+    const streamedOutput = this.stripEchoedCommand(task.output || '', task.command)
+    if (renderedOutput !== undefined) {
+      const renderedHasContent = renderedOutput.trim().length > 0
+      task.output = renderedHasContent || !streamedOutput ? renderedOutput : streamedOutput
     } else {
-      // Fallback to raw buffer stripping
-      task.output = this.stripEchoedCommand(task.output || '', task.command)
+      task.output = streamedOutput
     }
 
     task.status = 'finished'
@@ -746,6 +794,37 @@ export class TerminalService {
     }
   }
 
+  private getRenderedTaskOutput(terminalId: string, task: CommandTask): string | undefined {
+    const headless = this.headlessPtys.get(terminalId)
+    if (!headless) return undefined
+    const buffer = headless.buffer.active
+    if (!buffer) return undefined
+
+    const marker = this.startMarkerByTaskId.get(task.id)
+    const markerLine = marker && typeof marker.line === 'number' ? marker.line : undefined
+    if (marker && typeof marker.dispose === 'function') {
+      marker.dispose()
+    }
+    this.startMarkerByTaskId.delete(task.id)
+
+    const startAbsLineFromMarker = markerLine !== undefined && markerLine >= 0 ? markerLine : undefined
+    const startAbsLine = startAbsLineFromMarker !== undefined ? startAbsLineFromMarker : task.startAbsLine
+    if (startAbsLine === undefined) return undefined
+
+    const endAbsLine = buffer.baseY + buffer.cursorY
+    const start = Math.max(0, startAbsLine)
+    if (endAbsLine < start) return ''
+
+    const lines: string[] = []
+    for (let i = start; i <= endAbsLine; i++) {
+      const line = buffer.getLine(i)
+      if (line) {
+        lines.push(line.translateToString(true))
+      }
+    }
+    return lines.join('\n').trimEnd()
+  }
+
   private markTaskAborted(terminalId: string, taskId: string): void {
     const task = this.getTaskMap(terminalId)[taskId]
     if (!task || task.status !== 'running') return
@@ -755,6 +834,7 @@ export class TerminalService {
     task.endOffset = task.startOffset + (task.output?.length || 0)
     this.activeTaskByTerminal.delete(terminalId)
     this.onTaskFinishedCallbacks.delete(taskId)
+    this.startMarkerByTaskId.delete(taskId)
   }
 
   private stripEchoedCommand(output: string, command: string): string {
