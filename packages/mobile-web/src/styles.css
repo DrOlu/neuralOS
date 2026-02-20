@@ -34,10 +34,16 @@ body,
 body {
   margin: 0;
   color: var(--ink);
-  font-family: 'Avenir Next', 'PingFang SC', 'Noto Sans SC', 'Trebuchet MS', sans-serif;
+  font-family:
+    "Avenir Next", "PingFang SC", "Noto Sans SC", "Trebuchet MS", sans-serif;
   background:
     radial-gradient(circle at 16% -12%, #d6e8f5 0%, transparent 45%),
-    linear-gradient(180deg, var(--bg-grad-a) 0%, var(--bg) 66%, var(--bg-grad-b) 100%);
+    linear-gradient(
+      180deg,
+      var(--bg-grad-a) 0%,
+      var(--bg) 66%,
+      var(--bg-grad-b) 100%
+    );
   overflow: hidden;
 }
 
@@ -435,7 +441,7 @@ button:disabled {
 }
 
 .bubble-markdown code {
-  font-family: 'JetBrains Mono', 'SF Mono', 'Menlo', monospace;
+  font-family: "JetBrains Mono", "SF Mono", "Menlo", monospace;
   font-size: 12px;
 }
 
@@ -528,7 +534,7 @@ button:disabled {
   border: 1px solid var(--tool-border);
   background: var(--tool-soft);
   padding: 8px;
-  font-family: 'JetBrains Mono', 'SF Mono', 'Menlo', monospace;
+  font-family: "JetBrains Mono", "SF Mono", "Menlo", monospace;
   font-size: 12px;
   line-height: 1.42;
   min-height: 1.42em;
@@ -584,7 +590,7 @@ button:disabled {
 }
 
 .detail-markdown code {
-  font-family: 'JetBrains Mono', 'SF Mono', 'Menlo', monospace;
+  font-family: "JetBrains Mono", "SF Mono", "Menlo", monospace;
   font-size: 12px;
 }
 
@@ -651,7 +657,7 @@ button:disabled {
 
 .event-card pre {
   margin: 8px 0 0;
-  font-family: 'JetBrains Mono', 'SF Mono', 'Menlo', monospace;
+  font-family: "JetBrains Mono", "SF Mono", "Menlo", monospace;
   font-size: 12px;
   line-height: 1.42;
   color: color-mix(in srgb, var(--ink) 88%, var(--ink-soft));
@@ -727,7 +733,11 @@ button:disabled {
 }
 
 .accent-btn {
-  background: linear-gradient(165deg, var(--accent) 0%, var(--accent-strong) 100%);
+  background: linear-gradient(
+    165deg,
+    var(--accent) 0%,
+    var(--accent-strong) 100%
+  );
   color: #fff;
 }
 
@@ -771,6 +781,9 @@ button:disabled {
   font-size: 14px;
   line-height: 1.4;
   padding: 0;
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
 }
 
 .composer-bottom-row {
@@ -942,14 +955,16 @@ button:disabled {
 }
 
 .terminal-create-field::after {
-  content: '';
+  content: "";
   position: absolute;
   right: 14px;
   top: 50%;
   width: 8px;
   height: 8px;
-  border-right: 2px solid color-mix(in srgb, var(--ink-soft) 84%, var(--surface));
-  border-bottom: 2px solid color-mix(in srgb, var(--ink-soft) 84%, var(--surface));
+  border-right: 2px solid
+    color-mix(in srgb, var(--ink-soft) 84%, var(--surface));
+  border-bottom: 2px solid
+    color-mix(in srgb, var(--ink-soft) 84%, var(--surface));
   transform: translateY(-62%) rotate(45deg);
   pointer-events: none;
 }
@@ -967,7 +982,9 @@ button:disabled {
   font-weight: 700;
   line-height: 1.2;
   box-shadow: none;
-  transition: border-color 140ms ease, background-color 140ms ease;
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease;
 }
 
 .terminal-create-select:hover {
@@ -1120,9 +1137,15 @@ button:disabled {
   text-transform: uppercase;
 }
 
-.conn-status-label-flat.connected { color: #2bac76; }
-.conn-status-label-flat.connecting { color: var(--warning); }
-.conn-status-label-flat.disconnected { color: var(--danger); }
+.conn-status-label-flat.connected {
+  color: #2bac76;
+}
+.conn-status-label-flat.connecting {
+  color: var(--warning);
+}
+.conn-status-label-flat.disconnected {
+  color: var(--danger);
+}
 
 .settings-hint-flat {
   margin: 0;
@@ -1138,6 +1161,54 @@ button:disabled {
   min-height: 36px;
   padding: 0 10px;
   font-size: 13px;
+}
+
+.settings-input-row select {
+  width: 100%;
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--surface-soft);
+  color: var(--ink);
+  border-radius: 4px;
+  min-height: 36px;
+  padding: 0 34px 0 10px;
+  font-size: 13px;
+  line-height: 1.2;
+  box-shadow: none;
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease;
+}
+
+.settings-input-row input:hover,
+.settings-input-row select:hover {
+  background: color-mix(in srgb, var(--surface-soft) 84%, var(--surface));
+}
+
+.settings-input-row input:focus-visible,
+.settings-input-row select:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.settings-select-row {
+  position: relative;
+}
+
+.settings-select-row::after {
+  content: "";
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid
+    color-mix(in srgb, var(--ink-soft) 84%, var(--surface));
+  border-bottom: 2px solid
+    color-mix(in srgb, var(--ink-soft) 84%, var(--surface));
+  transform: translateY(-62%) rotate(45deg);
+  pointer-events: none;
 }
 
 .settings-actions-flat {
@@ -1160,8 +1231,14 @@ button:disabled {
   gap: 6px;
 }
 
-.accent-btn-flat { background: var(--accent); color: #fff; }
-.danger-btn-flat { background: var(--danger-soft); color: var(--danger); }
+.accent-btn-flat {
+  background: var(--accent);
+  color: #fff;
+}
+.danger-btn-flat {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
 
 .settings-error-flat {
   margin: 0;
@@ -1387,8 +1464,12 @@ button:disabled {
 }
 
 @keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .spin {

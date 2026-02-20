@@ -1,25 +1,29 @@
-import React from 'react'
-import { Lock, SendHorizontal, Square } from 'lucide-react'
-import { consumeMentionBackspace, type MentionOption } from '../../lib/mentions'
-import type { GatewayProfileSummary } from '../../types'
-import { MentionSuggestions } from './MentionSuggestions'
+import React from "react";
+import { Lock, SendHorizontal, Square } from "lucide-react";
+import { useMobileI18n } from "../../i18n/provider";
+import {
+  consumeMentionBackspace,
+  type MentionOption,
+} from "../../lib/mentions";
+import type { GatewayProfileSummary } from "../../types";
+import { MentionSuggestions } from "./MentionSuggestions";
 
 interface ComposerBarProps {
-  value: string
-  cursor: number
-  onChange: (value: string, cursor: number) => void
-  onCursorChange: (cursor: number) => void
-  onSend: () => void
-  onStop: () => void
-  canSend: boolean
-  isRunning: boolean
-  profiles: GatewayProfileSummary[]
-  activeProfileId: string
-  lockedProfileId: string | null
-  tokenUsagePercent: number | null
-  onUpdateProfile: (profileId: string) => void
-  mentionOptions: MentionOption[]
-  onPickMention: (option: MentionOption) => void
+  value: string;
+  cursor: number;
+  onChange: (value: string, cursor: number) => void;
+  onCursorChange: (cursor: number) => void;
+  onSend: () => void;
+  onStop: () => void;
+  canSend: boolean;
+  isRunning: boolean;
+  profiles: GatewayProfileSummary[];
+  activeProfileId: string;
+  lockedProfileId: string | null;
+  tokenUsagePercent: number | null;
+  onUpdateProfile: (profileId: string) => void;
+  mentionOptions: MentionOption[];
+  onPickMention: (option: MentionOption) => void;
 }
 
 export const ComposerBar: React.FC<ComposerBarProps> = ({
@@ -37,35 +41,36 @@ export const ComposerBar: React.FC<ComposerBarProps> = ({
   tokenUsagePercent,
   onUpdateProfile,
   mentionOptions,
-  onPickMention
+  onPickMention,
 }) => {
-  const textareaRef = React.useRef<HTMLTextAreaElement | null>(null)
+  const { t } = useMobileI18n();
+  const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
 
   React.useEffect(() => {
-    const input = textareaRef.current
-    if (!input) return
-    input.style.height = '0px'
-    const next = Math.min(Math.max(input.scrollHeight, 36), 160)
-    input.style.height = `${next}px`
-  }, [value])
+    const input = textareaRef.current;
+    if (!input) return;
+    input.style.height = "0px";
+    const next = Math.min(Math.max(input.scrollHeight, 36), 160);
+    input.style.height = `${next}px`;
+  }, [value]);
 
   React.useEffect(() => {
-    const input = textareaRef.current
-    if (!input) return
-    if (document.activeElement !== input) return
-    if (input.selectionStart === cursor && input.selectionEnd === cursor) return
-    input.setSelectionRange(cursor, cursor)
-  }, [cursor, value])
+    const input = textareaRef.current;
+    if (!input) return;
+    if (document.activeElement !== input) return;
+    if (input.selectionStart !== input.selectionEnd) return;
+    if (input.selectionStart === cursor && input.selectionEnd === cursor)
+      return;
+    input.setSelectionRange(cursor, cursor);
+  }, [cursor, value]);
 
   const handleSend = React.useCallback(() => {
-    onSend()
-    requestAnimationFrame(() => {
-      textareaRef.current?.focus()
-    })
-  }, [onSend])
+    onSend();
+  }, [onSend]);
 
-  const profileLocked = Boolean(isRunning && lockedProfileId)
-  const profileValue = lockedProfileId || activeProfileId || profiles[0]?.id || ''
+  const profileLocked = Boolean(isRunning && lockedProfileId);
+  const profileValue =
+    lockedProfileId || activeProfileId || profiles[0]?.id || "";
 
   return (
     <footer className="composer-modern">
@@ -76,23 +81,44 @@ export const ComposerBar: React.FC<ComposerBarProps> = ({
           ref={textareaRef}
           value={value}
           rows={1}
-          onChange={(event) => onChange(event.target.value, event.target.selectionStart || 0)}
-          onSelect={(event) => onCursorChange(event.currentTarget.selectionStart || 0)}
-          onClick={(event) => onCursorChange(event.currentTarget.selectionStart || 0)}
+          onChange={(event) =>
+            onChange(event.target.value, event.target.selectionStart || 0)
+          }
+          onSelect={(event) => {
+            const start = event.currentTarget.selectionStart || 0;
+            const end = event.currentTarget.selectionEnd || 0;
+            if (start !== end) return;
+            onCursorChange(start);
+          }}
+          onBeforeInput={(event) => {
+            const nativeEvent = event.nativeEvent as InputEvent;
+            if (nativeEvent.inputType !== "deleteContentBackward") return;
+            const target = event.currentTarget;
+            const start = target.selectionStart || 0;
+            const end = target.selectionEnd || 0;
+            const collapsedDelete = consumeMentionBackspace(value, start, end);
+            if (!collapsedDelete) return;
+            event.preventDefault();
+            onChange(collapsedDelete.value, collapsedDelete.cursor);
+          }}
           onKeyDown={(event) => {
-            if (event.key === 'Backspace') {
-              const target = event.currentTarget
-              const start = target.selectionStart || 0
-              const end = target.selectionEnd || 0
-              const collapsedDelete = consumeMentionBackspace(value, start, end)
+            if (event.key === "Backspace") {
+              const target = event.currentTarget;
+              const start = target.selectionStart || 0;
+              const end = target.selectionEnd || 0;
+              const collapsedDelete = consumeMentionBackspace(
+                value,
+                start,
+                end,
+              );
               if (collapsedDelete) {
-                event.preventDefault()
-                onChange(collapsedDelete.value, collapsedDelete.cursor)
-                return
+                event.preventDefault();
+                onChange(collapsedDelete.value, collapsedDelete.cursor);
+                return;
               }
             }
           }}
-          placeholder="Message... use @ for terminal/skill"
+          placeholder={t.composer.placeholder}
           autoCorrect="off"
           autoCapitalize="sentences"
         />
@@ -100,7 +126,9 @@ export const ComposerBar: React.FC<ComposerBarProps> = ({
 
       <div className="composer-bottom-row">
         <div className="composer-row-left">
-          <div className={`composer-profile-selector ${profileLocked ? 'locked' : ''}`}>
+          <div
+            className={`composer-profile-selector ${profileLocked ? "locked" : ""}`}
+          >
             {profileLocked ? <Lock size={10} /> : null}
             <select
               value={profileValue}
@@ -114,7 +142,9 @@ export const ComposerBar: React.FC<ComposerBarProps> = ({
               ))}
             </select>
           </div>
-          {tokenUsagePercent !== null ? <span className="composer-token-label">{tokenUsagePercent}%</span> : null}
+          {tokenUsagePercent !== null ? (
+            <span className="composer-token-label">{tokenUsagePercent}%</span>
+          ) : null}
         </div>
 
         <div className="composer-row-right">
@@ -123,8 +153,8 @@ export const ComposerBar: React.FC<ComposerBarProps> = ({
               type="button"
               className="composer-icon-button stop"
               onClick={onStop}
-              aria-label="Stop run"
-              title="Stop run"
+              aria-label={t.composer.stopRun}
+              title={t.composer.stopRun}
             >
               <Square size={12} />
             </button>
@@ -134,13 +164,13 @@ export const ComposerBar: React.FC<ComposerBarProps> = ({
             className="composer-icon-button send"
             onClick={handleSend}
             disabled={!canSend}
-            aria-label="Send message"
-            title="Send"
+            aria-label={t.composer.sendMessage}
+            title={t.composer.send}
           >
             <SendHorizontal size={14} />
           </button>
         </div>
       </div>
     </footer>
-  )
-}
+  );
+};

@@ -1,54 +1,60 @@
-import React from 'react'
-import { Plus, X } from 'lucide-react'
-import type { CreateTerminalTarget, GatewaySshConnectionSummary, GatewayTerminalSummary } from '../../types'
+import React from "react";
+import { Plus, X } from "lucide-react";
+import { useMobileI18n } from "../../i18n/provider";
+import type {
+  CreateTerminalTarget,
+  GatewaySshConnectionSummary,
+  GatewayTerminalSummary,
+} from "../../types";
 
 interface TerminalPanelProps {
-  terminals: GatewayTerminalSummary[]
-  sshConnections: GatewaySshConnectionSummary[]
-  onCreateTerminal: (target: CreateTerminalTarget) => void
-  onCloseTerminal: (terminalId: string) => void
+  terminals: GatewayTerminalSummary[];
+  sshConnections: GatewaySshConnectionSummary[];
+  onCreateTerminal: (target: CreateTerminalTarget) => void;
+  onCloseTerminal: (terminalId: string) => void;
 }
 
 export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   terminals,
   sshConnections,
   onCreateTerminal,
-  onCloseTerminal
+  onCloseTerminal,
 }) => {
-  const [createTarget, setCreateTarget] = React.useState<string>('local')
+  const { t } = useMobileI18n();
+  const [createTarget, setCreateTarget] = React.useState<string>("local");
 
   const options = React.useMemo(() => {
     return [
-      { value: 'local', label: 'Local terminal' },
+      { value: "local", label: t.terminal.localTerminal },
       ...sshConnections.map((item) => ({
         value: `ssh:${item.id}`,
-        label: item.name || `${item.username}@${item.host}:${item.port}`
-      }))
-    ]
-  }, [sshConnections])
+        label: item.name || `${item.username}@${item.host}:${item.port}`,
+      })),
+    ];
+  }, [sshConnections, t.terminal.localTerminal]);
 
   React.useEffect(() => {
-    if (createTarget === 'local') return
-    const id = createTarget.startsWith('ssh:') ? createTarget.slice(4) : ''
+    if (createTarget === "local") return;
+    const id = createTarget.startsWith("ssh:") ? createTarget.slice(4) : "";
     if (!id) {
-      setCreateTarget('local')
-      return
+      setCreateTarget("local");
+      return;
     }
-    const exists = sshConnections.some((item) => item.id === id)
+    const exists = sshConnections.some((item) => item.id === id);
     if (!exists) {
-      setCreateTarget('local')
+      setCreateTarget("local");
     }
-  }, [createTarget, sshConnections])
+  }, [createTarget, sshConnections]);
 
   const handleCreate = React.useCallback(() => {
-    if (createTarget === 'local') {
-      onCreateTerminal({ type: 'local' })
-      return
+    if (createTarget === "local") {
+      onCreateTerminal({ type: "local" });
+      return;
     }
-    const id = createTarget.startsWith('ssh:') ? createTarget.slice(4) : ''
-    if (!id) return
-    onCreateTerminal({ type: 'ssh', connectionId: id })
-  }, [createTarget, onCreateTerminal])
+    const id = createTarget.startsWith("ssh:") ? createTarget.slice(4) : "";
+    if (!id) return;
+    onCreateTerminal({ type: "ssh", connectionId: id });
+  }, [createTarget, onCreateTerminal]);
 
   return (
     <section className="panel-scroll terminal-panel">
@@ -58,7 +64,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
             className="terminal-create-select"
             value={createTarget}
             onChange={(event) => setCreateTarget(event.target.value)}
-            aria-label="Select terminal type"
+            aria-label={t.terminal.selectTerminalType}
           >
             {options.map((item) => (
               <option key={item.value} value={item.value}>
@@ -69,15 +75,18 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
         </div>
       </div>
 
-      {sshConnections.length === 0 ? <p className="terminal-sub-hint">No saved SSH connection found.</p> : null}
+      {sshConnections.length === 0 ? (
+        <p className="terminal-sub-hint">{t.terminal.noSavedSsh}</p>
+      ) : null}
 
       {terminals.length === 0 ? (
-        <p className="panel-empty">No active terminals.</p>
+        <p className="panel-empty">{t.terminal.noActiveTerminals}</p>
       ) : (
         <div className="terminal-list">
           {terminals.map((terminal) => {
-            const runtimeState = terminal.runtimeState || 'initializing'
-            const activityClass = runtimeState === 'ready' ? 'active' : 'inactive'
+            const runtimeState = terminal.runtimeState || "initializing";
+            const activityClass =
+              runtimeState === "ready" ? "active" : "inactive";
             return (
               <article key={terminal.id} className="terminal-item-flat">
                 <div className="terminal-item-main">
@@ -85,7 +94,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
                     <span
                       className={`terminal-state-dot ${activityClass}`}
                       title={runtimeState}
-                      aria-label={`Terminal state: ${runtimeState}`}
+                      aria-label={t.terminal.state(runtimeState)}
                     />
                     {terminal.title}
                   </strong>
@@ -94,15 +103,15 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
                 <button
                   type="button"
                   className="terminal-close-btn"
-                  aria-label={`Close ${terminal.title}`}
-                  title={`Close ${terminal.title}`}
+                  aria-label={t.terminal.close(terminal.title)}
+                  title={t.terminal.close(terminal.title)}
                   onClick={() => onCloseTerminal(terminal.id)}
                   disabled={terminals.length <= 1}
                 >
                   <X size={14} />
                 </button>
               </article>
-            )
+            );
           })}
         </div>
       )}
@@ -111,13 +120,13 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
         <button
           type="button"
           className="panel-icon-btn panel-action-btn"
-          aria-label="New terminal"
-          title="New terminal"
+          aria-label={t.terminal.newTerminal}
+          title={t.terminal.newTerminal}
           onClick={handleCreate}
         >
           <Plus size={18} />
         </button>
       </div>
     </section>
-  )
-}
+  );
+};

@@ -1,5 +1,5 @@
-import React from 'react'
-import { GatewayClient } from '../gateway-client'
+import React from "react";
+import { GatewayClient } from "../gateway-client";
 import {
   loadGatewayAccessTokenFromStorage,
   loadGatewayAutoConnectFromStorage,
@@ -9,26 +9,44 @@ import {
   saveGatewayAutoConnectToStorage,
   saveGatewayUrlToStorage,
   withGatewayAccessToken,
-  withoutGatewayAccessToken
-} from '../lib/gateway-url'
+  withoutGatewayAccessToken,
+} from "../lib/gateway-url";
 import {
   applyMentionToInput,
   encodeMentions,
   getMentionSuggestions,
-  type MentionOption
-} from '../lib/mentions'
-import { buildChatTimeline, getLatestTokenUsage, type ChatTimelineItem } from '../lib/chat-timeline'
+  type MentionOption,
+} from "../lib/mentions";
+import {
+  buildChatTimeline,
+  getLatestTokenUsage,
+  type ChatTimelineItem,
+} from "../lib/chat-timeline";
 import {
   applyUiUpdate,
   cloneMessage,
   cloneSession,
   createSessionState,
-  normalizeDisplayText,
   previewFromSession,
   reorderSessionIds,
   type SessionMeta,
-  type SessionState
-} from '../session-store'
+  type SessionState,
+} from "../session-store";
+import {
+  buildSessionMeta,
+  buildSshConnectionSummaries,
+  collectEnabledSkillNames,
+  compactStatusLabel,
+  fetchSkillsSnapshot,
+  fetchToolsSnapshot,
+  mergeSkillsByName,
+  normalizeBuiltInTool,
+  normalizeConnectionsSnapshot,
+  normalizeMcpServer,
+  normalizeSkillItem,
+  safeError,
+  toSshConfig,
+} from "./mobileControllerHelpers";
 import type {
   BuiltInToolSummary,
   ChatMessage,
@@ -37,30 +55,29 @@ import type {
   GatewayProfileSummary,
   GatewaySessionSnapshot,
   GatewaySessionSummary,
-  GatewaySshConnectionEntry,
   GatewaySshConnectionSummary,
   McpServerSummary,
   SkillSummary,
   GatewayTerminalSummary,
-  UIUpdateAction
-} from '../types'
+  UIUpdateAction,
+} from "../types";
 
-export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected'
+export type ConnectionStatus = "connecting" | "connected" | "disconnected";
 
 interface ViewState {
-  terminals: GatewayTerminalSummary[]
-  connections: GatewayConnectionsSnapshot
-  sshConnections: GatewaySshConnectionSummary[]
-  skills: SkillSummary[]
-  mcpTools: McpServerSummary[]
-  builtInTools: BuiltInToolSummary[]
-  profiles: GatewayProfileSummary[]
-  activeProfileId: string
-  sessions: Record<string, SessionState>
-  sessionMeta: Record<string, SessionMeta>
-  sessionOrder: string[]
-  activeSessionId: string | null
-  statusLine: string
+  terminals: GatewayTerminalSummary[];
+  connections: GatewayConnectionsSnapshot;
+  sshConnections: GatewaySshConnectionSummary[];
+  skills: SkillSummary[];
+  mcpTools: McpServerSummary[];
+  builtInTools: BuiltInToolSummary[];
+  profiles: GatewayProfileSummary[];
+  activeProfileId: string;
+  sessions: Record<string, SessionState>;
+  sessionMeta: Record<string, SessionMeta>;
+  sessionOrder: string[];
+  activeSessionId: string | null;
+  statusLine: string;
 }
 
 const INITIAL_VIEW_STATE: ViewState = {
@@ -71,634 +88,399 @@ const INITIAL_VIEW_STATE: ViewState = {
   mcpTools: [],
   builtInTools: [],
   profiles: [],
-  activeProfileId: '',
+  activeProfileId: "",
   sessions: {},
   sessionMeta: {},
   sessionOrder: [],
   activeSessionId: null,
-  statusLine: 'Ready'
-}
+  statusLine: "Ready",
+};
 
-const RECONNECT_BASE_DELAY_MS = 800
-const RECONNECT_MAX_DELAY_MS = 15000
-const RECONNECT_JITTER_MS = 500
-const RECONNECT_MAX_ATTEMPTS = 3
-const HEARTBEAT_INTERVAL_MS = 25000
-const HEARTBEAT_RPC_TIMEOUT_MS = 5000
-const HEARTBEAT_MAX_FAILURES = 2
+const RECONNECT_BASE_DELAY_MS = 800;
+const RECONNECT_MAX_DELAY_MS = 15000;
+const RECONNECT_JITTER_MS = 500;
+const RECONNECT_MAX_ATTEMPTS = 3;
+const HEARTBEAT_INTERVAL_MS = 25000;
+const HEARTBEAT_RPC_TIMEOUT_MS = 5000;
+const HEARTBEAT_MAX_FAILURES = 2;
 
 function computeReconnectDelayMs(attempt: number): number {
-  const exponential = Math.min(RECONNECT_BASE_DELAY_MS * 2 ** Math.max(0, attempt - 1), RECONNECT_MAX_DELAY_MS)
-  const jitter = Math.floor(Math.random() * (RECONNECT_JITTER_MS + 1))
-  return exponential + jitter
-}
-
-function buildSessionMeta(
-  session: SessionState,
-  previous: SessionMeta | undefined,
-  patch?: Partial<SessionMeta>
-): SessionMeta {
-  return {
-    id: session.id,
-    title: session.title,
-    updatedAt: Date.now(),
-    messagesCount: session.messages.length,
-    lastMessagePreview: previewFromSession(session),
-    loaded: previous?.loaded ?? true,
-    ...patch
-  }
-}
-
-function safeError(error: unknown): string {
-  if (error instanceof Error) return error.message
-  return String(error)
-}
-
-function compactStatusLabel(text: string, limit = 28): string {
-  const normalized = normalizeDisplayText(text || '').replace(/\s+/g, ' ').trim()
-  if (!normalized) return 'Untitled'
-  if (normalized.length <= limit) return normalized
-  return `${normalized.slice(0, Math.max(1, limit - 3))}...`
-}
-
-function normalizeSkillItem(raw: unknown, enabledByName: Set<string> | null): SkillSummary | null {
-  if (!raw || typeof raw !== 'object') return null
-  const data = raw as Record<string, unknown>
-  if (typeof data.name !== 'string' || !data.name) return null
-  const localEnabled = typeof data.enabled === 'boolean' ? data.enabled : undefined
-  const enabled = enabledByName ? enabledByName.has(data.name) : localEnabled !== false
-
-  return {
-    name: data.name,
-    description: typeof data.description === 'string' ? data.description : undefined,
-    enabled,
-    fileName: typeof data.fileName === 'string' ? data.fileName : undefined,
-    filePath: typeof data.filePath === 'string' ? data.filePath : undefined,
-    baseDir: typeof data.baseDir === 'string' ? data.baseDir : undefined,
-    scanRoot: typeof data.scanRoot === 'string' ? data.scanRoot : undefined,
-    isNested: data.isNested === true,
-    supportingFiles: Array.isArray(data.supportingFiles)
-      ? data.supportingFiles.filter((item): item is string => typeof item === 'string')
-      : undefined
-  }
-}
-
-function mergeSkillsByName(previous: SkillSummary[], incoming: SkillSummary[]): SkillSummary[] {
-  const byName = new Map(previous.map((skill) => [skill.name, skill]))
-  for (const skill of incoming) {
-    const prev = byName.get(skill.name)
-    byName.set(skill.name, {
-      ...(prev || {}),
-      ...skill
-    })
-  }
-  return [...byName.values()].sort((left, right) => left.name.localeCompare(right.name))
-}
-
-function collectEnabledSkillNames(payload: unknown[]): Set<string> {
-  return new Set(
-    payload
-      .map((item) => {
-        if (!item || typeof item !== 'object') return null
-        if (!('name' in item) || typeof item.name !== 'string') return null
-        if ('enabled' in item && item.enabled === false) return null
-        return item.name
-      })
-      .filter((name): name is string => !!name)
-  )
-}
-
-async function fetchSkillsSnapshot(client: GatewayClient): Promise<SkillSummary[]> {
-  try {
-    const [allRaw, enabledRaw] = await Promise.all([
-      client.request<unknown>('skills:getAll', {}),
-      client.request<unknown>('skills:getEnabled', {})
-    ])
-
-    if (Array.isArray(allRaw) && Array.isArray(enabledRaw)) {
-      const enabledByName = new Set(
-        enabledRaw
-          .map((item) => (item && typeof item === 'object' && 'name' in item ? (item as { name?: unknown }).name : null))
-          .filter((name): name is string => typeof name === 'string' && !!name)
-      )
-      return allRaw
-        .map((item) => normalizeSkillItem(item, enabledByName))
-        .filter((item): item is SkillSummary => !!item)
-        .sort((left, right) => left.name.localeCompare(right.name))
-    }
-  } catch {
-    // fallback to legacy list API
-  }
-
-  const payload = await client.request<{ skills: SkillSummary[] }>('skills:list', {})
-  return (payload.skills || [])
-    .map((item) => normalizeSkillItem(item, null))
-    .filter((item): item is SkillSummary => !!item)
-    .sort((left, right) => left.name.localeCompare(right.name))
-}
-
-function normalizeMcpServer(raw: unknown): McpServerSummary | null {
-  if (!raw || typeof raw !== 'object') return null
-  const item = raw as Record<string, unknown>
-  if (typeof item.name !== 'string' || !item.name) return null
-  const statusRaw = item.status
-  const status: McpServerSummary['status'] =
-    statusRaw === 'disabled' || statusRaw === 'connecting' || statusRaw === 'connected' || statusRaw === 'error'
-      ? statusRaw
-      : 'disabled'
-  return {
-    name: item.name,
-    enabled: item.enabled !== false,
-    status,
-    error: typeof item.error === 'string' ? item.error : undefined,
-    toolCount: typeof item.toolCount === 'number' ? item.toolCount : undefined
-  }
-}
-
-function normalizeBuiltInTool(raw: unknown): BuiltInToolSummary | null {
-  if (!raw || typeof raw !== 'object') return null
-  const item = raw as Record<string, unknown>
-  if (typeof item.name !== 'string' || !item.name) return null
-  return {
-    name: item.name,
-    description: typeof item.description === 'string' ? item.description : 'No description provided.',
-    enabled: item.enabled !== false
-  }
-}
-
-async function fetchToolsSnapshot(client: GatewayClient): Promise<{
-  mcpTools: McpServerSummary[]
-  builtInTools: BuiltInToolSummary[]
-}> {
-  const [mcpRaw, builtInRaw] = await Promise.all([
-    client.request<unknown>('tools:getMcp', {}),
-    client.request<unknown>('tools:getBuiltIn', {})
-  ])
-
-  const mcpTools = Array.isArray(mcpRaw)
-    ? mcpRaw.map((item) => normalizeMcpServer(item)).filter((item): item is McpServerSummary => !!item)
-    : []
-  const builtInTools = Array.isArray(builtInRaw)
-    ? builtInRaw.map((item) => normalizeBuiltInTool(item)).filter((item): item is BuiltInToolSummary => !!item)
-    : []
-
-  return { mcpTools, builtInTools }
-}
-
-function normalizeProxyEntry(raw: unknown): GatewayConnectionsSnapshot['proxies'][number] | null {
-  if (!raw || typeof raw !== 'object') return null
-  const item = raw as Record<string, unknown>
-  if (typeof item.id !== 'string' || !item.id.trim()) return null
-  if (typeof item.name !== 'string') return null
-  if (typeof item.host !== 'string' || !item.host.trim()) return null
-  if (typeof item.port !== 'number' || !Number.isInteger(item.port) || item.port <= 0) return null
-  if (item.type !== 'socks5' && item.type !== 'http') return null
-  return {
-    id: item.id,
-    name: item.name,
-    type: item.type,
-    host: item.host,
-    port: item.port,
-    username: typeof item.username === 'string' ? item.username : undefined,
-    password: typeof item.password === 'string' ? item.password : undefined
-  }
-}
-
-function normalizeTunnelEntry(raw: unknown): GatewayConnectionsSnapshot['tunnels'][number] | null {
-  if (!raw || typeof raw !== 'object') return null
-  const item = raw as Record<string, unknown>
-  if (typeof item.id !== 'string' || !item.id.trim()) return null
-  if (typeof item.name !== 'string') return null
-  if (typeof item.host !== 'string' || !item.host.trim()) return null
-  if (typeof item.port !== 'number' || !Number.isInteger(item.port) || item.port <= 0) return null
-  if (item.type !== 'Local' && item.type !== 'Remote' && item.type !== 'Dynamic') return null
-  return {
-    id: item.id,
-    name: item.name,
-    type: item.type,
-    host: item.host,
-    port: item.port,
-    targetAddress: typeof item.targetAddress === 'string' ? item.targetAddress : undefined,
-    targetPort: typeof item.targetPort === 'number' && Number.isInteger(item.targetPort) ? item.targetPort : undefined,
-    viaConnectionId: typeof item.viaConnectionId === 'string' ? item.viaConnectionId : undefined
-  }
-}
-
-function normalizeSshEntry(raw: unknown, depth = 0): GatewaySshConnectionEntry | null {
-  if (!raw || typeof raw !== 'object') return null
-  const item = raw as Record<string, unknown>
-  if (typeof item.id !== 'string' || !item.id.trim()) return null
-  if (typeof item.name !== 'string') return null
-  if (typeof item.host !== 'string' || !item.host.trim()) return null
-  if (typeof item.port !== 'number' || !Number.isInteger(item.port) || item.port <= 0) return null
-  if (typeof item.username !== 'string' || !item.username.trim()) return null
-  if (item.authMethod !== 'password' && item.authMethod !== 'privateKey') return null
-  const tunnelIds = Array.isArray(item.tunnelIds)
-    ? item.tunnelIds.filter((id): id is string => typeof id === 'string' && !!id)
-    : undefined
-  const jumpHost = depth < 3 ? normalizeSshEntry(item.jumpHost, depth + 1) : null
-  return {
-    id: item.id,
-    name: item.name,
-    host: item.host,
-    port: item.port,
-    username: item.username,
-    authMethod: item.authMethod,
-    password: typeof item.password === 'string' ? item.password : undefined,
-    privateKey: typeof item.privateKey === 'string' ? item.privateKey : undefined,
-    privateKeyPath: typeof item.privateKeyPath === 'string' ? item.privateKeyPath : undefined,
-    passphrase: typeof item.passphrase === 'string' ? item.passphrase : undefined,
-    proxyId: typeof item.proxyId === 'string' && item.proxyId ? item.proxyId : undefined,
-    tunnelIds,
-    jumpHost: jumpHost || undefined
-  }
-}
-
-function normalizeConnectionsSnapshot(raw: unknown): GatewayConnectionsSnapshot {
-  if (!raw || typeof raw !== 'object') {
-    return { ssh: [], proxies: [], tunnels: [] }
-  }
-  const settings = raw as Record<string, unknown>
-  const connections =
-    settings.connections && typeof settings.connections === 'object'
-      ? (settings.connections as Record<string, unknown>)
-      : null
-  if (!connections) {
-    return { ssh: [], proxies: [], tunnels: [] }
-  }
-  return {
-    ssh: Array.isArray(connections.ssh)
-      ? connections.ssh.map((item) => normalizeSshEntry(item)).filter((item): item is GatewaySshConnectionEntry => !!item)
-      : [],
-    proxies: Array.isArray(connections.proxies)
-      ? connections.proxies
-          .map((item) => normalizeProxyEntry(item))
-          .filter((item): item is GatewayConnectionsSnapshot['proxies'][number] => !!item)
-      : [],
-    tunnels: Array.isArray(connections.tunnels)
-      ? connections.tunnels
-          .map((item) => normalizeTunnelEntry(item))
-          .filter((item): item is GatewayConnectionsSnapshot['tunnels'][number] => !!item)
-      : []
-  }
-}
-
-function buildSshConnectionSummaries(connections: GatewayConnectionsSnapshot): GatewaySshConnectionSummary[] {
-  return connections.ssh
-    .map((item) => ({
-      id: item.id,
-      name: item.name,
-      host: item.host,
-      port: item.port,
-      username: item.username,
-      authMethod: item.authMethod
-    }))
-    .sort((left, right) => left.name.localeCompare(right.name))
-}
-
-function toSshConfig(entry: GatewaySshConnectionEntry, connections: GatewayConnectionsSnapshot): Record<string, unknown> {
-  const proxy = entry.proxyId ? connections.proxies.find((item) => item.id === entry.proxyId) : undefined
-  const tunnels =
-    entry.tunnelIds && entry.tunnelIds.length > 0
-      ? connections.tunnels.filter((item) => entry.tunnelIds?.includes(item.id))
-      : undefined
-  const jumpHost = entry.jumpHost ? toSshConfig(entry.jumpHost, connections) : undefined
-  return {
-    type: 'ssh',
-    title: entry.name || `${entry.username}@${entry.host}`,
-    cols: 120,
-    rows: 32,
-    host: entry.host,
-    port: entry.port,
-    username: entry.username,
-    authMethod: entry.authMethod,
-    password: entry.password,
-    privateKey: entry.privateKey,
-    privateKeyPath: entry.privateKeyPath,
-    passphrase: entry.passphrase,
-    proxy,
-    tunnels,
-    jumpHost
-  }
+  const exponential = Math.min(
+    RECONNECT_BASE_DELAY_MS * 2 ** Math.max(0, attempt - 1),
+    RECONNECT_MAX_DELAY_MS,
+  );
+  const jitter = Math.floor(Math.random() * (RECONNECT_JITTER_MS + 1));
+  return exponential + jitter;
 }
 
 export interface MobileControllerState {
-  gatewayInput: string
-  accessTokenInput: string
-  connectionStatus: ConnectionStatus
-  connectionError: string
-  actionPending: boolean
-  composerValue: string
-  composerCursor: number
-  mentionOptions: MentionOption[]
-  terminals: GatewayTerminalSummary[]
-  sshConnections: GatewaySshConnectionSummary[]
-  skills: SkillSummary[]
-  mcpTools: McpServerSummary[]
-  builtInTools: BuiltInToolSummary[]
-  profiles: GatewayProfileSummary[]
-  activeProfileId: string
-  activeSession: SessionState | null
-  activeSessionId: string | null
-  chatTimeline: ChatTimelineItem[]
-  sessionOrder: string[]
-  sessionMeta: Record<string, SessionMeta>
-  sessions: Record<string, SessionState>
-  statusLine: string
-  isRunning: boolean
-  latestTokens: number
-  latestMaxTokens: number
-  tokenUsagePercent: number | null
+  gatewayInput: string;
+  accessTokenInput: string;
+  connectionStatus: ConnectionStatus;
+  connectionError: string;
+  actionPending: boolean;
+  composerValue: string;
+  composerCursor: number;
+  mentionOptions: MentionOption[];
+  terminals: GatewayTerminalSummary[];
+  sshConnections: GatewaySshConnectionSummary[];
+  skills: SkillSummary[];
+  mcpTools: McpServerSummary[];
+  builtInTools: BuiltInToolSummary[];
+  profiles: GatewayProfileSummary[];
+  activeProfileId: string;
+  activeSession: SessionState | null;
+  activeSessionId: string | null;
+  chatTimeline: ChatTimelineItem[];
+  sessionOrder: string[];
+  sessionMeta: Record<string, SessionMeta>;
+  sessions: Record<string, SessionState>;
+  statusLine: string;
+  isRunning: boolean;
+  latestTokens: number;
+  latestMaxTokens: number;
+  tokenUsagePercent: number | null;
 }
 
 export interface MobileControllerActions {
-  setGatewayInput: (value: string) => void
-  setAccessTokenInput: (value: string) => void
-  setComposerValue: (value: string, cursor: number) => void
-  setComposerCursor: (cursor: number) => void
-  pickMention: (option: MentionOption) => void
-  connectGateway: () => Promise<void>
-  disconnectGateway: () => void
-  switchSession: (sessionId: string) => Promise<void>
-  createSession: () => Promise<string | null>
-  sendMessage: () => Promise<void>
-  stopActiveSession: () => Promise<void>
-  updateProfile: (profileId: string) => Promise<void>
-  reloadSkills: () => Promise<void>
-  setSkillEnabled: (name: string, enabled: boolean) => Promise<void>
-  reloadTools: () => Promise<void>
-  setMcpEnabled: (name: string, enabled: boolean) => Promise<void>
-  setBuiltInToolEnabled: (name: string, enabled: boolean) => Promise<void>
-  replyAsk: (message: ChatMessage, decision: 'allow' | 'deny') => Promise<void>
-  rollbackToMessage: (sessionId: string, messageId: string) => Promise<boolean>
-  createTerminalTab: (target?: CreateTerminalTarget) => Promise<void>
-  closeTerminalTab: (terminalId: string) => Promise<void>
+  setGatewayInput: (value: string) => void;
+  setAccessTokenInput: (value: string) => void;
+  setComposerValue: (value: string, cursor: number) => void;
+  setComposerCursor: (cursor: number) => void;
+  pickMention: (option: MentionOption) => void;
+  connectGateway: () => Promise<void>;
+  disconnectGateway: () => void;
+  switchSession: (sessionId: string) => Promise<void>;
+  createSession: () => Promise<string | null>;
+  sendMessage: () => Promise<void>;
+  stopActiveSession: () => Promise<void>;
+  updateProfile: (profileId: string) => Promise<void>;
+  reloadSkills: () => Promise<void>;
+  setSkillEnabled: (name: string, enabled: boolean) => Promise<void>;
+  reloadTools: () => Promise<void>;
+  setMcpEnabled: (name: string, enabled: boolean) => Promise<void>;
+  setBuiltInToolEnabled: (name: string, enabled: boolean) => Promise<void>;
+  replyAsk: (message: ChatMessage, decision: "allow" | "deny") => Promise<void>;
+  rollbackToMessage: (sessionId: string, messageId: string) => Promise<boolean>;
+  createTerminalTab: (target?: CreateTerminalTarget) => Promise<void>;
+  closeTerminalTab: (terminalId: string) => Promise<void>;
 }
 
 export function useMobileController(): {
-  state: MobileControllerState
-  actions: MobileControllerActions
+  state: MobileControllerState;
+  actions: MobileControllerActions;
 } {
-  const clientRef = React.useRef<GatewayClient>()
+  const clientRef = React.useRef<GatewayClient>();
   if (!clientRef.current) {
-    clientRef.current = new GatewayClient()
+    clientRef.current = new GatewayClient();
   }
-  const client = clientRef.current
+  const client = clientRef.current;
 
-  const [gatewayInput, setGatewayInputRaw] = React.useState<string>(() => loadGatewayUrlFromStorage())
-  const [accessTokenInput, setAccessTokenInputRaw] = React.useState<string>(() => loadGatewayAccessTokenFromStorage())
-  const [connectionStatus, setConnectionStatus] = React.useState<ConnectionStatus>('disconnected')
-  const [connectionError, setConnectionError] = React.useState('')
-  const [actionPending, setActionPending] = React.useState(false)
+  const [gatewayInput, setGatewayInputRaw] = React.useState<string>(() =>
+    loadGatewayUrlFromStorage(),
+  );
+  const [accessTokenInput, setAccessTokenInputRaw] = React.useState<string>(
+    () => loadGatewayAccessTokenFromStorage(),
+  );
+  const [connectionStatus, setConnectionStatus] =
+    React.useState<ConnectionStatus>("disconnected");
+  const [connectionError, setConnectionError] = React.useState("");
+  const [actionPending, setActionPending] = React.useState(false);
 
-  const [composerValue, setComposerValueRaw] = React.useState('')
-  const [composerCursor, setComposerCursor] = React.useState(0)
+  const [composerValue, setComposerValueRaw] = React.useState("");
+  const [composerCursor, setComposerCursor] = React.useState(0);
 
-  const [view, setView] = React.useState<ViewState>(INITIAL_VIEW_STATE)
-  const viewRef = React.useRef<ViewState>(INITIAL_VIEW_STATE)
+  const [view, setView] = React.useState<ViewState>(INITIAL_VIEW_STATE);
+  const viewRef = React.useRef<ViewState>(INITIAL_VIEW_STATE);
   React.useEffect(() => {
-    viewRef.current = view
-  }, [view])
-  const gatewayInputRef = React.useRef(gatewayInput)
+    viewRef.current = view;
+  }, [view]);
+  const gatewayInputRef = React.useRef(gatewayInput);
   React.useEffect(() => {
-    gatewayInputRef.current = gatewayInput
-  }, [gatewayInput])
-  const accessTokenInputRef = React.useRef(accessTokenInput)
+    gatewayInputRef.current = gatewayInput;
+  }, [gatewayInput]);
+  const accessTokenInputRef = React.useRef(accessTokenInput);
   React.useEffect(() => {
-    accessTokenInputRef.current = accessTokenInput
-  }, [accessTokenInput])
+    accessTokenInputRef.current = accessTokenInput;
+  }, [accessTokenInput]);
 
-  const reconnectTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
-  const reconnectInFlightRef = React.useRef(false)
-  const reconnectAttemptRunnerRef = React.useRef<() => Promise<void>>(async () => {})
-  const reconnectAttemptRef = React.useRef(0)
-  const autoConnectBootstrappedRef = React.useRef(false)
-  const connectFlowRef = React.useRef<Promise<void> | null>(null)
-  const heartbeatTimerRef = React.useRef<ReturnType<typeof setInterval> | null>(null)
-  const heartbeatInFlightRef = React.useRef(false)
-  const heartbeatFailuresRef = React.useRef(0)
-  const manualDisconnectRef = React.useRef(false)
-  const autoReconnectEnabledRef = React.useRef(false)
-  const hasEverConnectedRef = React.useRef(false)
-  const lastConnectedAtRef = React.useRef(0)
+  const reconnectTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const reconnectInFlightRef = React.useRef(false);
+  const reconnectAttemptRunnerRef = React.useRef<() => Promise<void>>(
+    async () => {},
+  );
+  const reconnectAttemptRef = React.useRef(0);
+  const autoConnectBootstrappedRef = React.useRef(false);
+  const connectFlowRef = React.useRef<Promise<void> | null>(null);
+  const heartbeatTimerRef = React.useRef<ReturnType<typeof setInterval> | null>(
+    null,
+  );
+  const heartbeatInFlightRef = React.useRef(false);
+  const heartbeatFailuresRef = React.useRef(0);
+  const manualDisconnectRef = React.useRef(false);
+  const autoReconnectEnabledRef = React.useRef(false);
+  const hasEverConnectedRef = React.useRef(false);
+  const lastConnectedAtRef = React.useRef(0);
 
   const clearReconnectTimer = React.useCallback(() => {
     if (reconnectTimerRef.current) {
-      clearTimeout(reconnectTimerRef.current)
-      reconnectTimerRef.current = null
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
     }
-  }, [])
+  }, []);
 
   const stopHeartbeat = React.useCallback(() => {
     if (heartbeatTimerRef.current) {
-      clearInterval(heartbeatTimerRef.current)
-      heartbeatTimerRef.current = null
+      clearInterval(heartbeatTimerRef.current);
+      heartbeatTimerRef.current = null;
     }
-    heartbeatInFlightRef.current = false
-    heartbeatFailuresRef.current = 0
-  }, [])
+    heartbeatInFlightRef.current = false;
+    heartbeatFailuresRef.current = 0;
+  }, []);
 
   const buildGatewayTarget = React.useCallback((rawUrl: string): string => {
-    const normalized = normalizeGatewayUrl(rawUrl)
-    return withGatewayAccessToken(normalized, accessTokenInputRef.current)
-  }, [])
+    const normalized = normalizeGatewayUrl(rawUrl);
+    return withGatewayAccessToken(normalized, accessTokenInputRef.current);
+  }, []);
 
   const activeSession = React.useMemo(() => {
-    if (!view.activeSessionId) return null
-    return view.sessions[view.activeSessionId] || null
-  }, [view.activeSessionId, view.sessions])
+    if (!view.activeSessionId) return null;
+    return view.sessions[view.activeSessionId] || null;
+  }, [view.activeSessionId, view.sessions]);
 
-  const sessionMessages = activeSession?.messages || []
-  const chatTimeline = React.useMemo(() => buildChatTimeline(sessionMessages), [sessionMessages])
-  const tokenUsage = React.useMemo(() => getLatestTokenUsage(sessionMessages), [sessionMessages])
+  const sessionMessages = activeSession?.messages || [];
+  const chatTimeline = React.useMemo(
+    () => buildChatTimeline(sessionMessages),
+    [sessionMessages],
+  );
+  const tokenUsage = React.useMemo(
+    () => getLatestTokenUsage(sessionMessages),
+    [sessionMessages],
+  );
 
   const mentionState = React.useMemo(() => {
-    return getMentionSuggestions(composerValue, composerCursor, view.terminals, view.skills)
-  }, [composerCursor, composerValue, view.skills, view.terminals])
+    return getMentionSuggestions(
+      composerValue,
+      composerCursor,
+      view.terminals,
+      view.skills,
+    );
+  }, [composerCursor, composerValue, view.skills, view.terminals]);
 
   const applyLiveUpdate = React.useCallback((update: UIUpdateAction) => {
     setView((previous) => {
-      const sessions = { ...previous.sessions }
-      const sessionMeta = { ...previous.sessionMeta }
-      const sessionOrder = [...previous.sessionOrder]
+      const sessions = { ...previous.sessions };
+      const sessionMeta = { ...previous.sessionMeta };
+      const sessionOrder = [...previous.sessionOrder];
 
-      const current = sessions[update.sessionId]
+      const current = sessions[update.sessionId];
       const nextSession = current
         ? cloneSession(current)
-        : createSessionState(update.sessionId, 'New Chat')
-      const wasBusy = nextSession.isBusy
+        : createSessionState(update.sessionId, "New Chat");
+      const wasBusy = nextSession.isBusy;
 
       if (
-        update.type === 'ADD_MESSAGE' ||
-        update.type === 'APPEND_CONTENT' ||
-        update.type === 'APPEND_OUTPUT' ||
-        update.type === 'UPDATE_MESSAGE'
+        update.type === "ADD_MESSAGE" ||
+        update.type === "APPEND_CONTENT" ||
+        update.type === "APPEND_OUTPUT" ||
+        update.type === "UPDATE_MESSAGE"
       ) {
-        nextSession.isBusy = true
+        nextSession.isBusy = true;
       }
 
       if (
-        update.type === 'ADD_MESSAGE' &&
-        update.message.role === 'user' &&
+        update.type === "ADD_MESSAGE" &&
+        update.message.role === "user" &&
         !wasBusy &&
         !nextSession.lockedProfileId
       ) {
-        nextSession.lockedProfileId = previous.activeProfileId || null
+        nextSession.lockedProfileId = previous.activeProfileId || null;
       }
 
-      applyUiUpdate(nextSession, update)
-      sessions[update.sessionId] = nextSession
+      applyUiUpdate(nextSession, update);
+      sessions[update.sessionId] = nextSession;
 
       if (!sessionOrder.includes(update.sessionId)) {
-        sessionOrder.unshift(update.sessionId)
+        sessionOrder.unshift(update.sessionId);
       }
 
-      const prevMeta = sessionMeta[update.sessionId]
+      const prevMeta = sessionMeta[update.sessionId];
       sessionMeta[update.sessionId] = buildSessionMeta(nextSession, prevMeta, {
         loaded: true,
-        updatedAt: Date.now()
-      })
+        updatedAt: Date.now(),
+      });
 
       return {
         ...previous,
         sessions,
         sessionMeta,
         sessionOrder: reorderSessionIds(sessionOrder, sessionMeta),
-        activeSessionId: previous.activeSessionId || update.sessionId
-      }
-    })
-  }, [])
+        activeSessionId: previous.activeSessionId || update.sessionId,
+      };
+    });
+  }, []);
 
   const bootstrapAfterConnect = React.useCallback(
-    async (target: string, source: 'manual' | 'reconnect') => {
-      const terminalPayload = await client.request<{ terminals: GatewayTerminalSummary[] }>('terminal:list', {})
-      const terminals = terminalPayload.terminals || []
+    async (target: string, source: "manual" | "reconnect") => {
+      const terminalPayload = await client.request<{
+        terminals: GatewayTerminalSummary[];
+      }>("terminal:list", {});
+      const terminals = terminalPayload.terminals || [];
       if (terminals.length === 0) {
-        throw new Error('No terminal is available on backend.')
+        throw new Error("No terminal is available on backend.");
       }
 
-      let profiles: GatewayProfileSummary[] = []
-      let activeProfileId = ''
-      let skills: SkillSummary[] = []
-      let skillsUnavailable = false
-      let mcpTools: McpServerSummary[] = []
-      let builtInTools: BuiltInToolSummary[] = []
-      let toolsUnavailable = false
-      let connections: GatewayConnectionsSnapshot = { ssh: [], proxies: [], tunnels: [] }
+      let profiles: GatewayProfileSummary[] = [];
+      let activeProfileId = "";
+      let skills: SkillSummary[] = [];
+      let skillsUnavailable = false;
+      let mcpTools: McpServerSummary[] = [];
+      let builtInTools: BuiltInToolSummary[] = [];
+      let toolsUnavailable = false;
+      let connections: GatewayConnectionsSnapshot = {
+        ssh: [],
+        proxies: [],
+        tunnels: [],
+      };
       try {
-        const profilePayload = await client.request<{ activeProfileId: string; profiles: GatewayProfileSummary[] }>(
-          'models:getProfiles',
-          {}
-        )
-        profiles = profilePayload.profiles || []
-        activeProfileId = profilePayload.activeProfileId || ''
+        const profilePayload = await client.request<{
+          activeProfileId: string;
+          profiles: GatewayProfileSummary[];
+        }>("models:getProfiles", {});
+        profiles = profilePayload.profiles || [];
+        activeProfileId = profilePayload.activeProfileId || "";
       } catch {
-        profiles = []
-        activeProfileId = ''
-      }
-
-      try {
-        skills = await fetchSkillsSnapshot(client)
-      } catch {
-        skills = []
-        skillsUnavailable = true
+        profiles = [];
+        activeProfileId = "";
       }
 
       try {
-        const toolsSnapshot = await fetchToolsSnapshot(client)
-        mcpTools = toolsSnapshot.mcpTools
-        builtInTools = toolsSnapshot.builtInTools
+        skills = await fetchSkillsSnapshot(client);
       } catch {
-        mcpTools = []
-        builtInTools = []
-        toolsUnavailable = true
+        skills = [];
+        skillsUnavailable = true;
       }
 
       try {
-        const settingsPayload = await client.request<unknown>('settings:get', {})
-        connections = normalizeConnectionsSnapshot(settingsPayload)
+        const toolsSnapshot = await fetchToolsSnapshot(client);
+        mcpTools = toolsSnapshot.mcpTools;
+        builtInTools = toolsSnapshot.builtInTools;
       } catch {
-        connections = { ssh: [], proxies: [], tunnels: [] }
+        mcpTools = [];
+        builtInTools = [];
+        toolsUnavailable = true;
       }
 
-      const sessionPayload = await client.request<{ sessions: GatewaySessionSummary[] }>('session:list', {})
-      let summaries = sessionPayload.sessions || []
+      try {
+        const settingsPayload = await client.request<unknown>(
+          "settings:get",
+          {},
+        );
+        connections = normalizeConnectionsSnapshot(settingsPayload);
+      } catch {
+        connections = { ssh: [], proxies: [], tunnels: [] };
+      }
+
+      const sessionPayload = await client.request<{
+        sessions: GatewaySessionSummary[];
+      }>("session:list", {});
+      let summaries = sessionPayload.sessions || [];
 
       if (summaries.length === 0) {
-        const created = await client.request<{ sessionId: string }>('gateway:createSession', {})
+        const created = await client.request<{ sessionId: string }>(
+          "gateway:createSession",
+          {},
+        );
         summaries = [
           {
             id: created.sessionId,
-            title: 'New Chat',
+            title: "New Chat",
             updatedAt: Date.now(),
             messagesCount: 0,
-            lastMessagePreview: '',
+            lastMessagePreview: "",
             isBusy: false,
-            lockedProfileId: null
-          }
-        ]
+            lockedProfileId: null,
+          },
+        ];
       }
 
-      const sortedSummaries = [...summaries].sort((left, right) => right.updatedAt - left.updatedAt)
-      const previous = viewRef.current
-      const preferredSummary = sortedSummaries.find((item) => item.id === previous.activeSessionId) || sortedSummaries[0]
+      const sortedSummaries = [...summaries].sort(
+        (left, right) => right.updatedAt - left.updatedAt,
+      );
+      const previous = viewRef.current;
+      const preferredSummary =
+        sortedSummaries.find((item) => item.id === previous.activeSessionId) ||
+        sortedSummaries[0];
       if (!preferredSummary) {
-        throw new Error('No session available from gateway.')
+        throw new Error("No session available from gateway.");
       }
 
       const mustLoadSnapshotIds = new Set<string>([
         preferredSummary.id,
-        ...sortedSummaries.filter((item) => item.isBusy).map((item) => item.id)
-      ])
-      const loadedSnapshots = new Map<string, GatewaySessionSnapshot>()
+        ...sortedSummaries.filter((item) => item.isBusy).map((item) => item.id),
+      ]);
+      const loadedSnapshots = new Map<string, GatewaySessionSnapshot>();
       await Promise.all(
         [...mustLoadSnapshotIds].map(async (sessionId) => {
           try {
-            const payload = await client.request<{ session: GatewaySessionSnapshot }>('session:get', { sessionId })
-            loadedSnapshots.set(sessionId, payload.session)
+            const payload = await client.request<{
+              session: GatewaySessionSnapshot;
+            }>("session:get", { sessionId });
+            loadedSnapshots.set(sessionId, payload.session);
           } catch (error) {
             if (sessionId === preferredSummary.id) {
-              throw error
+              throw error;
             }
           }
-        })
-      )
+        }),
+      );
 
-      const sessions: Record<string, SessionState> = {}
-      const sessionMeta: Record<string, SessionMeta> = {}
-      const activeSessionId = loadedSnapshots.has(preferredSummary.id) ? preferredSummary.id : sortedSummaries[0]?.id || null
+      const sessions: Record<string, SessionState> = {};
+      const sessionMeta: Record<string, SessionMeta> = {};
+      const activeSessionId = loadedSnapshots.has(preferredSummary.id)
+        ? preferredSummary.id
+        : sortedSummaries[0]?.id || null;
 
       for (const summary of sortedSummaries) {
-        const snapshot = loadedSnapshots.get(summary.id)
-        const loaded = !!snapshot
-        const session = createSessionState(summary.id, summary.title || 'Recovered Session')
+        const snapshot = loadedSnapshots.get(summary.id);
+        const loaded = !!snapshot;
+        const session = createSessionState(
+          summary.id,
+          summary.title || "Recovered Session",
+        );
         if (snapshot) {
-          session.title = snapshot.title || session.title
-          session.messages = (snapshot.messages || []).map(cloneMessage)
-          session.isBusy = snapshot.isBusy === true
-          session.isThinking = snapshot.isBusy === true
-          session.lockedProfileId = snapshot.lockedProfileId || null
+          session.title = snapshot.title || session.title;
+          session.messages = (snapshot.messages || []).map(cloneMessage);
+          session.isBusy = snapshot.isBusy === true;
+          session.isThinking = snapshot.isBusy === true;
+          session.lockedProfileId = snapshot.lockedProfileId || null;
         } else {
-          session.isBusy = summary.isBusy === true
-          session.isThinking = summary.isBusy === true
-          session.lockedProfileId = summary.lockedProfileId || null
+          session.isBusy = summary.isBusy === true;
+          session.isThinking = summary.isBusy === true;
+          session.lockedProfileId = summary.lockedProfileId || null;
         }
-        sessions[summary.id] = session
+        sessions[summary.id] = session;
         sessionMeta[summary.id] = {
           id: summary.id,
-          title: loaded ? session.title : summary.title || 'Recovered Session',
+          title: loaded ? session.title : summary.title || "Recovered Session",
           updatedAt: summary.updatedAt || Date.now(),
-          messagesCount: loaded ? session.messages.length : summary.messagesCount,
-          lastMessagePreview: loaded ? previewFromSession(session) : summary.lastMessagePreview,
-          loaded
-        }
+          messagesCount: loaded
+            ? session.messages.length
+            : summary.messagesCount,
+          lastMessagePreview: loaded
+            ? previewFromSession(session)
+            : summary.lastMessagePreview,
+          loaded,
+        };
       }
 
       const order = reorderSessionIds(
         sortedSummaries.map((summary) => summary.id),
-        sessionMeta
-      )
-      const statusLineTarget = withoutGatewayAccessToken(target)
+        sessionMeta,
+      );
+      const statusLineTarget = withoutGatewayAccessToken(target);
 
       setView({
         terminals,
@@ -714,233 +496,266 @@ export function useMobileController(): {
         sessionOrder: order,
         activeSessionId,
         statusLine:
-          source === 'reconnect'
+          source === "reconnect"
             ? `Recovered: ${statusLineTarget}`
             : skillsUnavailable || toolsUnavailable
               ? `Connected: ${statusLineTarget} (skills unavailable)`
-              : `Connected: ${statusLineTarget}`
-      })
+              : `Connected: ${statusLineTarget}`,
+      });
     },
-    [client]
-  )
+    [client],
+  );
 
   const scheduleReconnect = React.useCallback(
     (reason: string, immediate = false) => {
-      if (manualDisconnectRef.current || !autoReconnectEnabledRef.current || !hasEverConnectedRef.current) return
-      if (client.isConnected()) return
-      clearReconnectTimer()
+      if (
+        manualDisconnectRef.current ||
+        !autoReconnectEnabledRef.current ||
+        !hasEverConnectedRef.current
+      )
+        return;
+      if (client.isConnected()) return;
+      clearReconnectTimer();
 
       if (!window.navigator.onLine) {
-        setView((previous) => ({ ...previous, statusLine: 'Offline. Waiting for network...' }))
-        return
-      }
-
-      const nextAttempt = reconnectAttemptRef.current + 1
-      if (nextAttempt > RECONNECT_MAX_ATTEMPTS) {
-        const stopMessage = `Auto-reconnect stopped after ${RECONNECT_MAX_ATTEMPTS} failed attempts.`
-        reconnectAttemptRef.current = 0
-        reconnectInFlightRef.current = false
-        autoReconnectEnabledRef.current = false
-        clearReconnectTimer()
-        setConnectionStatus('disconnected')
-        setConnectionError(stopMessage)
         setView((previous) => ({
           ...previous,
-          statusLine: `Disconnected: ${reason || 'connection failed'}. ${stopMessage}`
-        }))
-        return
+          statusLine: "Offline. Waiting for network...",
+        }));
+        return;
       }
 
-      const delay = immediate ? 0 : computeReconnectDelayMs(nextAttempt)
-      reconnectAttemptRef.current = nextAttempt
+      const nextAttempt = reconnectAttemptRef.current + 1;
+      if (nextAttempt > RECONNECT_MAX_ATTEMPTS) {
+        const stopMessage = `Auto-reconnect stopped after ${RECONNECT_MAX_ATTEMPTS} failed attempts.`;
+        reconnectAttemptRef.current = 0;
+        reconnectInFlightRef.current = false;
+        autoReconnectEnabledRef.current = false;
+        clearReconnectTimer();
+        setConnectionStatus("disconnected");
+        setConnectionError(stopMessage);
+        setView((previous) => ({
+          ...previous,
+          statusLine: `Disconnected: ${reason || "connection failed"}. ${stopMessage}`,
+        }));
+        return;
+      }
+
+      const delay = immediate ? 0 : computeReconnectDelayMs(nextAttempt);
+      reconnectAttemptRef.current = nextAttempt;
       setView((previous) => ({
         ...previous,
         statusLine: immediate
           ? `Reconnecting now (${nextAttempt})...`
-          : `Disconnected: ${reason}. Reconnecting in ${Math.max(1, Math.ceil(delay / 1000))}s (${nextAttempt})...`
-      }))
+          : `Disconnected: ${reason}. Reconnecting in ${Math.max(1, Math.ceil(delay / 1000))}s (${nextAttempt})...`,
+      }));
 
       reconnectTimerRef.current = setTimeout(() => {
-        reconnectTimerRef.current = null
-        void reconnectAttemptRunnerRef.current()
-      }, delay)
+        reconnectTimerRef.current = null;
+        void reconnectAttemptRunnerRef.current();
+      }, delay);
     },
-    [clearReconnectTimer, client]
-  )
+    [clearReconnectTimer, client],
+  );
 
   const startHeartbeat = React.useCallback(() => {
-    stopHeartbeat()
-    if (!client.isConnected()) return
+    stopHeartbeat();
+    if (!client.isConnected()) return;
 
     heartbeatTimerRef.current = setInterval(() => {
-      if (heartbeatInFlightRef.current || !client.isConnected()) return
-      heartbeatInFlightRef.current = true
+      if (heartbeatInFlightRef.current || !client.isConnected()) return;
+      heartbeatInFlightRef.current = true;
       void client
-        .request('gateway:ping', {}, HEARTBEAT_RPC_TIMEOUT_MS)
+        .request("gateway:ping", {}, HEARTBEAT_RPC_TIMEOUT_MS)
         .then(() => {
-          heartbeatFailuresRef.current = 0
+          heartbeatFailuresRef.current = 0;
         })
         .catch(() => {
-          heartbeatFailuresRef.current += 1
+          heartbeatFailuresRef.current += 1;
           if (heartbeatFailuresRef.current >= HEARTBEAT_MAX_FAILURES) {
-            stopHeartbeat()
-            setConnectionError('Gateway heartbeat lost. Reconnecting...')
+            stopHeartbeat();
+            setConnectionError("Gateway heartbeat lost. Reconnecting...");
             try {
-              client.disconnect()
+              client.disconnect();
             } catch {
               // ignore disconnect errors
             }
-            scheduleReconnect('heartbeat lost', true)
+            scheduleReconnect("heartbeat lost", true);
           }
         })
         .finally(() => {
-          heartbeatInFlightRef.current = false
-        })
-    }, HEARTBEAT_INTERVAL_MS)
-  }, [client, scheduleReconnect, stopHeartbeat])
+          heartbeatInFlightRef.current = false;
+        });
+    }, HEARTBEAT_INTERVAL_MS);
+  }, [client, scheduleReconnect, stopHeartbeat]);
 
   const runConnectFlow = React.useCallback(
-    async (target: string, source: 'manual' | 'reconnect') => {
+    async (target: string, source: "manual" | "reconnect") => {
       if (connectFlowRef.current) {
-        await connectFlowRef.current
-        return
+        await connectFlowRef.current;
+        return;
       }
       const flow = (async () => {
-        await client.connect(target)
-        if (source === 'manual') {
-          saveGatewayUrlToStorage(withoutGatewayAccessToken(target))
+        await client.connect(target);
+        if (source === "manual") {
+          saveGatewayUrlToStorage(withoutGatewayAccessToken(target));
         }
-        await bootstrapAfterConnect(target, source)
-        lastConnectedAtRef.current = Date.now()
-        hasEverConnectedRef.current = true
-        reconnectAttemptRef.current = 0
-        clearReconnectTimer()
-        reconnectInFlightRef.current = false
-        startHeartbeat()
-      })()
+        await bootstrapAfterConnect(target, source);
+        lastConnectedAtRef.current = Date.now();
+        hasEverConnectedRef.current = true;
+        reconnectAttemptRef.current = 0;
+        clearReconnectTimer();
+        reconnectInFlightRef.current = false;
+        startHeartbeat();
+      })();
       connectFlowRef.current = flow.finally(() => {
-        connectFlowRef.current = null
-      })
-      await connectFlowRef.current
+        connectFlowRef.current = null;
+      });
+      await connectFlowRef.current;
     },
-    [bootstrapAfterConnect, clearReconnectTimer, client, startHeartbeat]
-  )
+    [bootstrapAfterConnect, clearReconnectTimer, client, startHeartbeat],
+  );
 
   const runAutoReconnectAttempt = React.useCallback(async () => {
-    if (reconnectInFlightRef.current) return
-    if (manualDisconnectRef.current || !autoReconnectEnabledRef.current || !hasEverConnectedRef.current) return
+    if (reconnectInFlightRef.current) return;
+    if (
+      manualDisconnectRef.current ||
+      !autoReconnectEnabledRef.current ||
+      !hasEverConnectedRef.current
+    )
+      return;
     if (!window.navigator.onLine) {
-      setView((previous) => ({ ...previous, statusLine: 'Offline. Waiting for network...' }))
-      return
+      setView((previous) => ({
+        ...previous,
+        statusLine: "Offline. Waiting for network...",
+      }));
+      return;
     }
 
-    reconnectInFlightRef.current = true
-    const target = buildGatewayTarget(gatewayInputRef.current)
+    reconnectInFlightRef.current = true;
+    const target = buildGatewayTarget(gatewayInputRef.current);
     try {
-      setConnectionError('')
-      await runConnectFlow(target, 'reconnect')
+      setConnectionError("");
+      await runConnectFlow(target, "reconnect");
     } catch (error) {
-      reconnectInFlightRef.current = false
-      scheduleReconnect(safeError(error))
+      reconnectInFlightRef.current = false;
+      scheduleReconnect(safeError(error));
     }
-  }, [buildGatewayTarget, runConnectFlow, scheduleReconnect])
-  reconnectAttemptRunnerRef.current = runAutoReconnectAttempt
+  }, [buildGatewayTarget, runConnectFlow, scheduleReconnect]);
+  reconnectAttemptRunnerRef.current = runAutoReconnectAttempt;
 
   React.useEffect(() => {
     const unsubscribers = [
-      client.on('status', (status, detail) => {
-        const currentReconnectAttempt = reconnectAttemptRef.current
-        setConnectionStatus(status)
-        if (status === 'connecting') {
-          setConnectionError('')
+      client.on("status", (status, detail) => {
+        const currentReconnectAttempt = reconnectAttemptRef.current;
+        setConnectionStatus(status);
+        if (status === "connecting") {
+          setConnectionError("");
           setView((previous) => ({
             ...previous,
             statusLine:
               currentReconnectAttempt > 0
                 ? `Reconnecting gateway... (${currentReconnectAttempt})`
-                : 'Connecting gateway...'
-          }))
+                : "Connecting gateway...",
+          }));
         }
-        if (status === 'connected') {
-          setConnectionError('')
+        if (status === "connected") {
+          setConnectionError("");
           setView((previous) => ({
             ...previous,
             statusLine:
               currentReconnectAttempt > 0
                 ? `Gateway reconnected (${currentReconnectAttempt})`
-                : 'Gateway connected'
-          }))
+                : "Gateway connected",
+          }));
         }
-        if (status === 'disconnected') {
-          stopHeartbeat()
-          const reason = detail || 'connection closed'
+        if (status === "disconnected") {
+          stopHeartbeat();
+          const reason = detail || "connection closed";
           if (manualDisconnectRef.current) {
-            setView((previous) => ({ ...previous, statusLine: 'Disconnected by user' }))
-            return
+            setView((previous) => ({
+              ...previous,
+              statusLine: "Disconnected by user",
+            }));
+            return;
           }
           if (!window.navigator.onLine) {
-            setView((previous) => ({ ...previous, statusLine: 'Offline. Waiting for network...' }))
-            return
+            setView((previous) => ({
+              ...previous,
+              statusLine: "Offline. Waiting for network...",
+            }));
+            return;
           }
-          setView((previous) => ({ ...previous, statusLine: `Disconnected: ${reason}` }))
-          scheduleReconnect(reason)
+          setView((previous) => ({
+            ...previous,
+            statusLine: `Disconnected: ${reason}`,
+          }));
+          scheduleReconnect(reason);
         }
       }),
-      client.on('error', (message) => {
-        setConnectionError(message)
+      client.on("error", (message) => {
+        setConnectionError(message);
       }),
-      client.on('uiUpdate', (update) => {
-        applyLiveUpdate(update)
+      client.on("uiUpdate", (update) => {
+        applyLiveUpdate(update);
       }),
-      client.on('gatewayEvent', (event) => {
-        if (event.type !== 'system:notification') return
-        const text = typeof event.payload === 'string' ? event.payload : JSON.stringify(event.payload)
-        setView((previous) => ({ ...previous, statusLine: text }))
+      client.on("gatewayEvent", (event) => {
+        if (event.type !== "system:notification") return;
+        const text =
+          typeof event.payload === "string"
+            ? event.payload
+            : JSON.stringify(event.payload);
+        setView((previous) => ({ ...previous, statusLine: text }));
       }),
-      client.on('raw', (channel, payload) => {
-        if (channel === 'terminal:tabs') {
+      client.on("raw", (channel, payload) => {
+        if (channel === "terminal:tabs") {
           const terminals =
             payload &&
-            typeof payload === 'object' &&
-            'terminals' in payload &&
+            typeof payload === "object" &&
+            "terminals" in payload &&
             Array.isArray((payload as { terminals?: unknown[] }).terminals)
-              ? ((payload as { terminals: GatewayTerminalSummary[] }).terminals || [])
-              : []
+              ? (payload as { terminals: GatewayTerminalSummary[] })
+                  .terminals || []
+              : [];
           setView((previous) => ({
             ...previous,
             terminals,
-            statusLine: `Terminal tabs: ${terminals.length}`
-          }))
-          return
+            statusLine: `Terminal tabs: ${terminals.length}`,
+          }));
+          return;
         }
 
-        if (channel === 'tools:mcpUpdated') {
+        if (channel === "tools:mcpUpdated") {
           const nextMcpTools = Array.isArray(payload)
-            ? payload.map((item) => normalizeMcpServer(item)).filter((item): item is McpServerSummary => !!item)
-            : []
+            ? payload
+                .map((item) => normalizeMcpServer(item))
+                .filter((item): item is McpServerSummary => !!item)
+            : [];
           setView((previous) => ({
             ...previous,
             mcpTools: nextMcpTools,
-            statusLine: `MCP tools updated (${nextMcpTools.length})`
-          }))
-          return
+            statusLine: `MCP tools updated (${nextMcpTools.length})`,
+          }));
+          return;
         }
 
-        if (channel === 'tools:builtInUpdated') {
+        if (channel === "tools:builtInUpdated") {
           const nextBuiltInTools = Array.isArray(payload)
-            ? payload.map((item) => normalizeBuiltInTool(item)).filter((item): item is BuiltInToolSummary => !!item)
-            : []
+            ? payload
+                .map((item) => normalizeBuiltInTool(item))
+                .filter((item): item is BuiltInToolSummary => !!item)
+            : [];
           setView((previous) => ({
             ...previous,
             builtInTools: nextBuiltInTools,
-            statusLine: `Built-in tools updated (${nextBuiltInTools.length})`
-          }))
-          return
+            statusLine: `Built-in tools updated (${nextBuiltInTools.length})`,
+          }));
+          return;
         }
 
-        if (channel === 'skills:updated') {
-          if (!Array.isArray(payload)) return
-          const enabledNames = collectEnabledSkillNames(payload)
+        if (channel === "skills:updated") {
+          if (!Array.isArray(payload)) return;
+          const enabledNames = collectEnabledSkillNames(payload);
           setView((previous) => {
             const nextSkills =
               previous.skills.length === 0
@@ -950,124 +765,158 @@ export function useMobileController(): {
                     .sort((left, right) => left.name.localeCompare(right.name))
                 : previous.skills.map((skill) => ({
                     ...skill,
-                    enabled: enabledNames.has(skill.name)
-                  }))
+                    enabled: enabledNames.has(skill.name),
+                  }));
             return {
               ...previous,
               skills: nextSkills,
-              statusLine: `Skills updated (${enabledNames.size})`
-            }
-          })
+              statusLine: `Skills updated (${enabledNames.size})`,
+            };
+          });
         }
-      })
-    ]
+      }),
+    ];
 
     return () => {
-      unsubscribers.forEach((unsubscribe) => unsubscribe())
-      clearReconnectTimer()
-      stopHeartbeat()
-      autoReconnectEnabledRef.current = false
-      manualDisconnectRef.current = true
-      client.disconnect()
-    }
-  }, [applyLiveUpdate, clearReconnectTimer, client, scheduleReconnect, stopHeartbeat])
+      unsubscribers.forEach((unsubscribe) => unsubscribe());
+      clearReconnectTimer();
+      stopHeartbeat();
+      autoReconnectEnabledRef.current = false;
+      manualDisconnectRef.current = true;
+      client.disconnect();
+    };
+  }, [
+    applyLiveUpdate,
+    clearReconnectTimer,
+    client,
+    scheduleReconnect,
+    stopHeartbeat,
+  ]);
 
   React.useEffect(() => {
     const onOffline = () => {
-      clearReconnectTimer()
-      setView((previous) => ({ ...previous, statusLine: 'Offline. Waiting for network...' }))
-    }
+      clearReconnectTimer();
+      setView((previous) => ({
+        ...previous,
+        statusLine: "Offline. Waiting for network...",
+      }));
+    };
     const onOnline = () => {
-      if (manualDisconnectRef.current || !autoReconnectEnabledRef.current || !hasEverConnectedRef.current) return
-      if (client.isConnected()) return
-      scheduleReconnect('network restored', true)
-    }
-    window.addEventListener('offline', onOffline)
-    window.addEventListener('online', onOnline)
+      if (
+        manualDisconnectRef.current ||
+        !autoReconnectEnabledRef.current ||
+        !hasEverConnectedRef.current
+      )
+        return;
+      if (client.isConnected()) return;
+      scheduleReconnect("network restored", true);
+    };
+    window.addEventListener("offline", onOffline);
+    window.addEventListener("online", onOnline);
     return () => {
-      window.removeEventListener('offline', onOffline)
-      window.removeEventListener('online', onOnline)
-    }
-  }, [clearReconnectTimer, client, scheduleReconnect])
+      window.removeEventListener("offline", onOffline);
+      window.removeEventListener("online", onOnline);
+    };
+  }, [clearReconnectTimer, client, scheduleReconnect]);
 
   React.useEffect(() => {
-    if (autoConnectBootstrappedRef.current) return
-    autoConnectBootstrappedRef.current = true
-    if (!loadGatewayAutoConnectFromStorage()) return
+    if (autoConnectBootstrappedRef.current) return;
+    autoConnectBootstrappedRef.current = true;
+    if (!loadGatewayAutoConnectFromStorage()) return;
 
-    const target = buildGatewayTarget(gatewayInputRef.current)
-    setActionPending(true)
-    setConnectionError('')
-    manualDisconnectRef.current = false
-    autoReconnectEnabledRef.current = true
-    reconnectInFlightRef.current = false
-    reconnectAttemptRef.current = 0
-    clearReconnectTimer()
+    const target = buildGatewayTarget(gatewayInputRef.current);
+    setActionPending(true);
+    setConnectionError("");
+    manualDisconnectRef.current = false;
+    autoReconnectEnabledRef.current = true;
+    reconnectInFlightRef.current = false;
+    reconnectAttemptRef.current = 0;
+    clearReconnectTimer();
 
-    void runConnectFlow(target, 'reconnect')
+    void runConnectFlow(target, "reconnect")
       .catch((error) => {
-        setConnectionError(safeError(error))
-        scheduleReconnect(safeError(error))
+        setConnectionError(safeError(error));
+        scheduleReconnect(safeError(error));
       })
       .finally(() => {
-        setActionPending(false)
-      })
-  }, [buildGatewayTarget, clearReconnectTimer, runConnectFlow, scheduleReconnect])
+        setActionPending(false);
+      });
+  }, [
+    buildGatewayTarget,
+    clearReconnectTimer,
+    runConnectFlow,
+    scheduleReconnect,
+  ]);
 
   const connectGateway = React.useCallback(async () => {
-    const target = buildGatewayTarget(gatewayInput)
-    setActionPending(true)
-    setConnectionError('')
-    saveGatewayAutoConnectToStorage(true)
-    manualDisconnectRef.current = false
-    autoReconnectEnabledRef.current = true
-    reconnectInFlightRef.current = false
-    reconnectAttemptRef.current = 0
-    clearReconnectTimer()
+    const target = buildGatewayTarget(gatewayInput);
+    setActionPending(true);
+    setConnectionError("");
+    saveGatewayAutoConnectToStorage(true);
+    manualDisconnectRef.current = false;
+    autoReconnectEnabledRef.current = true;
+    reconnectInFlightRef.current = false;
+    reconnectAttemptRef.current = 0;
+    clearReconnectTimer();
 
     try {
-      await runConnectFlow(target, 'manual')
+      await runConnectFlow(target, "manual");
     } catch (error) {
-      setConnectionError(safeError(error))
-      scheduleReconnect(safeError(error))
+      setConnectionError(safeError(error));
+      scheduleReconnect(safeError(error));
     } finally {
-      setActionPending(false)
+      setActionPending(false);
     }
-  }, [buildGatewayTarget, clearReconnectTimer, gatewayInput, runConnectFlow, scheduleReconnect])
+  }, [
+    buildGatewayTarget,
+    clearReconnectTimer,
+    gatewayInput,
+    runConnectFlow,
+    scheduleReconnect,
+  ]);
 
   const disconnectGateway = React.useCallback(() => {
-    saveGatewayAutoConnectToStorage(false)
-    manualDisconnectRef.current = true
-    autoReconnectEnabledRef.current = false
-    reconnectInFlightRef.current = false
-    reconnectAttemptRef.current = 0
-    clearReconnectTimer()
-    stopHeartbeat()
-    client.disconnect()
-    setConnectionStatus('disconnected')
-    setConnectionError('')
-    setView((previous) => ({ ...previous, statusLine: 'Disconnected by user' }))
-  }, [clearReconnectTimer, client, stopHeartbeat])
+    saveGatewayAutoConnectToStorage(false);
+    manualDisconnectRef.current = true;
+    autoReconnectEnabledRef.current = false;
+    reconnectInFlightRef.current = false;
+    reconnectAttemptRef.current = 0;
+    clearReconnectTimer();
+    stopHeartbeat();
+    client.disconnect();
+    setConnectionStatus("disconnected");
+    setConnectionError("");
+    setView((previous) => ({
+      ...previous,
+      statusLine: "Disconnected by user",
+    }));
+  }, [clearReconnectTimer, client, stopHeartbeat]);
 
   const ensureSessionLoaded = React.useCallback(
     async (sessionId: string) => {
-      const snapshotState = viewRef.current
-      const currentMeta = snapshotState.sessionMeta[sessionId]
-      if (currentMeta?.loaded) return
+      const snapshotState = viewRef.current;
+      const currentMeta = snapshotState.sessionMeta[sessionId];
+      if (currentMeta?.loaded) return;
 
-      const payload = await client.request<{ session: GatewaySessionSnapshot }>('session:get', { sessionId })
-      const snapshot = payload.session
+      const payload = await client.request<{ session: GatewaySessionSnapshot }>(
+        "session:get",
+        { sessionId },
+      );
+      const snapshot = payload.session;
 
       setView((previous) => {
-        const sessions = { ...previous.sessions }
-        const sessionMeta = { ...previous.sessionMeta }
+        const sessions = { ...previous.sessions };
+        const sessionMeta = { ...previous.sessionMeta };
 
-        const nextSession = createSessionState(sessionId, snapshot.title || 'Recovered Session')
-        nextSession.messages = (snapshot.messages || []).map(cloneMessage)
-        nextSession.isBusy = snapshot.isBusy === true
-        nextSession.isThinking = snapshot.isBusy === true
-        nextSession.lockedProfileId = snapshot.lockedProfileId || null
-        sessions[sessionId] = nextSession
+        const nextSession = createSessionState(
+          sessionId,
+          snapshot.title || "Recovered Session",
+        );
+        nextSession.messages = (snapshot.messages || []).map(cloneMessage);
+        nextSession.isBusy = snapshot.isBusy === true;
+        nextSession.isThinking = snapshot.isBusy === true;
+        nextSession.lockedProfileId = snapshot.lockedProfileId || null;
+        sessions[sessionId] = nextSession;
 
         sessionMeta[sessionId] = {
           id: sessionId,
@@ -1075,412 +924,447 @@ export function useMobileController(): {
           updatedAt: snapshot.updatedAt || Date.now(),
           messagesCount: nextSession.messages.length,
           lastMessagePreview: previewFromSession(nextSession),
-          loaded: true
-        }
+          loaded: true,
+        };
 
         return {
           ...previous,
           sessions,
-          sessionMeta
-        }
-      })
+          sessionMeta,
+        };
+      });
     },
-    [client]
-  )
+    [client],
+  );
 
   const switchSession = React.useCallback(
     async (sessionId: string) => {
       try {
-        await ensureSessionLoaded(sessionId)
+        await ensureSessionLoaded(sessionId);
         setView((previous) => ({
           ...previous,
           activeSessionId: sessionId,
-          statusLine: `Session: ${compactStatusLabel(previous.sessionMeta[sessionId]?.title || sessionId)}`
-        }))
+          statusLine: `Session: ${compactStatusLabel(previous.sessionMeta[sessionId]?.title || sessionId)}`,
+        }));
       } catch (error) {
-        setConnectionError(`Failed to load session: ${safeError(error)}`)
+        setConnectionError(`Failed to load session: ${safeError(error)}`);
       }
     },
-    [ensureSessionLoaded]
-  )
+    [ensureSessionLoaded],
+  );
 
-  const createSessionInternal = React.useCallback(async (): Promise<{ sessionId: string } | null> => {
+  const createSessionInternal = React.useCallback(async (): Promise<{
+    sessionId: string;
+  } | null> => {
     if (!client.isConnected()) {
-      setConnectionError('Gateway is not connected')
-      return null
+      setConnectionError("Gateway is not connected");
+      return null;
     }
 
     try {
-      const payload = await client.request<{ sessionId: string }>('gateway:createSession', {})
+      const payload = await client.request<{ sessionId: string }>(
+        "gateway:createSession",
+        {},
+      );
 
       setView((previous) => {
-        const sessions = { ...previous.sessions }
-        const sessionMeta = { ...previous.sessionMeta }
-        const sessionOrder = [payload.sessionId, ...previous.sessionOrder.filter((id) => id !== payload.sessionId)]
-        const nextSession = createSessionState(payload.sessionId)
-        sessions[payload.sessionId] = nextSession
+        const sessions = { ...previous.sessions };
+        const sessionMeta = { ...previous.sessionMeta };
+        const sessionOrder = [
+          payload.sessionId,
+          ...previous.sessionOrder.filter((id) => id !== payload.sessionId),
+        ];
+        const nextSession = createSessionState(payload.sessionId);
+        sessions[payload.sessionId] = nextSession;
         sessionMeta[payload.sessionId] = {
           id: payload.sessionId,
           title: nextSession.title,
           updatedAt: Date.now(),
           messagesCount: 0,
-          lastMessagePreview: '',
-          loaded: true
-        }
+          lastMessagePreview: "",
+          loaded: true,
+        };
         return {
           ...previous,
           sessions,
           sessionMeta,
           sessionOrder,
           activeSessionId: payload.sessionId,
-          statusLine: `Created session ${payload.sessionId.slice(0, 8)}`
-        }
-      })
+          statusLine: `Created session ${payload.sessionId.slice(0, 8)}`,
+        };
+      });
 
-      return { sessionId: payload.sessionId }
+      return { sessionId: payload.sessionId };
     } catch (error) {
-      setConnectionError(`Failed to create session: ${safeError(error)}`)
-      return null
+      setConnectionError(`Failed to create session: ${safeError(error)}`);
+      return null;
     }
-  }, [client])
+  }, [client]);
 
   const createSession = React.useCallback(async (): Promise<string | null> => {
-    const result = await createSessionInternal()
-    return result?.sessionId || null
-  }, [createSessionInternal])
+    const result = await createSessionInternal();
+    return result?.sessionId || null;
+  }, [createSessionInternal]);
 
   const sendMessage = React.useCallback(async () => {
-    const content = composerValue.trim()
-    if (!content) return
+    const content = composerValue.trim();
+    if (!content) return;
 
     if (!client.isConnected()) {
       setConnectionError(
-        connectionStatus === 'connecting'
-          ? 'Gateway is reconnecting. Please wait and retry.'
-          : 'Gateway is disconnected. Please wait for reconnection.'
-      )
-      return
+        connectionStatus === "connecting"
+          ? "Gateway is reconnecting. Please wait and retry."
+          : "Gateway is disconnected. Please wait for reconnection.",
+      );
+      return;
     }
 
-    let targetSessionId = viewRef.current.activeSessionId
+    let targetSessionId = viewRef.current.activeSessionId;
 
     if (!targetSessionId) {
-      const created = await createSessionInternal()
-      if (!created) return
-      targetSessionId = created.sessionId
+      const created = await createSessionInternal();
+      if (!created) return;
+      targetSessionId = created.sessionId;
     }
 
-    const snapshot = viewRef.current
-    const session = snapshot.sessions[targetSessionId]
-    const encodedText = encodeMentions(content, snapshot.terminals, snapshot.skills)
+    const snapshot = viewRef.current;
+    const session = snapshot.sessions[targetSessionId];
+    const encodedText = encodeMentions(
+      content,
+      snapshot.terminals,
+      snapshot.skills,
+    );
 
-    setComposerValueRaw('')
-    setComposerCursor(0)
+    setComposerValueRaw("");
+    setComposerCursor(0);
 
     setView((previous) => {
-      const sessions = { ...previous.sessions }
-      const current = sessions[targetSessionId!]
+      const sessions = { ...previous.sessions };
+      const current = sessions[targetSessionId!];
       if (current) {
-        const copy = cloneSession(current)
-        copy.isThinking = true
-        copy.isBusy = true
+        const copy = cloneSession(current);
+        copy.isThinking = true;
+        copy.isBusy = true;
         if (!current.isBusy) {
-          copy.lockedProfileId = previous.activeProfileId || null
+          copy.lockedProfileId = previous.activeProfileId || null;
         }
-        sessions[targetSessionId!] = copy
+        sessions[targetSessionId!] = copy;
       }
       return {
         ...previous,
         sessions,
-        statusLine: 'Prompt sent'
-      }
-    })
+        statusLine: "Prompt sent",
+      };
+    });
 
     try {
-      await client.request('agent:startTaskAsync', {
+      await client.request("agent:startTaskAsync", {
         sessionId: targetSessionId,
         userText: encodedText,
         options: {
-          startMode: session?.isBusy ? 'inserted' : 'normal'
-        }
-      })
+          startMode: session?.isBusy ? "inserted" : "normal",
+        },
+      });
     } catch (error) {
-      setConnectionError(`Failed to send prompt: ${safeError(error)}`)
+      setConnectionError(`Failed to send prompt: ${safeError(error)}`);
       setView((previous) => {
-        const sessions = { ...previous.sessions }
-        const current = sessions[targetSessionId!]
+        const sessions = { ...previous.sessions };
+        const current = sessions[targetSessionId!];
         if (current) {
-          const copy = cloneSession(current)
-          copy.isThinking = false
-          copy.isBusy = false
-          copy.lockedProfileId = null
-          sessions[targetSessionId!] = copy
+          const copy = cloneSession(current);
+          copy.isThinking = false;
+          copy.isBusy = false;
+          copy.lockedProfileId = null;
+          sessions[targetSessionId!] = copy;
         }
         return {
           ...previous,
-          sessions
-        }
-      })
+          sessions,
+        };
+      });
     }
-  }, [client, composerValue, connectionStatus, createSessionInternal])
+  }, [client, composerValue, connectionStatus, createSessionInternal]);
 
   const stopActiveSession = React.useCallback(async () => {
-    const active = viewRef.current.activeSessionId
-    if (!active) return
+    const active = viewRef.current.activeSessionId;
+    if (!active) return;
     try {
-      await client.request('agent:stopTask', { sessionId: active })
-      setView((previous) => ({ ...previous, statusLine: 'Stop signal sent' }))
+      await client.request("agent:stopTask", { sessionId: active });
+      setView((previous) => ({ ...previous, statusLine: "Stop signal sent" }));
     } catch (error) {
-      setConnectionError(`Failed to stop: ${safeError(error)}`)
+      setConnectionError(`Failed to stop: ${safeError(error)}`);
     }
-  }, [client])
+  }, [client]);
 
   const updateProfile = React.useCallback(
     async (profileId: string) => {
-      if (!profileId) return
+      if (!profileId) return;
       try {
         const payload = await client.request<{
-          activeProfileId: string
-          profiles: GatewayProfileSummary[]
-        }>('models:setActiveProfile', { profileId })
+          activeProfileId: string;
+          profiles: GatewayProfileSummary[];
+        }>("models:setActiveProfile", { profileId });
 
         setView((previous) => ({
           ...previous,
           profiles: payload.profiles,
           activeProfileId: payload.activeProfileId,
-          statusLine: `Profile: ${payload.profiles.find((item) => item.id === payload.activeProfileId)?.name || profileId}`
-        }))
+          statusLine: `Profile: ${payload.profiles.find((item) => item.id === payload.activeProfileId)?.name || profileId}`,
+        }));
       } catch (error) {
-        setConnectionError(`Failed to switch profile: ${safeError(error)}`)
+        setConnectionError(`Failed to switch profile: ${safeError(error)}`);
       }
     },
-    [client]
-  )
+    [client],
+  );
 
   const setSkillEnabled = React.useCallback(
     async (name: string, enabled: boolean) => {
-      if (!name || !client.isConnected()) return
+      if (!name || !client.isConnected()) return;
       try {
-        const payload = await client.request<{ skills: SkillSummary[] }>('skills:setEnabled', {
-          name,
-          enabled
-        })
-        const enabledNames = collectEnabledSkillNames(payload.skills || [])
+        const payload = await client.request<{ skills: SkillSummary[] }>(
+          "skills:setEnabled",
+          {
+            name,
+            enabled,
+          },
+        );
+        const enabledNames = collectEnabledSkillNames(payload.skills || []);
         setView((previous) => ({
           ...previous,
           skills: previous.skills.map((skill) => ({
             ...skill,
-            enabled: enabledNames.has(skill.name)
+            enabled: enabledNames.has(skill.name),
           })),
-          statusLine: `${enabled ? 'Enabled' : 'Disabled'} skill: ${name}`
-        }))
+          statusLine: `${enabled ? "Enabled" : "Disabled"} skill: ${name}`,
+        }));
       } catch (error) {
-        setConnectionError(`Failed to update skill: ${safeError(error)}`)
+        setConnectionError(`Failed to update skill: ${safeError(error)}`);
       }
     },
-    [client]
-  )
+    [client],
+  );
 
   const reloadSkills = React.useCallback(async () => {
-    if (!client.isConnected()) return
+    if (!client.isConnected()) return;
     try {
-      const nextSkills = await fetchSkillsSnapshot(client)
+      const nextSkills = await fetchSkillsSnapshot(client);
       setView((previous) => ({
         ...previous,
         skills: mergeSkillsByName(previous.skills, nextSkills),
-        statusLine: `Skills refreshed (${nextSkills.length})`
-      }))
+        statusLine: `Skills refreshed (${nextSkills.length})`,
+      }));
     } catch (error) {
-      setConnectionError(`Failed to reload skills: ${safeError(error)}`)
+      setConnectionError(`Failed to reload skills: ${safeError(error)}`);
     }
-  }, [client])
+  }, [client]);
 
   const setMcpEnabled = React.useCallback(
     async (name: string, enabled: boolean) => {
-      if (!name || !client.isConnected()) return
+      if (!name || !client.isConnected()) return;
       try {
-        const payload = await client.request<unknown>('tools:setMcpEnabled', { name, enabled })
+        const payload = await client.request<unknown>("tools:setMcpEnabled", {
+          name,
+          enabled,
+        });
         const nextMcpTools = Array.isArray(payload)
-          ? payload.map((item) => normalizeMcpServer(item)).filter((item): item is McpServerSummary => !!item)
-          : []
+          ? payload
+              .map((item) => normalizeMcpServer(item))
+              .filter((item): item is McpServerSummary => !!item)
+          : [];
         setView((previous) => ({
           ...previous,
           mcpTools: nextMcpTools,
-          statusLine: `${enabled ? 'Enabled' : 'Disabled'} MCP: ${name}`
-        }))
+          statusLine: `${enabled ? "Enabled" : "Disabled"} MCP: ${name}`,
+        }));
       } catch (error) {
-        setConnectionError(`Failed to update MCP server: ${safeError(error)}`)
+        setConnectionError(`Failed to update MCP server: ${safeError(error)}`);
       }
     },
-    [client]
-  )
+    [client],
+  );
 
   const setBuiltInToolEnabled = React.useCallback(
     async (name: string, enabled: boolean) => {
-      if (!name || !client.isConnected()) return
+      if (!name || !client.isConnected()) return;
       try {
-        const payload = await client.request<unknown>('tools:setBuiltInEnabled', { name, enabled })
+        const payload = await client.request<unknown>(
+          "tools:setBuiltInEnabled",
+          { name, enabled },
+        );
         const nextBuiltInTools = Array.isArray(payload)
-          ? payload.map((item) => normalizeBuiltInTool(item)).filter((item): item is BuiltInToolSummary => !!item)
-          : []
+          ? payload
+              .map((item) => normalizeBuiltInTool(item))
+              .filter((item): item is BuiltInToolSummary => !!item)
+          : [];
         setView((previous) => ({
           ...previous,
           builtInTools: nextBuiltInTools,
-          statusLine: `${enabled ? 'Enabled' : 'Disabled'} built-in tool: ${name}`
-        }))
+          statusLine: `${enabled ? "Enabled" : "Disabled"} built-in tool: ${name}`,
+        }));
       } catch (error) {
-        setConnectionError(`Failed to update built-in tool: ${safeError(error)}`)
+        setConnectionError(
+          `Failed to update built-in tool: ${safeError(error)}`,
+        );
       }
     },
-    [client]
-  )
+    [client],
+  );
 
   const reloadTools = React.useCallback(async () => {
-    if (!client.isConnected()) return
+    if (!client.isConnected()) return;
     try {
-      const snapshot = await fetchToolsSnapshot(client)
+      const snapshot = await fetchToolsSnapshot(client);
       setView((previous) => ({
         ...previous,
         mcpTools: snapshot.mcpTools,
         builtInTools: snapshot.builtInTools,
-        statusLine: `Tools refreshed (${snapshot.mcpTools.length + snapshot.builtInTools.length})`
-      }))
+        statusLine: `Tools refreshed (${snapshot.mcpTools.length + snapshot.builtInTools.length})`,
+      }));
     } catch (error) {
-      setConnectionError(`Failed to reload tools: ${safeError(error)}`)
+      setConnectionError(`Failed to reload tools: ${safeError(error)}`);
     }
-  }, [client])
+  }, [client]);
 
   const replyAsk = React.useCallback(
-    async (message: ChatMessage, decision: 'allow' | 'deny') => {
-      const activeSessionId = viewRef.current.activeSessionId
-      if (!activeSessionId) return
+    async (message: ChatMessage, decision: "allow" | "deny") => {
+      const activeSessionId = viewRef.current.activeSessionId;
+      if (!activeSessionId) return;
 
       try {
         if (message.metadata?.approvalId) {
-          await client.request('agent:replyCommandApproval', {
+          await client.request("agent:replyCommandApproval", {
             approvalId: message.metadata.approvalId,
-            decision
-          })
+            decision,
+          });
         } else {
-          await client.request('agent:replyMessage', {
+          await client.request("agent:replyMessage", {
             messageId: message.backendMessageId || message.id,
-            payload: { decision }
-          })
+            payload: { decision },
+          });
         }
 
         setView((previous) => {
-          const sessions = { ...previous.sessions }
-          const current = sessions[activeSessionId]
-          if (!current) return previous
+          const sessions = { ...previous.sessions };
+          const current = sessions[activeSessionId];
+          if (!current) return previous;
 
-          const copy = cloneSession(current)
+          const copy = cloneSession(current);
           copy.messages = copy.messages.map((item) => {
-            if (item.id !== message.id) return item
+            if (item.id !== message.id) return item;
             return {
               ...item,
               metadata: {
                 ...(item.metadata ?? {}),
-                decision
-              }
-            }
-          })
-          sessions[activeSessionId] = copy
+                decision,
+              },
+            };
+          });
+          sessions[activeSessionId] = copy;
 
           return {
             ...previous,
             sessions,
-            statusLine: `Decision sent: ${decision}`
-          }
-        })
+            statusLine: `Decision sent: ${decision}`,
+          };
+        });
       } catch (error) {
-        setConnectionError(`Failed to send decision: ${safeError(error)}`)
+        setConnectionError(`Failed to send decision: ${safeError(error)}`);
       }
     },
-    [client]
-  )
+    [client],
+  );
 
   const rollbackToMessage = React.useCallback(
     async (sessionId: string, messageId: string): Promise<boolean> => {
-      if (!sessionId || !messageId) return false
+      if (!sessionId || !messageId) return false;
       if (!client.isConnected()) {
-        setConnectionError('Gateway is not connected')
-        return false
+        setConnectionError("Gateway is not connected");
+        return false;
       }
 
       try {
-        const payload = await client.request<{ ok: boolean; removedCount: number }>('agent:rollbackToMessage', {
+        const payload = await client.request<{
+          ok: boolean;
+          removedCount: number;
+        }>("agent:rollbackToMessage", {
           sessionId,
-          messageId
-        })
+          messageId,
+        });
         if (!payload?.ok) {
-          setConnectionError('Rollback target does not exist on backend')
-          return false
+          setConnectionError("Rollback target does not exist on backend");
+          return false;
         }
 
         setView((previous) => {
-          const current = previous.sessions[sessionId]
+          const current = previous.sessions[sessionId];
           if (!current) {
             return {
               ...previous,
-              statusLine: 'Rollback completed'
-            }
+              statusLine: "Rollback completed",
+            };
           }
 
-          const rollbackIndex = current.messages.findIndex((item) => item.backendMessageId === messageId)
+          const rollbackIndex = current.messages.findIndex(
+            (item) => item.backendMessageId === messageId,
+          );
           if (rollbackIndex === -1) {
             return {
               ...previous,
-              statusLine: 'Rollback completed'
-            }
+              statusLine: "Rollback completed",
+            };
           }
 
-          const sessions = { ...previous.sessions }
-          const sessionMeta = { ...previous.sessionMeta }
-          const copy = cloneSession(current)
-          copy.messages = copy.messages.slice(0, rollbackIndex)
-          copy.isThinking = false
-          copy.isBusy = false
-          copy.lockedProfileId = null
-          sessions[sessionId] = copy
+          const sessions = { ...previous.sessions };
+          const sessionMeta = { ...previous.sessionMeta };
+          const copy = cloneSession(current);
+          copy.messages = copy.messages.slice(0, rollbackIndex);
+          copy.isThinking = false;
+          copy.isBusy = false;
+          copy.lockedProfileId = null;
+          sessions[sessionId] = copy;
 
-          const previousMeta = sessionMeta[sessionId]
+          const previousMeta = sessionMeta[sessionId];
           sessionMeta[sessionId] = buildSessionMeta(copy, previousMeta, {
             loaded: true,
-            updatedAt: Date.now()
-          })
+            updatedAt: Date.now(),
+          });
 
           return {
             ...previous,
             sessions,
             sessionMeta,
             sessionOrder: reorderSessionIds(previous.sessionOrder, sessionMeta),
-            statusLine: 'Rollback completed'
-          }
-        })
-        return true
+            statusLine: "Rollback completed",
+          };
+        });
+        return true;
       } catch (error) {
-        setConnectionError(`Failed to rollback: ${safeError(error)}`)
-        return false
+        setConnectionError(`Failed to rollback: ${safeError(error)}`);
+        return false;
       }
     },
-    [client]
-  )
+    [client],
+  );
 
-  const setComposerValue = React.useCallback((value: string, cursor: number) => {
-    setComposerValueRaw(value)
-    setComposerCursor(cursor)
-  }, [])
+  const setComposerValue = React.useCallback(
+    (value: string, cursor: number) => {
+      setComposerValueRaw(value);
+      setComposerCursor(cursor);
+    },
+    [],
+  );
 
   const pickMention = React.useCallback(
     (option: MentionOption) => {
-      const context = mentionState.context
-      if (!context) return
-      const next = applyMentionToInput(composerValue, context, option)
-      setComposerValueRaw(next.value)
-      setComposerCursor(next.cursor)
+      const context = mentionState.context;
+      if (!context) return;
+      const next = applyMentionToInput(composerValue, context, option);
+      setComposerValueRaw(next.value);
+      setComposerCursor(next.cursor);
     },
-    [composerValue, mentionState.context]
-  )
+    [composerValue, mentionState.context],
+  );
 
   const reconcileTerminals = React.useCallback(
     (terminals: GatewayTerminalSummary[], statusLine: string) => {
@@ -1488,81 +1372,95 @@ export function useMobileController(): {
         return {
           ...previous,
           terminals,
-          statusLine
-        }
-      })
+          statusLine,
+        };
+      });
     },
-    []
-  )
+    [],
+  );
 
-  const createTerminalTab = React.useCallback(async (target: CreateTerminalTarget = { type: 'local' }) => {
-    if (!client.isConnected()) {
-      setConnectionError('Gateway is not connected')
-      return
-    }
-
-    try {
-      const snapshot = viewRef.current
-      if (target.type === 'ssh') {
-        const entry = snapshot.connections.ssh.find((item) => item.id === target.connectionId)
-        if (!entry) {
-          setConnectionError('SSH connection not found. Please configure it in desktop settings first.')
-          return
-        }
-        await client.request<{ id: string }>('terminal:createTab', {
-          config: toSshConfig(entry, snapshot.connections)
-        })
-      } else {
-        await client.request<{ id: string }>('terminal:createTab', {
-          config: {
-            type: 'local',
-            cols: 120,
-            rows: 32
-          }
-        })
-      }
-
-      const payload = await client.request<{ terminals: GatewayTerminalSummary[] }>('terminal:list', {})
-      const statusText = target.type === 'ssh' ? 'Created SSH terminal' : 'Created local terminal'
-      reconcileTerminals(payload.terminals || [], statusText)
-    } catch (error) {
-      setConnectionError(`Failed to create terminal: ${safeError(error)}`)
-    }
-  }, [client, reconcileTerminals])
-
-  const closeTerminalTab = React.useCallback(
-    async (terminalId: string) => {
-      if (!terminalId) return
+  const createTerminalTab = React.useCallback(
+    async (target: CreateTerminalTarget = { type: "local" }) => {
       if (!client.isConnected()) {
-        setConnectionError('Gateway is not connected')
-        return
-      }
-
-      const snapshot = viewRef.current
-      if (snapshot.terminals.length <= 1) {
-        setConnectionError('Cannot close the last terminal tab')
-        return
+        setConnectionError("Gateway is not connected");
+        return;
       }
 
       try {
-        await client.request('terminal:kill', { terminalId })
-        const payload = await client.request<{ terminals: GatewayTerminalSummary[] }>('terminal:list', {})
-        reconcileTerminals(payload.terminals || [], 'Closed terminal tab')
+        const snapshot = viewRef.current;
+        if (target.type === "ssh") {
+          const entry = snapshot.connections.ssh.find(
+            (item) => item.id === target.connectionId,
+          );
+          if (!entry) {
+            setConnectionError(
+              "SSH connection not found. Please configure it in desktop settings first.",
+            );
+            return;
+          }
+          await client.request<{ id: string }>("terminal:createTab", {
+            config: toSshConfig(entry, snapshot.connections),
+          });
+        } else {
+          await client.request<{ id: string }>("terminal:createTab", {
+            config: {
+              type: "local",
+              cols: 120,
+              rows: 32,
+            },
+          });
+        }
+
+        const payload = await client.request<{
+          terminals: GatewayTerminalSummary[];
+        }>("terminal:list", {});
+        const statusText =
+          target.type === "ssh"
+            ? "Created SSH terminal"
+            : "Created local terminal";
+        reconcileTerminals(payload.terminals || [], statusText);
       } catch (error) {
-        setConnectionError(`Failed to close terminal: ${safeError(error)}`)
+        setConnectionError(`Failed to create terminal: ${safeError(error)}`);
       }
     },
-    [client, reconcileTerminals]
-  )
+    [client, reconcileTerminals],
+  );
+
+  const closeTerminalTab = React.useCallback(
+    async (terminalId: string) => {
+      if (!terminalId) return;
+      if (!client.isConnected()) {
+        setConnectionError("Gateway is not connected");
+        return;
+      }
+
+      const snapshot = viewRef.current;
+      if (snapshot.terminals.length <= 1) {
+        setConnectionError("Cannot close the last terminal tab");
+        return;
+      }
+
+      try {
+        await client.request("terminal:kill", { terminalId });
+        const payload = await client.request<{
+          terminals: GatewayTerminalSummary[];
+        }>("terminal:list", {});
+        reconcileTerminals(payload.terminals || [], "Closed terminal tab");
+      } catch (error) {
+        setConnectionError(`Failed to close terminal: ${safeError(error)}`);
+      }
+    },
+    [client, reconcileTerminals],
+  );
 
   const setGatewayInput = React.useCallback((value: string) => {
-    setGatewayInputRaw(value)
-  }, [])
+    setGatewayInputRaw(value);
+  }, []);
 
   const setAccessTokenInput = React.useCallback((value: string) => {
-    setAccessTokenInputRaw(value)
-    saveGatewayAccessTokenToStorage(value)
-  }, [])
+    setAccessTokenInputRaw(value);
+    saveGatewayAccessTokenToStorage(value);
+  }, []);
 
   const state: MobileControllerState = {
     gatewayInput,
@@ -1590,8 +1488,8 @@ export function useMobileController(): {
     isRunning: !!(activeSession?.isBusy || activeSession?.isThinking),
     latestTokens: tokenUsage.totalTokens,
     latestMaxTokens: tokenUsage.maxTokens,
-    tokenUsagePercent: tokenUsage.percent
-  }
+    tokenUsagePercent: tokenUsage.percent,
+  };
 
   const actions: MobileControllerActions = {
     setGatewayInput,
@@ -1614,11 +1512,11 @@ export function useMobileController(): {
     replyAsk,
     rollbackToMessage,
     createTerminalTab,
-    closeTerminalTab
-  }
+    closeTerminalTab,
+  };
 
   return {
     state,
-    actions
-  }
+    actions,
+  };
 }

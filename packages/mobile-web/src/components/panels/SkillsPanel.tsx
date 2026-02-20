@@ -1,87 +1,106 @@
-import React from 'react'
-import { RefreshCw } from 'lucide-react'
-import type { SkillSummary } from '../../types'
+import React from "react";
+import { RefreshCw } from "lucide-react";
+import { useMobileI18n } from "../../i18n/provider";
+import type { SkillSummary } from "../../types";
 
 interface SkillsPanelProps {
-  skills: SkillSummary[]
-  connectionStatus: 'connecting' | 'connected' | 'disconnected'
-  onReload: () => void
-  onSetSkillEnabled: (name: string, enabled: boolean) => Promise<void>
+  skills: SkillSummary[];
+  connectionStatus: "connecting" | "connected" | "disconnected";
+  onReload: () => void;
+  onSetSkillEnabled: (name: string, enabled: boolean) => Promise<void>;
 }
 
 interface SkillGroup {
-  key: string
-  label: string
-  order: number
-  items: SkillSummary[]
+  key: string;
+  label: string;
+  order: number;
+  items: SkillSummary[];
 }
 
-function resolveSkillGroup(scanRoot: string | undefined): { key: string; label: string; order: number } {
-  const root = String(scanRoot || '')
-  const lower = root.toLowerCase()
+type SkillGroupLabelKey = "codex" | "agents" | "claude" | "custom" | "other";
 
-  if (lower.includes('/.codex/') || lower.includes('\\.codex\\')) {
-    return { key: 'codex', label: 'Codex Skills', order: 2 }
+function resolveSkillGroup(scanRoot: string | undefined): {
+  key: string;
+  order: number;
+  group: SkillGroupLabelKey;
+} {
+  const root = String(scanRoot || "");
+  const lower = root.toLowerCase();
+
+  if (lower.includes("/.codex/") || lower.includes("\\.codex\\")) {
+    return { key: "codex", order: 2, group: "codex" };
   }
-  if (lower.includes('/.agents/') || lower.includes('\\.agents\\')) {
-    return { key: 'agents', label: '.agent/skill', order: 3 }
+  if (lower.includes("/.agents/") || lower.includes("\\.agents\\")) {
+    return { key: "agents", order: 3, group: "agents" };
   }
-  if (lower.includes('/.claude/') || lower.includes('\\.claude\\')) {
-    return { key: 'claude', label: 'Claude Skills', order: 4 }
+  if (lower.includes("/.claude/") || lower.includes("\\.claude\\")) {
+    return { key: "claude", order: 4, group: "claude" };
   }
-  if (lower.includes('gyshell') || (lower.endsWith('/skills') && !lower.includes('/.')) || lower.endsWith('\\skills')) {
-    return { key: 'custom', label: 'GYSHELL CUSTOM', order: 1 }
+  if (
+    lower.includes("gyshell") ||
+    (lower.endsWith("/skills") && !lower.includes("/.")) ||
+    lower.endsWith("\\skills")
+  ) {
+    return { key: "custom", order: 1, group: "custom" };
   }
   return {
-    key: root || 'other',
-    label: root || 'Other',
-    order: 99
-  }
+    key: root || "other",
+    order: 99,
+    group: "other",
+  };
 }
 
-export const SkillsPanel: React.FC<SkillsPanelProps> = ({ skills, connectionStatus, onReload, onSetSkillEnabled }) => {
-  const [reloading, setReloading] = React.useState(false)
-  const canMutate = connectionStatus === 'connected'
+export const SkillsPanel: React.FC<SkillsPanelProps> = ({
+  skills,
+  connectionStatus,
+  onReload,
+  onSetSkillEnabled,
+}) => {
+  const { t } = useMobileI18n();
+  const [reloading, setReloading] = React.useState(false);
+  const canMutate = connectionStatus === "connected";
 
   const groupedSkills = React.useMemo(() => {
-    const groups: Record<string, SkillGroup> = {}
+    const groups: Record<string, SkillGroup> = {};
     for (const skill of skills) {
-      const { key, label, order } = resolveSkillGroup(skill.scanRoot)
+      const { key, order, group } = resolveSkillGroup(skill.scanRoot);
       if (!groups[key]) {
-        groups[key] = { key, label, order, items: [] }
+        groups[key] = { key, label: t.skills.groups[group], order, items: [] };
       }
-      groups[key].items.push(skill)
+      groups[key].items.push(skill);
     }
-    return Object.values(groups).sort((a, b) => a.order - b.order)
-  }, [skills])
+    return Object.values(groups).sort((a, b) => a.order - b.order);
+  }, [skills, t.skills.groups]);
 
-  const enabledCount = skills.filter((skill) => skill.enabled !== false).length
+  const enabledCount = skills.filter((skill) => skill.enabled !== false).length;
 
   const toggleOne = React.useCallback(
     async (name: string, enabled: boolean) => {
-      if (!canMutate) return
-      await onSetSkillEnabled(name, enabled)
+      if (!canMutate) return;
+      await onSetSkillEnabled(name, enabled);
     },
-    [onSetSkillEnabled, canMutate]
-  )
+    [onSetSkillEnabled, canMutate],
+  );
 
   const handleReload = React.useCallback(async () => {
-    setReloading(true)
+    setReloading(true);
     try {
-      await onReload()
+      await onReload();
     } finally {
-      setReloading(false)
+      setReloading(false);
     }
-  }, [onReload])
+  }, [onReload]);
 
   return (
     <section className="panel-scroll skills-panel">
       <div className="panel-toolbar">
-        <p className="panel-toolbar-meta">{enabledCount}/{skills.length} enabled</p>
+        <p className="panel-toolbar-meta">
+          {t.skills.enabledCount(enabledCount, skills.length)}
+        </p>
       </div>
 
       {skills.length === 0 ? (
-        <p className="panel-empty">No skills found.</p>
+        <p className="panel-empty">{t.skills.empty}</p>
       ) : (
         <div className="skill-sources">
           {groupedSkills.map((group) => {
@@ -93,27 +112,27 @@ export const SkillsPanel: React.FC<SkillsPanelProps> = ({ skills, connectionStat
 
                 <div className="skill-list">
                   {group.items.map((skill) => {
-                    const isEnabled = skill.enabled !== false
+                    const isEnabled = skill.enabled !== false;
                     return (
                       <article key={skill.name} className="skill-item">
                         <div className="skill-item-body">
                           <h3>{skill.name}</h3>
-                          <p>{skill.description || 'No description provided.'}</p>
+                          <p>{skill.description || t.skills.noDescription}</p>
                         </div>
                         <button
                           type="button"
-                          className={`skill-toggle ${isEnabled ? 'enabled' : ''}`}
+                          className={`skill-toggle ${isEnabled ? "enabled" : ""}`}
                           disabled={!canMutate}
                           onClick={() => void toggleOne(skill.name, !isEnabled)}
                         >
-                          {isEnabled ? 'ON' : 'OFF'}
+                          {isEnabled ? t.common.on : t.common.off}
                         </button>
                       </article>
-                    )
+                    );
                   })}
                 </div>
               </section>
-            )
+            );
           })}
         </div>
       )}
@@ -124,12 +143,12 @@ export const SkillsPanel: React.FC<SkillsPanelProps> = ({ skills, connectionStat
           className="panel-icon-btn panel-action-btn"
           disabled={!canMutate || reloading}
           onClick={handleReload}
-          aria-label="Reload skills"
-          title="Reload skills"
+          aria-label={t.skills.reload}
+          title={t.skills.reload}
         >
-          <RefreshCw size={18} className={reloading ? 'spin' : ''} />
+          <RefreshCw size={18} className={reloading ? "spin" : ""} />
         </button>
       </div>
     </section>
-  )
-}
+  );
+};

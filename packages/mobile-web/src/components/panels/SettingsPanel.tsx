@@ -1,16 +1,20 @@
-import React from 'react'
-import { LoaderCircle } from 'lucide-react'
+import React from "react";
+import { LoaderCircle } from "lucide-react";
+import type { MobileLocale } from "../../i18n/types";
+import { useMobileI18n } from "../../i18n/provider";
 
 interface SettingsPanelProps {
-  gatewayInput: string
-  accessTokenInput: string
-  connectionStatus: 'connecting' | 'connected' | 'disconnected'
-  actionPending: boolean
-  connectionError: string
-  onGatewayInputChange: (value: string) => void
-  onAccessTokenInputChange: (value: string) => void
-  onConnect: () => void
-  onDisconnect: () => void
+  gatewayInput: string;
+  accessTokenInput: string;
+  connectionStatus: "connecting" | "connected" | "disconnected";
+  actionPending: boolean;
+  connectionError: string;
+  onGatewayInputChange: (value: string) => void;
+  onAccessTokenInputChange: (value: string) => void;
+  locale: MobileLocale;
+  onLocaleChange: (locale: MobileLocale) => void;
+  onConnect: () => void;
+  onDisconnect: () => void;
 }
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({
@@ -21,26 +25,55 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   connectionError,
   onGatewayInputChange,
   onAccessTokenInputChange,
+  locale,
+  onLocaleChange,
   onConnect,
-  onDisconnect
+  onDisconnect,
 }) => {
-  const connected = connectionStatus === 'connected'
-  const connecting = connectionStatus === 'connecting' || actionPending
+  const { t } = useMobileI18n();
+  const connected = connectionStatus === "connected";
+  const connecting = connectionStatus === "connecting" || actionPending;
+  const connectionStatusLabel =
+    connectionStatus === "connected"
+      ? t.common.connect
+      : connectionStatus === "connecting"
+        ? t.common.connecting
+        : t.common.notConnected;
 
   return (
     <section className="panel-scroll settings-panel">
       <div className="settings-list-flat">
         <section className="settings-item-flat">
           <header className="settings-head-flat">
-            <h3>Gateway</h3>
-            <span className={`conn-status-label-flat ${connectionStatus}`}>{connectionStatus}</span>
+            <h3>{t.settings.language}</h3>
           </header>
-          <p className="settings-hint-flat">WebSocket endpoint for this mobile client.</p>
+          <p className="settings-hint-flat">{t.settings.languageHint}</p>
+          <div className="settings-input-row settings-select-row">
+            <select
+              value={locale}
+              onChange={(event) =>
+                onLocaleChange(event.target.value as MobileLocale)
+              }
+            >
+              <option value="en">{t.settings.english}</option>
+              <option value="zh-CN">{t.settings.chinese}</option>
+            </select>
+          </div>
+        </section>
+
+        <section className="settings-item-flat">
+          <header className="settings-head-flat">
+            <h3>{t.settings.gateway}</h3>
+            <span className={`conn-status-label-flat ${connectionStatus}`}>
+              {connectionStatusLabel}
+            </span>
+          </header>
+          <p className="settings-hint-flat">{t.settings.gatewayHint}</p>
           <div className="settings-input-row">
             <input
               value={gatewayInput}
               onChange={(event) => onGatewayInputChange(event.target.value)}
-              placeholder="ws://192.168.1.8:17888"
+              placeholder={t.settings.gatewayPlaceholder}
               autoCapitalize="off"
               autoCorrect="off"
               spellCheck={false}
@@ -51,7 +84,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
               type="password"
               value={accessTokenInput}
               onChange={(event) => onAccessTokenInputChange(event.target.value)}
-              placeholder="Access token (optional for localhost)"
+              placeholder={t.settings.tokenPlaceholder}
               autoCapitalize="off"
               autoCorrect="off"
               spellCheck={false}
@@ -59,25 +92,36 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
           </div>
           <div className="settings-actions-flat">
             {connected ? (
-              <button type="button" className="danger-btn-flat" onClick={onDisconnect}>
-                Disconnect
+              <button
+                type="button"
+                className="danger-btn-flat"
+                onClick={onDisconnect}
+              >
+                {t.common.disconnect}
               </button>
             ) : (
-              <button type="button" className="accent-btn-flat" onClick={onConnect} disabled={connecting}>
+              <button
+                type="button"
+                className="accent-btn-flat"
+                onClick={onConnect}
+                disabled={connecting}
+              >
                 {connecting ? (
                   <>
                     <LoaderCircle size={14} className="spin" />
-                    Connecting...
+                    {t.common.connecting}
                   </>
                 ) : (
-                  'Connect'
+                  t.common.connect
                 )}
               </button>
             )}
           </div>
-          {connectionError ? <p className="settings-error-flat">{connectionError}</p> : null}
+          {connectionError ? (
+            <p className="settings-error-flat">{connectionError}</p>
+          ) : null}
         </section>
       </div>
     </section>
-  )
-}
+  );
+};

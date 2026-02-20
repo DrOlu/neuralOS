@@ -1,21 +1,15 @@
-import React from 'react'
-import { RefreshCw } from 'lucide-react'
-import type { BuiltInToolSummary, McpServerSummary } from '../../types'
+import React from "react";
+import { RefreshCw } from "lucide-react";
+import { useMobileI18n } from "../../i18n/provider";
+import type { BuiltInToolSummary, McpServerSummary } from "../../types";
 
 interface ToolsPanelProps {
-  mcpTools: McpServerSummary[]
-  builtInTools: BuiltInToolSummary[]
-  connectionStatus: 'connecting' | 'connected' | 'disconnected'
-  onReload: () => Promise<void>
-  onSetMcpEnabled: (name: string, enabled: boolean) => Promise<void>
-  onSetBuiltInEnabled: (name: string, enabled: boolean) => Promise<void>
-}
-
-function formatMcpStatus(status: McpServerSummary['status']): string {
-  if (status === 'connected') return 'Connected'
-  if (status === 'connecting') return 'Connecting'
-  if (status === 'error') return 'Error'
-  return 'Disabled'
+  mcpTools: McpServerSummary[];
+  builtInTools: BuiltInToolSummary[];
+  connectionStatus: "connecting" | "connected" | "disconnected";
+  onReload: () => Promise<void>;
+  onSetMcpEnabled: (name: string, enabled: boolean) => Promise<void>;
+  onSetBuiltInEnabled: (name: string, enabled: boolean) => Promise<void>;
 }
 
 export const ToolsPanel: React.FC<ToolsPanelProps> = ({
@@ -24,60 +18,82 @@ export const ToolsPanel: React.FC<ToolsPanelProps> = ({
   connectionStatus,
   onReload,
   onSetMcpEnabled,
-  onSetBuiltInEnabled
+  onSetBuiltInEnabled,
 }) => {
-  const [reloading, setReloading] = React.useState(false)
-  const canMutate = connectionStatus === 'connected'
-  const enabledMcpCount = mcpTools.filter((item) => item.enabled).length
-  const enabledBuiltInCount = builtInTools.filter((item) => item.enabled).length
+  const { t } = useMobileI18n();
+  const [reloading, setReloading] = React.useState(false);
+  const canMutate = connectionStatus === "connected";
+  const enabledMcpCount = mcpTools.filter((item) => item.enabled).length;
+  const enabledBuiltInCount = builtInTools.filter(
+    (item) => item.enabled,
+  ).length;
+
+  const formatMcpStatus = React.useCallback(
+    (status: McpServerSummary["status"]): string => {
+      if (status === "connected") return t.tools.status.connected;
+      if (status === "connecting") return t.tools.status.connecting;
+      if (status === "error") return t.tools.status.error;
+      return t.tools.status.disabled;
+    },
+    [t.tools.status],
+  );
 
   const handleReload = React.useCallback(async () => {
-    setReloading(true)
+    setReloading(true);
     try {
-      await onReload()
+      await onReload();
     } finally {
-      setReloading(false)
+      setReloading(false);
     }
-  }, [onReload])
+  }, [onReload]);
 
   return (
     <section className="panel-scroll tools-panel">
       <div className="panel-toolbar">
         <p className="panel-toolbar-meta">
-          MCP {enabledMcpCount}/{mcpTools.length} enabled, built-in {enabledBuiltInCount}/{builtInTools.length} enabled
+          {t.tools.summary(
+            enabledMcpCount,
+            mcpTools.length,
+            enabledBuiltInCount,
+            builtInTools.length,
+          )}
         </p>
       </div>
 
       <div className="skill-source-group">
         <header className="skill-source-head">
-          <h3>MCP Servers</h3>
+          <h3>{t.tools.mcpServers}</h3>
         </header>
         {mcpTools.length === 0 ? (
-          <p className="panel-empty">No MCP servers found.</p>
+          <p className="panel-empty">{t.tools.mcpEmpty}</p>
         ) : (
           <div className="skill-list">
             {mcpTools.map((tool) => {
-              const isEnabled = tool.enabled
+              const isEnabled = tool.enabled;
               return (
                 <article key={tool.name} className="skill-item">
                   <div className="skill-item-body tools-item-body">
                     <h3>{tool.name}</h3>
                     <p>
                       {formatMcpStatus(tool.status)}
-                      {typeof tool.toolCount === 'number' ? ` • ${tool.toolCount} tools` : ''}
+                      {typeof tool.toolCount === "number"
+                        ? ` • ${t.tools.toolCount(tool.toolCount)}`
+                        : ""}
                     </p>
-                    {tool.error ? <p className="tool-error-text">{tool.error}</p> : null}
+                    {tool.error ? (
+                      <p className="tool-error-text">{tool.error}</p>
+                    ) : null}
                   </div>
                   <button
                     type="button"
-                    className={`skill-toggle ${isEnabled ? 'enabled' : ''}`}
+                    className={`skill-toggle ${isEnabled ? "enabled" : ""}`}
                     disabled={!canMutate}
                     onClick={() => void onSetMcpEnabled(tool.name, !isEnabled)}
                   >
-                    {isEnabled ? 'ON' : 'OFF'}
+                    {isEnabled ? t.common.on : t.common.off}
                   </button>
                 </article>
-              )
+              );
             })}
           </div>
         )}
@@ -85,30 +101,32 @@ export const ToolsPanel: React.FC<ToolsPanelProps> = ({
 
       <div className="skill-source-group">
         <header className="skill-source-head">
-          <h3>Built-in Tools</h3>
+          <h3>{t.tools.builtInTools}</h3>
         </header>
         {builtInTools.length === 0 ? (
-          <p className="panel-empty">No built-in tools found.</p>
+          <p className="panel-empty">{t.tools.builtInEmpty}</p>
         ) : (
           <div className="skill-list">
             {builtInTools.map((tool) => {
-              const isEnabled = tool.enabled
+              const isEnabled = tool.enabled;
               return (
                 <article key={tool.name} className="skill-item">
                   <div className="skill-item-body tools-item-body">
                     <h3>{tool.name}</h3>
-                    <p>{tool.description || 'No description provided.'}</p>
+                    <p>{tool.description || t.tools.noDescription}</p>
                   </div>
                   <button
                     type="button"
-                    className={`skill-toggle ${isEnabled ? 'enabled' : ''}`}
+                    className={`skill-toggle ${isEnabled ? "enabled" : ""}`}
                     disabled={!canMutate}
-                    onClick={() => void onSetBuiltInEnabled(tool.name, !isEnabled)}
+                    onClick={() =>
+                      void onSetBuiltInEnabled(tool.name, !isEnabled)
+                    }
                   >
-                    {isEnabled ? 'ON' : 'OFF'}
+                    {isEnabled ? t.common.on : t.common.off}
                   </button>
                 </article>
-              )
+              );
             })}
           </div>
         )}
@@ -120,12 +138,12 @@ export const ToolsPanel: React.FC<ToolsPanelProps> = ({
           className="panel-icon-btn panel-action-btn"
           disabled={!canMutate || reloading}
           onClick={() => void handleReload()}
-          aria-label="Reload tools"
-          title="Reload tools"
+          aria-label={t.tools.reload}
+          title={t.tools.reload}
         >
-          <RefreshCw size={18} className={reloading ? 'spin' : ''} />
+          <RefreshCw size={18} className={reloading ? "spin" : ""} />
         </button>
       </div>
     </section>
-  )
-}
+  );
+};
