@@ -152,6 +152,7 @@ export interface MobileControllerActions {
   disconnectGateway: () => void;
   switchSession: (sessionId: string) => Promise<void>;
   createSession: () => Promise<string | null>;
+  deleteSession: (sessionId: string) => Promise<boolean>;
   sendMessage: () => Promise<void>;
   stopActiveSession: () => Promise<void>;
   updateProfile: (profileId: string) => Promise<void>;
@@ -1006,6 +1007,52 @@ export function useMobileController(): {
     return result?.sessionId || null;
   }, [createSessionInternal]);
 
+  const deleteSession = React.useCallback(
+    async (sessionId: string): Promise<boolean> => {
+      if (!sessionId) return false;
+      if (!client.isConnected()) {
+        setConnectionError("Gateway is not connected");
+        return false;
+      }
+
+      try {
+        await client.request("agent:deleteChatSession", { sessionId });
+        setView((previous) => {
+          if (!previous.sessionOrder.includes(sessionId)) {
+            return previous;
+          }
+
+          const sessions = { ...previous.sessions };
+          const sessionMeta = { ...previous.sessionMeta };
+          const sessionOrder = previous.sessionOrder.filter(
+            (id) => id !== sessionId,
+          );
+          delete sessions[sessionId];
+          delete sessionMeta[sessionId];
+
+          const nextActiveSessionId =
+            previous.activeSessionId === sessionId
+              ? (sessionOrder[0] ?? null)
+              : previous.activeSessionId;
+
+          return {
+            ...previous,
+            sessions,
+            sessionMeta,
+            sessionOrder,
+            activeSessionId: nextActiveSessionId,
+            statusLine: `Deleted session ${sessionId.slice(0, 8)}`,
+          };
+        });
+        return true;
+      } catch (error) {
+        setConnectionError(`Failed to delete session: ${safeError(error)}`);
+        return false;
+      }
+    },
+    [client],
+  );
+
   const sendMessage = React.useCallback(async () => {
     const content = composerValue.trim();
     if (!content) return;
@@ -1501,6 +1548,7 @@ export function useMobileController(): {
     disconnectGateway,
     switchSession,
     createSession,
+    deleteSession,
     sendMessage,
     stopActiveSession,
     updateProfile,

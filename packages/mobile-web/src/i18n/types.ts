@@ -53,6 +53,8 @@ export interface MobileTranslations {
   sessionBrowser: {
     searchPlaceholder: string;
     createChat: string;
+    deleteChat: (title: string) => string;
+    deleteConfirm: (title: string) => string;
     empty: string;
     noUpdates: string;
   };

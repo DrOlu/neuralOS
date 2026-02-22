@@ -55,6 +55,9 @@ export const mobileTranslations: Record<MobileLocale, MobileTranslations> = {
     sessionBrowser: {
       searchPlaceholder: "Search chats",
       createChat: "Create new chat",
+      deleteChat: (title) => `Delete ${title}`,
+      deleteConfirm: (title) =>
+        `Delete "${title}"? This action cannot be undone.`,
       empty: "No chat sessions found.",
       noUpdates: "No updates yet.",
     },
@@ -197,6 +200,8 @@ export const mobileTranslations: Record<MobileLocale, MobileTranslations> = {
     sessionBrowser: {
       searchPlaceholder: "搜索会话",
       createChat: "新建会话",
+      deleteChat: (title) => `删除 ${title}`,
+      deleteConfirm: (title) => `确认删除“${title}”？此操作不可撤销。`,
       empty: "没有找到会话。",
       noUpdates: "暂无更新。",
     },

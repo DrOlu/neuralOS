@@ -249,16 +249,39 @@ button:disabled {
 }
 
 .session-chat-item {
-  border: none;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: stretch;
   border-bottom: 1px solid var(--surface-muted);
   background: var(--surface);
   color: var(--ink);
   width: 100%;
+  min-height: 72px;
+  transition: background-color 150ms ease;
+}
+
+.session-chat-open {
+  border: none;
+  background: var(--surface);
+  color: inherit;
+  width: 100%;
+  min-height: 72px;
+  height: 100%;
   text-align: left;
   padding: 12px 16px;
   display: flex;
   align-items: center;
   gap: 14px;
+  position: relative;
+  z-index: 2;
+  transition:
+    transform 180ms ease,
+    background-color 150ms ease;
+  touch-action: pan-y;
+}
+
+.session-chat-open.dragging {
   transition: background-color 150ms ease;
 }
 
@@ -302,12 +325,38 @@ button:disabled {
   background: var(--border);
 }
 
-.session-chat-item:active {
+.session-chat-open:active {
   background: var(--surface-soft);
 }
 
-.session-chat-item.active {
+.session-chat-item.active .session-chat-open {
   background: color-mix(in srgb, var(--accent-soft) 40%, var(--surface));
+}
+
+.session-chat-delete-rail {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: 82px;
+  border: none;
+  border-left: 1px solid color-mix(in srgb, #ffffff 36%, transparent);
+  background: linear-gradient(180deg, #d05a5a 0%, #b84343 100%);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  z-index: 4;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 100ms ease;
+}
+
+.session-chat-item.delete-visible .session-chat-delete-rail {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.session-chat-delete-rail:active {
+  background: linear-gradient(180deg, #b84c4c 0%, #9e3838 100%);
 }
 
 .session-chat-main {

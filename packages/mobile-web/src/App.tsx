@@ -235,6 +235,17 @@ export const App: React.FC = () => {
                 await actions.switchSession(sessionId);
                 setChatSubView("conversation");
               }}
+              onDeleteSession={async (sessionId) => {
+                const target = sessionItems.find((item) => item.id === sessionId);
+                const title = target?.title || t.app.untitled;
+                if (!window.confirm(t.sessionBrowser.deleteConfirm(title))) {
+                  return;
+                }
+                const deleted = await actions.deleteSession(sessionId);
+                if (deleted && state.activeSessionId === sessionId) {
+                  setChatSubView("sessions");
+                }
+              }}
             />
           ) : (
             <>
