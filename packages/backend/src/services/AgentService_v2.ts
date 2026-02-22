@@ -448,7 +448,7 @@ export class AgentService_v2 {
       const contextMessages: BaseMessage[] = []
       if (startupMode === 'normal') {
         const tabs = this.terminalService.getAllTerminals()
-        const sysInfoMsg = this.helpers.markEphemeral(createSystemInfoPrompt(tabs, sessionId))
+        const sysInfoMsg = createSystemInfoPrompt(tabs, sessionId)
         contextMessages.push(sysInfoMsg)
       }
 
