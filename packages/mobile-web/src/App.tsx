@@ -316,6 +316,10 @@ export const App: React.FC = () => {
             onDisconnect={actions.disconnectGateway}
             locale={locale}
             onLocaleChange={setLocale}
+            memoryEnabled={state.memoryEnabled}
+            memoryFilePath={state.memoryFilePath}
+            memoryContent={state.memoryContent}
+            onReloadMemory={() => void actions.reloadMemory()}
           />
         ) : null}
 

@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ArrowLeft, Cpu, Palette, Settings, Plus, Trash2, X, Key, Globe, Box, Tag, Shield, Loader2, Wrench, RefreshCw, BookOpenText, Pencil, Info, AlertTriangle } from 'lucide-react'
+import { ArrowLeft, Cpu, Palette, Settings, Plus, Trash2, X, Key, Globe, Box, Tag, Shield, Loader2, Wrench, RefreshCw, BookOpenText, Pencil, Info, AlertTriangle, Database } from 'lucide-react'
 import { observer } from 'mobx-react-lite'
 import type { AppStore } from '../../stores/AppStore'
 import type { ModelDefinition } from '../../lib/ipcTypes'
@@ -317,6 +317,17 @@ export const SettingsView: React.FC<{ store: AppStore }> = observer(({ store }) 
 
   const [deleteConfirm, setDeleteConfirm] = useState<null | { kind: 'model' | 'profile'; id: string }>(null)
   const [deleteSkillConfirm, setDeleteSkillConfirm] = useState<null | { fileName: string }>(null)
+  const [memoryDraft, setMemoryDraft] = useState('')
+  const [memoryBusy, setMemoryBusy] = useState(false)
+
+  React.useEffect(() => {
+    if (store.settingsSection !== 'memory') return
+    void store.loadMemory()
+  }, [store, store.settingsSection])
+
+  React.useEffect(() => {
+    setMemoryDraft(store.memoryContent)
+  }, [store.memoryContent])
 
   const createAccessToken = async () => {
     const normalizedName = accessTokenName.trim()
@@ -352,6 +363,30 @@ export const SettingsView: React.FC<{ store: AppStore }> = observer(({ store }) 
   const closeCreatedAccessTokenDialog = () => {
     setCreatedAccessToken(null)
     setAccessTokenModalError('')
+  }
+
+  const saveMemory = async () => {
+    setMemoryBusy(true)
+    try {
+      const snapshot = await store.saveMemoryContent(memoryDraft)
+      if (snapshot) {
+        setMemoryDraft(snapshot.content)
+      }
+    } finally {
+      setMemoryBusy(false)
+    }
+  }
+
+  const reloadMemory = async () => {
+    setMemoryBusy(true)
+    try {
+      const snapshot = await store.loadMemory()
+      if (snapshot) {
+        setMemoryDraft(snapshot.content)
+      }
+    } finally {
+      setMemoryBusy(false)
+    }
   }
 
   return (
@@ -492,6 +527,17 @@ export const SettingsView: React.FC<{ store: AppStore }> = observer(({ store }) 
               <BookOpenText size={16} strokeWidth={2} />
             </span>
             <span>{t.settings.skills}</span>
+          </div>
+          <div
+            className={store.settingsSection === 'memory' ? 'settings-nav-item is-active' : 'settings-nav-item'}
+            onClick={() => store.setSettingsSection('memory')}
+            role="button"
+            tabIndex={0}
+          >
+            <span className="icon">
+              <Database size={16} strokeWidth={2} />
+            </span>
+            <span>{t.settings.memory}</span>
           </div>
           <div
             className={store.settingsSection === 'accessTokens' ? 'settings-nav-item is-active' : 'settings-nav-item'}
@@ -1288,6 +1334,70 @@ export const SettingsView: React.FC<{ store: AppStore }> = observer(({ store }) 
                 })
               })()}
               {store.skills.length === 0 ? <div className="tool-empty">{t.settings.noSkills}</div> : null}
+            </>
+          ) : null}
+
+          {store.settingsSection === 'memory' ? (
+            <>
+              <div className="settings-section-header">
+                <div className="settings-section-title">
+                  {t.settings.memory}
+                  <InfoTooltip content={t.settings.tooltips.memory} />
+                </div>
+                <div className="settings-actions">
+                  <button
+                    className="btn-icon-reload"
+                    onClick={() => void reloadMemory()}
+                    title={t.settings.reloadMemory}
+                    disabled={memoryBusy}
+                  >
+                    <RefreshCw size={14} className={memoryBusy ? 'spin' : ''} />
+                  </button>
+                  <button className="btn-secondary" onClick={() => store.openMemoryFile()}>
+                    {t.settings.openMemoryFile}
+                  </button>
+                  <button className="btn-secondary" onClick={() => void saveMemory()} disabled={memoryBusy}>
+                    {t.settings.saveMemory}
+                  </button>
+                </div>
+              </div>
+
+              <div className="settings-rows">
+                <div className="settings-row">
+                  <div className="settings-row-label-with-info">
+                    <label>{t.settings.memoryEnabled}</label>
+                    <InfoTooltip content={t.settings.tooltips.memory} />
+                  </div>
+                  <label className="switch">
+                    <input
+                      type="checkbox"
+                      checked={store.settings?.memory?.enabled !== false}
+                      onChange={(e) => store.setMemoryEnabled(e.target.checked)}
+                    />
+                    <span className="switch-slider" />
+                  </label>
+                </div>
+              </div>
+
+              <div className="settings-memory-panel">
+                <div className="settings-memory-meta">
+                  <div className="settings-row-label-with-info">
+                    <label>{t.settings.memoryFilePath}</label>
+                  </div>
+                  <input className="settings-inline-input" value={store.memoryFilePath || '-'} readOnly />
+
+                  <div className="settings-row-label-with-info settings-memory-content-label">
+                    <label>{t.settings.memoryContent}</label>
+                  </div>
+                </div>
+                <textarea
+                  className="settings-memory-editor"
+                  value={memoryDraft}
+                  onChange={(event) => setMemoryDraft(event.target.value)}
+                  spellCheck={false}
+                  disabled={memoryBusy}
+                />
+              </div>
             </>
           ) : null}
 

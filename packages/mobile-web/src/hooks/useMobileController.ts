@@ -42,8 +42,10 @@ import {
   mergeSkillsByName,
   normalizeBuiltInTool,
   normalizeConnectionsSnapshot,
+  normalizeMemorySnapshot,
   normalizeMcpServer,
   normalizeSkillItem,
+  readMemoryEnabledFromSettings,
   safeError,
   toSshConfig,
 } from "./mobileControllerHelpers";
@@ -52,6 +54,7 @@ import type {
   ChatMessage,
   CreateTerminalTarget,
   GatewayConnectionsSnapshot,
+  GatewayMemorySnapshot,
   GatewayProfileSummary,
   GatewaySessionSnapshot,
   GatewaySessionSummary,
@@ -73,6 +76,8 @@ interface ViewState {
   builtInTools: BuiltInToolSummary[];
   profiles: GatewayProfileSummary[];
   activeProfileId: string;
+  memoryEnabled: boolean;
+  memory: GatewayMemorySnapshot;
   sessions: Record<string, SessionState>;
   sessionMeta: Record<string, SessionMeta>;
   sessionOrder: string[];
@@ -89,6 +94,8 @@ const INITIAL_VIEW_STATE: ViewState = {
   builtInTools: [],
   profiles: [],
   activeProfileId: "",
+  memoryEnabled: true,
+  memory: { filePath: "", content: "" },
   sessions: {},
   sessionMeta: {},
   sessionOrder: [],
@@ -129,6 +136,9 @@ export interface MobileControllerState {
   builtInTools: BuiltInToolSummary[];
   profiles: GatewayProfileSummary[];
   activeProfileId: string;
+  memoryEnabled: boolean;
+  memoryFilePath: string;
+  memoryContent: string;
   activeSession: SessionState | null;
   activeSessionId: string | null;
   chatTimeline: ChatTimelineItem[];
@@ -158,6 +168,7 @@ export interface MobileControllerActions {
   updateProfile: (profileId: string) => Promise<void>;
   reloadSkills: () => Promise<void>;
   setSkillEnabled: (name: string, enabled: boolean) => Promise<void>;
+  reloadMemory: () => Promise<void>;
   reloadTools: () => Promise<void>;
   setMcpEnabled: (name: string, enabled: boolean) => Promise<void>;
   setBuiltInToolEnabled: (name: string, enabled: boolean) => Promise<void>;
@@ -345,6 +356,11 @@ export function useMobileController(): {
         proxies: [],
         tunnels: [],
       };
+      let memoryEnabled = true;
+      let memory: GatewayMemorySnapshot = {
+        filePath: "",
+        content: "",
+      };
       try {
         const profilePayload = await client.request<{
           activeProfileId: string;
@@ -380,8 +396,16 @@ export function useMobileController(): {
           {},
         );
         connections = normalizeConnectionsSnapshot(settingsPayload);
+        memoryEnabled = readMemoryEnabledFromSettings(settingsPayload);
       } catch {
         connections = { ssh: [], proxies: [], tunnels: [] };
+      }
+
+      try {
+        const memoryPayload = await client.request<unknown>("memory:get", {});
+        memory = normalizeMemorySnapshot(memoryPayload);
+      } catch {
+        memory = { filePath: "", content: "" };
       }
 
       const sessionPayload = await client.request<{
@@ -492,6 +516,8 @@ export function useMobileController(): {
         builtInTools,
         profiles,
         activeProfileId,
+        memoryEnabled,
+        memory,
         sessions,
         sessionMeta,
         sessionOrder: order,
@@ -774,6 +800,16 @@ export function useMobileController(): {
               statusLine: `Skills updated (${enabledNames.size})`,
             };
           });
+          return;
+        }
+
+        if (channel === "memory:updated") {
+          const nextMemory = normalizeMemorySnapshot(payload);
+          setView((previous) => ({
+            ...previous,
+            memory: nextMemory,
+            statusLine: "Memory updated",
+          }));
         }
       }),
     ];
@@ -1206,6 +1242,26 @@ export function useMobileController(): {
     }
   }, [client]);
 
+  const reloadMemory = React.useCallback(async () => {
+    if (!client.isConnected()) return;
+    try {
+      const [settingsPayload, memoryPayload] = await Promise.all([
+        client.request<unknown>("settings:get", {}),
+        client.request<unknown>("memory:get", {}),
+      ]);
+      const nextMemoryEnabled = readMemoryEnabledFromSettings(settingsPayload);
+      const nextMemory = normalizeMemorySnapshot(memoryPayload);
+      setView((previous) => ({
+        ...previous,
+        memoryEnabled: nextMemoryEnabled,
+        memory: nextMemory,
+        statusLine: "Memory refreshed",
+      }));
+    } catch (error) {
+      setConnectionError(`Failed to reload memory: ${safeError(error)}`);
+    }
+  }, [client]);
+
   const setMcpEnabled = React.useCallback(
     async (name: string, enabled: boolean) => {
       if (!name || !client.isConnected()) return;
@@ -1525,6 +1581,9 @@ export function useMobileController(): {
     builtInTools: view.builtInTools,
     profiles: view.profiles,
     activeProfileId: view.activeProfileId,
+    memoryEnabled: view.memoryEnabled,
+    memoryFilePath: view.memory.filePath,
+    memoryContent: view.memory.content,
     activeSession,
     activeSessionId: view.activeSessionId,
     chatTimeline,
@@ -1554,6 +1613,7 @@ export function useMobileController(): {
     updateProfile,
     reloadSkills,
     setSkillEnabled,
+    reloadMemory,
     reloadTools,
     setMcpEnabled,
     setBuiltInToolEnabled,

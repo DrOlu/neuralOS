@@ -30,6 +30,7 @@ export function hasAnyNormalUserInputTag(content: unknown): boolean {
 export const USEFUL_SKILL_TAG = 'USEFUL_SKILL_DETAIL:\n'
 export const FILE_CONTENT_TAG = 'FILE_CONTENT:\n'
 export const TERMINAL_CONTENT_TAG = 'TERMINAL_CONTENT:\n'
+export const GLOBAL_MEMORY_TAG = 'GLOBAL_MEMORY_MD:\n'
 export const USER_PASTE_CONTENT_TAG = FILE_CONTENT_TAG
 
 function formatTodayLocalDate(now: Date = new Date()): string {
@@ -219,6 +220,27 @@ export function createSystemInfoPrompt(tabs: TerminalTab[], sessionId: string): 
   const sysInfoText = `${SYS_INFO_MARKER}\nYour sessionId for this conversation is ${sessionId}\nAvailable Terminal Tabs:\n${tabInfos}`
   
   return new HumanMessage(sysInfoText)
+}
+
+/**
+ * System prompt that injects global memory.md content for this session.
+ */
+export function createMemorySystemPrompt(opts: {
+  memoryFilePath: string
+  memoryContent: string
+}): SystemMessage {
+  const normalizedContent = String(opts.memoryContent || '').replace(/\r\n/g, '\n')
+  return new SystemMessage(
+    [
+      GLOBAL_MEMORY_TAG.trim(),
+      `Memory file absolute path: ${opts.memoryFilePath}`,
+      'If you need to add or modify memory, use the create_or_edit tool to edit this exact file path directly.',
+      'If you need to re-read memory later, use the read_file tool to read this exact file path directly.',
+      '',
+      '# Full MEMORY.md Content',
+      normalizedContent
+    ].join('\n')
+  )
 }
 
 /**

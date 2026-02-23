@@ -10,6 +10,7 @@ import { McpToolService } from '../../../backend/src/services/McpToolService'
 import { ThemeConfigStore } from '../theme/ThemeConfigStore'
 import { applyPlatformWindowTweaks, getPlatformBrowserWindowOptions } from './platform/windowChrome'
 import { SkillService } from '../../../backend/src/services/SkillService'
+import { MemoryService } from '../../../backend/src/services/MemoryService'
 import { UIHistoryService } from '../../../backend/src/services/UIHistoryService'
 import { ChatHistoryService } from '../../../backend/src/services/ChatHistoryService'
 import { GatewayService } from '../../../backend/src/services/Gateway/GatewayService'
@@ -40,6 +41,7 @@ let modelCapabilityService: ModelCapabilityService
 let mcpToolService: McpToolService
 let themeStore: ThemeConfigStore
 let skillService: SkillService
+let memoryService: MemoryService
 let uiHistoryService: UIHistoryService
 let tempFileService: TempFileService
 let versionService: VersionService
@@ -221,6 +223,8 @@ export async function startElectronMain(): Promise<void> {
   // Ensure skills dir exists + initial scan (best-effort)
   skillService = new SkillService(settingsService)
   void skillService.reload()
+  memoryService = new MemoryService()
+  void memoryService.ensureMemoryFile()
 
   modelCapabilityService = new ModelCapabilityService()
   const chatHistoryService = new ChatHistoryService()
@@ -229,6 +233,7 @@ export async function startElectronMain(): Promise<void> {
     commandPolicyService,
     mcpToolService,
     skillService,
+    memoryService,
     uiHistoryService,
     chatHistoryService
   )
@@ -418,6 +423,16 @@ export async function startElectronMain(): Promise<void> {
             return summary
           }
         },
+        memoryBridge: {
+          get: async () => {
+            return await memoryService.getMemorySnapshot()
+          },
+          setContent: async (content: string) => {
+            const snapshot = await memoryService.writeMemory(content)
+            gatewayService.broadcastRaw('memory:updated', snapshot)
+            return snapshot
+          }
+        },
         settingsBridge: {
           getSettings: () => settingsService.getSettings(),
           setSettings: async (patch) => {
@@ -475,6 +490,7 @@ export async function startElectronMain(): Promise<void> {
     commandPolicyService,
     tempFileService,
     skillService,
+    memoryService,
     settingsService,
     uiSettingsStore,
     modelCapabilityService,

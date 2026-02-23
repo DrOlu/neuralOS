@@ -8,6 +8,7 @@ import {
 import type {
   BuiltInToolSummary,
   GatewayConnectionsSnapshot,
+  GatewayMemorySnapshot,
   GatewaySshConnectionEntry,
   GatewaySshConnectionSummary,
   McpServerSummary,
@@ -141,6 +142,25 @@ export async function fetchSkillsSnapshot(
     .map((item) => normalizeSkillItem(item, null))
     .filter((item): item is SkillSummary => !!item)
     .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+export function normalizeMemorySnapshot(raw: unknown): GatewayMemorySnapshot {
+  if (!raw || typeof raw !== "object") {
+    return { filePath: "", content: "" };
+  }
+  const item = raw as Record<string, unknown>;
+  return {
+    filePath: typeof item.filePath === "string" ? item.filePath : "",
+    content: typeof item.content === "string" ? item.content : "",
+  };
+}
+
+export function readMemoryEnabledFromSettings(raw: unknown): boolean {
+  if (!raw || typeof raw !== "object") return true;
+  const settings = raw as Record<string, unknown>;
+  const memory = settings.memory;
+  if (!memory || typeof memory !== "object") return true;
+  return (memory as Record<string, unknown>).enabled !== false;
 }
 
 export function normalizeMcpServer(raw: unknown): McpServerSummary | null {

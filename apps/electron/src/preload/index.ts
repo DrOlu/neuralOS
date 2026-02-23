@@ -4,6 +4,9 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 interface BackendSettings {
   schemaVersion: 3
   commandPolicyMode: 'safe' | 'standard' | 'smart'
+  memory?: {
+    enabled: boolean
+  }
   tools: {
     builtIn: Record<string, boolean>
     skills?: Record<string, boolean>
@@ -193,6 +196,11 @@ interface SkillStatusSummary {
   name: string
   description?: string
   enabled: boolean
+}
+
+interface MemorySnapshot {
+  filePath: string
+  content: string
 }
 
 interface AccessTokenSummary {
@@ -409,6 +417,12 @@ export interface GyShellAPI {
     onUpdated: (callback: (data: SkillStatusSummary[]) => void) => () => void
   }
 
+  memory: {
+    get: () => Promise<MemorySnapshot>
+    setContent: (content: string) => Promise<MemorySnapshot>
+    openFile: () => Promise<void>
+  }
+
   version: {
     getState: () => Promise<VersionCheckResult>
     check: () => Promise<VersionCheckResult>
@@ -569,6 +583,11 @@ const api: GyShellAPI = {
       ipcRenderer.on('skills:updated', handler)
       return () => ipcRenderer.off('skills:updated', handler)
     }
+  },
+  memory: {
+    get: () => ipcRenderer.invoke('memory:get'),
+    setContent: (content: string) => ipcRenderer.invoke('memory:setContent', content),
+    openFile: () => ipcRenderer.invoke('memory:openFile')
   },
   version: {
     getState: () => ipcRenderer.invoke('version:getState'),

@@ -29,6 +29,7 @@ export type SettingsSection =
   | 'security'
   | 'tools'
   | 'skills'
+  | 'memory'
   | 'accessTokens'
   | 'version'
 
@@ -36,6 +37,7 @@ export type McpToolSummary = Awaited<ReturnType<Window['gyshell']['tools']['getM
 export type BuiltInToolSummary = Awaited<ReturnType<Window['gyshell']['tools']['getBuiltIn']>>[number]
 export type SkillSummary = Awaited<ReturnType<Window['gyshell']['skills']['getAll']>>[number]
 export type SkillStatusSummary = Awaited<ReturnType<Window['gyshell']['skills']['setEnabled']>>[number]
+export type MemorySnapshot = Awaited<ReturnType<Window['gyshell']['memory']['get']>>
 export type AccessTokenSummary = Awaited<ReturnType<Window['gyshell']['accessTokens']['list']>>[number]
 export type CommandPolicyLists = Awaited<ReturnType<Window['gyshell']['settings']['getCommandPolicyLists']>>
 export type VersionCheckResult = Awaited<ReturnType<Window['gyshell']['version']['check']>>
@@ -68,6 +70,8 @@ export class AppStore {
   mcpTools: McpToolSummary[] = []
   builtInTools: BuiltInToolSummary[] = []
   skills: SkillSummary[] = []
+  memoryFilePath = ''
+  memoryContent = ''
   accessTokens: AccessTokenSummary[] = []
   commandPolicyLists: CommandPolicyLists = { allowlist: [], denylist: [], asklist: [] }
   versionInfo: VersionCheckResult | null = null
@@ -91,6 +95,8 @@ export class AppStore {
       mcpTools: observable,
       builtInTools: observable,
       skills: observable,
+      memoryFilePath: observable,
+      memoryContent: observable,
       accessTokens: observable,
       commandPolicyLists: observable,
       versionInfo: observable,
@@ -137,6 +143,9 @@ export class AppStore {
       createSkill: action,
       editSkill: action,
       deleteSkill: action,
+      loadMemory: action,
+      openMemoryFile: action,
+      saveMemoryContent: action,
       loadAccessTokens: action,
       createAccessToken: action,
       deleteAccessToken: action,
@@ -147,6 +156,7 @@ export class AppStore {
       setMcpToolEnabled: action,
       setBuiltInToolEnabled: action,
       setSkillEnabled: action,
+      setMemoryEnabled: action,
       setRecursionLimit: action,
       setDebugMode: action,
       setWsGatewayAccess: action,
@@ -551,6 +561,38 @@ export class AppStore {
     })
   }
 
+  async loadMemory(): Promise<MemorySnapshot | null> {
+    try {
+      const snapshot = await window.gyshell.memory.get()
+      runInAction(() => {
+        this.memoryFilePath = snapshot.filePath
+        this.memoryContent = snapshot.content
+      })
+      return snapshot
+    } catch (err) {
+      console.error('Failed to load memory.md', err)
+      return null
+    }
+  }
+
+  async openMemoryFile(): Promise<void> {
+    await window.gyshell.memory.openFile()
+  }
+
+  async saveMemoryContent(content: string): Promise<MemorySnapshot | null> {
+    try {
+      const snapshot = await window.gyshell.memory.setContent(content)
+      runInAction(() => {
+        this.memoryFilePath = snapshot.filePath
+        this.memoryContent = snapshot.content
+      })
+      return snapshot
+    } catch (err) {
+      console.error('Failed to save memory.md', err)
+      return null
+    }
+  }
+
   async loadAccessTokens(): Promise<void> {
     try {
       const items = await window.gyshell.accessTokens.list()
@@ -613,6 +655,24 @@ export class AppStore {
     runInAction(() => {
       this.settings = settings
       this.applySkillStatusUpdate(skills)
+    })
+  }
+
+  async setMemoryEnabled(enabled: boolean): Promise<void> {
+    runInAction(() => {
+      if (this.settings) {
+        this.settings = {
+          ...this.settings,
+          memory: {
+            enabled
+          }
+        }
+      }
+    })
+    await window.gyshell.settings.set({
+      memory: {
+        enabled
+      }
     })
   }
 
@@ -808,6 +868,7 @@ export class AppStore {
       // Load tools status
       void this.loadTools()
       void this.loadSkills()
+      void this.loadMemory()
       void this.loadCommandPolicyLists()
       void this.loadAccessTokens()
       void this.loadVersionState()
@@ -822,6 +883,7 @@ export class AppStore {
       }
       void this.loadTools()
       void this.loadSkills()
+      void this.loadMemory()
       void this.loadCommandPolicyLists()
       void this.loadAccessTokens()
       void this.loadVersionState()

@@ -93,6 +93,11 @@ export interface SkillSummary {
   supportingFiles?: string[]
 }
 
+export interface GatewayMemorySnapshot {
+  filePath: string
+  content: string
+}
+
 export type McpServerStatus = 'disabled' | 'connecting' | 'connected' | 'error'
 
 export interface McpServerSummary {

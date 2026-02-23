@@ -75,11 +75,19 @@ export interface MobileTranslations {
   settings: {
     title: string;
     gateway: string;
+    memory: string;
     language: string;
     languageHint: string;
     gatewayHint: string;
     gatewayPlaceholder: string;
     tokenPlaceholder: string;
+    memoryHint: string;
+    memoryEnabled: string;
+    memoryDisabled: string;
+    memoryReload: string;
+    memoryPathLabel: string;
+    memoryContentLabel: string;
+    memoryReadOnlyHint: string;
     english: string;
     chinese: string;
   };

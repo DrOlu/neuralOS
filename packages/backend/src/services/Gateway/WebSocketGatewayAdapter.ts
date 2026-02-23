@@ -29,6 +29,8 @@ type WebSocketRpcMethod =
   | 'skills:delete'
   | 'skills:list'
   | 'skills:setEnabled'
+  | 'memory:get'
+  | 'memory:setContent'
   | 'settings:get'
   | 'settings:set'
   | 'settings:getCommandPolicyLists'
@@ -121,6 +123,10 @@ export interface WebSocketGatewayAdapterOptions {
     ) =>
       | Array<{ name: string; description?: string; enabled: boolean }>
       | Promise<Array<{ name: string; description?: string; enabled: boolean }>>;
+  };
+  memoryBridge?: {
+    get?: () => { filePath: string; content: string } | Promise<{ filePath: string; content: string }>;
+    setContent?: (content: string) => { filePath: string; content: string } | Promise<{ filePath: string; content: string }>;
   };
   settingsBridge?: {
     getSettings?: () => unknown | Promise<unknown>;
@@ -639,6 +645,22 @@ export class WebSocketGatewayAdapter {
         }
         const skills = await this.options.skillBridge.setSkillEnabled(name, enabled);
         return { skills };
+      }
+      case 'memory:get': {
+        if (!this.options.memoryBridge?.get) {
+          throw new WebSocketRpcError('METHOD_NOT_FOUND', 'memory:get is not available on this websocket gateway.');
+        }
+        return await this.options.memoryBridge.get();
+      }
+      case 'memory:setContent': {
+        if (!this.options.memoryBridge?.setContent) {
+          throw new WebSocketRpcError('METHOD_NOT_FOUND', 'memory:setContent is not available on this websocket gateway.');
+        }
+        const content = params.content;
+        if (typeof content !== 'string') {
+          throw new WebSocketRpcError('BAD_REQUEST', 'content must be string.');
+        }
+        return await this.options.memoryBridge.setContent(content);
       }
       case 'settings:get': {
         if (!this.options.settingsBridge?.getSettings) {

@@ -40,6 +40,9 @@ export const DEFAULT_BACKEND_SETTINGS: BackendSettings = {
     panelOrder: ['chat', 'terminal']
   },
   recursionLimit: 200,
+  memory: {
+    enabled: true
+  },
   debugMode: false,
   experimental: {
     runtimeThinkingCorrectionEnabled: true,
@@ -62,6 +65,7 @@ function pickBackendSnapshot(raw: unknown): Partial<BackendSettings> {
     gateway: raw.gateway,
     layout: raw.layout,
     recursionLimit: raw.recursionLimit,
+    memory: raw.memory,
     debugMode: raw.debugMode,
     experimental: raw.experimental
   } as Partial<BackendSettings>
@@ -114,6 +118,10 @@ function normalizeBackendSettings(settings: BackendSettings): BackendSettings {
     typeof next.recursionLimit === 'number' && Number.isFinite(next.recursionLimit) && next.recursionLimit > 0
       ? next.recursionLimit
       : 200
+
+  next.memory = {
+    enabled: next.memory?.enabled !== false
+  }
 
   next.debugMode = next.debugMode === true
 

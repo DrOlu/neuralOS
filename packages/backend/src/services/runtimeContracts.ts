@@ -3,6 +3,7 @@ import type { AgentEvent, BackendSettings, ChatSession, TerminalTab } from '../t
 import type { CommandPolicyListName, CommandPolicyLists, CommandPolicyMode } from './CommandPolicy/CommandPolicyService'
 import type { SkillInfo, CreateSkillResult } from './SkillService'
 import type { McpServerSummary } from './McpToolService'
+import type { MemorySnapshot } from '../memory/FileMemoryStore'
 
 export interface ISettingsRuntime {
   getSettings(): BackendSettings
@@ -58,6 +59,14 @@ export interface IMcpRuntime {
   getActiveTools(): StructuredTool[]
   invokeTool(toolName: string, args: unknown, signal?: AbortSignal): Promise<unknown>
   openConfigFile?(): Promise<void>
+}
+
+export interface IMemoryRuntime {
+  ensureMemoryFile(): Promise<string>
+  getMemoryFilePath(): Promise<string>
+  getMemorySnapshot(): Promise<MemorySnapshot>
+  readMemory(): Promise<string>
+  writeMemory(content: string): Promise<MemorySnapshot>
 }
 
 export interface IGatewayTerminalRuntime {

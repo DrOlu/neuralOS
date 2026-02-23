@@ -6,7 +6,13 @@ import { StateGraph, START, END, Annotation, MemorySaver } from '@langchain/lang
 import { RunnableLambda } from '@langchain/core/runnables'
 import type { ChatSession, BackendSettings } from '../types'
 import { TerminalService } from './TerminalService'
-import type { IChatHistoryRuntime, ICommandPolicyRuntime, IMcpRuntime, ISkillRuntime } from './runtimeContracts'
+import type {
+  IChatHistoryRuntime,
+  ICommandPolicyRuntime,
+  IMcpRuntime,
+  ISkillRuntime,
+  IMemoryRuntime
+} from './runtimeContracts'
 import type { UIHistoryService } from './UIHistoryService'
 import { v4 as uuidv4 } from 'uuid'
 import type { z } from 'zod'
@@ -40,7 +46,9 @@ import {
   USER_INSERTED_INPUT_TAG,
   USER_INSERTED_INPUT_INSTRUCTION,
   createBaseSystemPrompt,
+  createMemorySystemPrompt,
   createSystemInfoPrompt,
+  GLOBAL_MEMORY_TAG,
   COMMAND_POLICY_DECISION_SCHEMA,
   WRITE_STDIN_POLICY_DECISION_SCHEMA,
   TASK_COMPLETION_DECISION_SCHEMA,
@@ -161,6 +169,7 @@ export class AgentService_v2 {
   private commandPolicyService: ICommandPolicyRuntime
   private mcpToolService: IMcpRuntime
   private skillService: ISkillRuntime
+  private memoryService: IMemoryRuntime
   private uiHistoryService: UIHistoryService
   private settings: BackendSettings | null = null
 
@@ -178,6 +187,7 @@ export class AgentService_v2 {
     commandPolicyService: ICommandPolicyRuntime,
     mcpToolService: IMcpRuntime,
     skillService: ISkillRuntime,
+    memoryService: IMemoryRuntime,
     uiHistoryService: UIHistoryService,
     chatHistoryService: IChatHistoryRuntime
   ) {
@@ -186,6 +196,7 @@ export class AgentService_v2 {
     this.commandPolicyService = commandPolicyService
     this.mcpToolService = mcpToolService
     this.skillService = skillService
+    this.memoryService = memoryService
     this.uiHistoryService = uiHistoryService
     this.helpers = new AgentHelpers()
     this.checkpointer = new MemorySaver()
@@ -434,8 +445,20 @@ export class AgentService_v2 {
         inputKind: startupMode
       })
 
-      const withUserMessages = [...messages, humanMessage]
-      const withUserFullMessages = [...fullMessages, humanMessage]
+      const memoryEnabled = this.settings?.memory?.enabled !== false
+      const isMemorySystemMessage = (message: BaseMessage): boolean =>
+        message.type === 'system' &&
+        typeof message.content === 'string' &&
+        message.content.includes(GLOBAL_MEMORY_TAG.trim())
+      const stripMemorySystemMessages = (list: BaseMessage[]): BaseMessage[] =>
+        list.filter((item) => !isMemorySystemMessage(item))
+
+      const withUserMessages = memoryEnabled
+        ? [...messages, humanMessage]
+        : stripMemorySystemMessages([...messages, humanMessage])
+      const withUserFullMessages = memoryEnabled
+        ? [...fullMessages, humanMessage]
+        : stripMemorySystemMessages([...fullMessages, humanMessage])
 
       const baseSystemMsg = createBaseSystemPrompt()
       const hasBaseSystem = withUserMessages.some(
@@ -444,6 +467,21 @@ export class AgentService_v2 {
       const fullHasBaseSystem = withUserFullMessages.some(
         m => m.type === 'system' && typeof m.content === 'string' && m.content.includes('# Role: GyShell Assistant')
       )
+      const hasMemorySystem = withUserMessages.some(isMemorySystemMessage)
+      const fullHasMemorySystem = withUserFullMessages.some(isMemorySystemMessage)
+
+      let memorySystemMsg: BaseMessage | null = null
+      if (memoryEnabled && (!hasMemorySystem || !fullHasMemorySystem)) {
+        try {
+          const snapshot = await this.memoryService.getMemorySnapshot()
+          memorySystemMsg = createMemorySystemPrompt({
+            memoryFilePath: snapshot.filePath,
+            memoryContent: snapshot.content
+          })
+        } catch (error) {
+          console.warn('[AgentService_v2] Failed to load memory.md for system prompt injection:', error)
+        }
+      }
 
       const contextMessages: BaseMessage[] = []
       if (startupMode === 'normal') {
@@ -456,6 +494,7 @@ export class AgentService_v2 {
       const beforeUser = withUserMessages.slice(0, -1)
       const newMessages = [
         ...(hasBaseSystem ? [] : [baseSystemMsg]),
+        ...(hasMemorySystem || !memorySystemMsg ? [] : [memorySystemMsg]),
         ...beforeUser,
         ...contextMessages,
         userLast
@@ -465,6 +504,7 @@ export class AgentService_v2 {
       const fullBeforeUser = withUserFullMessages.slice(0, -1)
       const newFullMessages = [
         ...(fullHasBaseSystem ? [] : [baseSystemMsg]),
+        ...(fullHasMemorySystem || !memorySystemMsg ? [] : [memorySystemMsg]),
         ...fullBeforeUser,
         ...contextMessages,
         fullUserLast

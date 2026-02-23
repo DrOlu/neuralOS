@@ -16,6 +16,7 @@ import { NodeSettingsService } from '../../adapters/node/NodeSettingsService'
 import { NodeCommandPolicyService } from '../../adapters/node/NodeCommandPolicyService'
 import { NodeMcpToolService } from '../../adapters/node/NodeMcpToolService'
 import { NodeSkillService } from '../../adapters/node/NodeSkillService'
+import { NodeMemoryService } from '../../adapters/node/NodeMemoryService'
 import { NodeAccessTokenService } from '../../adapters/node/NodeAccessTokenService'
 import { ModelCapabilityService } from '../../services/ModelCapabilityService'
 import {
@@ -119,6 +120,7 @@ export async function startGyBackend(): Promise<void> {
   const commandPolicyService = new NodeCommandPolicyService(dataDir)
   const mcpToolService = new NodeMcpToolService(dataDir)
   const skillService = new NodeSkillService(dataDir, settingsService)
+  const memoryService = new NodeMemoryService(dataDir)
   const accessTokenService = new NodeAccessTokenService(dataDir)
   const modelCapabilityService = new ModelCapabilityService()
 
@@ -130,6 +132,7 @@ export async function startGyBackend(): Promise<void> {
     commandPolicyService,
     mcpToolService,
     skillService,
+    memoryService,
     uiHistoryService,
     chatHistoryService
   )
@@ -352,6 +355,16 @@ export async function startGyBackend(): Promise<void> {
             return summary
           }
         },
+        memoryBridge: {
+          get: async () => {
+            return await memoryService.getMemorySnapshot()
+          },
+          setContent: async (content: string) => {
+            const snapshot = await memoryService.writeMemory(content)
+            gatewayService.broadcastRaw('memory:updated', snapshot)
+            return snapshot
+          }
+        },
         settingsBridge: {
           getSettings: () => settingsService.getSettings(),
           setSettings: async (patch) => {
@@ -434,5 +447,6 @@ export async function startGyBackend(): Promise<void> {
   }
   console.log(`[gybackend] Data directory: ${dataDir}`)
   console.log(`[gybackend] Settings file: ${settingsService.getSettingsPath()}`)
+  console.log(`[gybackend] Memory file: ${await memoryService.getMemoryFilePath()}`)
   console.log(`[gybackend] Access token file: ${accessTokenService.getStorageFilePath()}`)
 }

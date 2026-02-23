@@ -15,6 +15,10 @@ interface SettingsPanelProps {
   onLocaleChange: (locale: MobileLocale) => void;
   onConnect: () => void;
   onDisconnect: () => void;
+  memoryEnabled: boolean;
+  memoryFilePath: string;
+  memoryContent: string;
+  onReloadMemory: () => void;
 }
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({
@@ -29,6 +33,10 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   onLocaleChange,
   onConnect,
   onDisconnect,
+  memoryEnabled,
+  memoryFilePath,
+  memoryContent,
+  onReloadMemory,
 }) => {
   const { t } = useMobileI18n();
   const connected = connectionStatus === "connected";
@@ -120,6 +128,42 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
           {connectionError ? (
             <p className="settings-error-flat">{connectionError}</p>
           ) : null}
+        </section>
+
+        <section className="settings-item-flat">
+          <header className="settings-head-flat">
+            <h3>{t.settings.memory}</h3>
+            <span className="conn-status-label-flat">
+              {memoryEnabled ? t.settings.memoryEnabled : t.settings.memoryDisabled}
+            </span>
+          </header>
+          <p className="settings-hint-flat">{t.settings.memoryHint}</p>
+          <div className="settings-actions-flat">
+            <button
+              type="button"
+              className="accent-btn-flat"
+              onClick={onReloadMemory}
+              disabled={!connected}
+            >
+              {t.settings.memoryReload}
+            </button>
+          </div>
+          <div className="settings-memory-box-flat">
+            <div className="settings-memory-label-flat">{t.settings.memoryPathLabel}</div>
+            <div className="settings-memory-path-flat">
+              {memoryFilePath || t.common.notConnected}
+            </div>
+            <div className="settings-memory-label-flat">
+              {t.settings.memoryContentLabel}
+            </div>
+            <textarea
+              className="settings-memory-content-flat"
+              value={memoryContent}
+              readOnly
+              spellCheck={false}
+            />
+            <p className="settings-hint-flat">{t.settings.memoryReadOnlyHint}</p>
+          </div>
         </section>
       </div>
     </section>

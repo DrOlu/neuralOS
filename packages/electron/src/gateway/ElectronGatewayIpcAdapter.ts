@@ -6,6 +6,7 @@ import type { UIHistoryService, HistoryExportMode } from '../../../backend/src/s
 import type { CommandPolicyService } from '../../../backend/src/services/CommandPolicy/CommandPolicyService'
 import type { TempFileService } from '../../../backend/src/services/TempFileService'
 import type { SkillService } from '../../../backend/src/services/SkillService'
+import type { MemoryService } from '../../../backend/src/services/MemoryService'
 import type { SettingsService } from '../../../backend/src/services/SettingsService'
 import type { ModelCapabilityService } from '../../../backend/src/services/ModelCapabilityService'
 import type { McpToolService } from '../../../backend/src/services/McpToolService'
@@ -35,6 +36,7 @@ export class ElectronGatewayIpcAdapter {
     private commandPolicyService: CommandPolicyService,
     private tempFileService: TempFileService,
     private skillService: SkillService,
+    private memoryService: MemoryService,
     private settingsService: SettingsService,
     private uiSettingsStore: UiSettingsStore,
     private modelCapabilityService: ModelCapabilityService,
@@ -241,6 +243,42 @@ export class ElectronGatewayIpcAdapter {
       const summary = buildSkillStatusSummary(allSkills, nextSettings.tools?.skills)
       this.gateway.broadcastRaw('skills:updated', summary)
       return summary
+    })
+
+    // Memory
+    ipcMain.handle('memory:list', async () => {
+      const runtime = this.memoryService as any
+      if (typeof runtime.getAll === 'function') {
+        return await runtime.getAll()
+      }
+      const snapshot = await this.memoryService.getMemorySnapshot()
+      return [snapshot]
+    })
+
+    ipcMain.handle('memory:setRule', async (_: any, content: string) => {
+      const runtime = this.memoryService as any
+      if (typeof runtime.setRuleContent === 'function' && typeof runtime.getRuleContent === 'function') {
+        await runtime.setRuleContent(String(content ?? ''))
+        return await runtime.getRuleContent()
+      }
+      const snapshot = await this.memoryService.writeMemory(String(content ?? ''))
+      this.gateway.broadcastRaw('memory:updated', snapshot)
+      return snapshot.content
+    })
+
+    ipcMain.handle('memory:get', async () => {
+      return await this.memoryService.getMemorySnapshot()
+    })
+
+    ipcMain.handle('memory:setContent', async (_: any, content: string) => {
+      const snapshot = await this.memoryService.writeMemory(String(content ?? ''))
+      this.gateway.broadcastRaw('memory:updated', snapshot)
+      return snapshot
+    })
+
+    ipcMain.handle('memory:openFile', async () => {
+      const snapshot = await this.memoryService.getMemorySnapshot()
+      await shell.openPath(snapshot.filePath)
     })
 
     // Settings / tools / themes / models

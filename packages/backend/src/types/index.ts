@@ -154,6 +154,10 @@ export interface BackendSettings {
   }
   /** Agent recursion limit */
   recursionLimit?: number
+  /** Global memory injection control */
+  memory?: {
+    enabled: boolean
+  }
   /** Debug mode switch for backend debug payload persistence and related diagnostics */
   debugMode?: boolean
   /** Experimental feature switches */
