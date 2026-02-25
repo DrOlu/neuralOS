@@ -41,6 +41,8 @@ export function messageTypeTitle(
       return message.metadata?.subToolTitle || t.subTool;
     case "reasoning":
       return message.metadata?.subToolTitle || t.reasoning;
+    case "compaction":
+      return message.metadata?.subToolTitle || t.compaction;
     case "alert":
       return t.alert;
     case "error":

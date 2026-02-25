@@ -71,12 +71,17 @@ const AgentTurnBubble: React.FC<{
   const preview = trimOuterBlankLines(messageDetail(message, t.format));
   const isText = message.type === "text";
   const isAsk = message.type === "ask";
+  const isReasoning = message.type === "reasoning";
+  const isCompaction = message.type === "compaction";
   const isToolLike =
     message.type === "command" ||
     message.type === "tool_call" ||
     message.type === "file_edit" ||
     message.type === "sub_tool" ||
-    message.type === "reasoning";
+    isReasoning ||
+    isCompaction;
+  const isSpecialActivity = (isReasoning || isCompaction) && item.streaming;
+  const titleClassName = `agent-event-title${isReasoning || isCompaction ? " special" : ""}${isReasoning ? " reasoning" : ""}${isCompaction ? " compaction" : ""}${isSpecialActivity ? " sweeping" : ""}`;
   const decision = message.metadata?.decision;
   const showDecisionButtons =
     isAsk && decision !== "allow" && decision !== "deny";
@@ -84,7 +89,7 @@ const AgentTurnBubble: React.FC<{
     normalizeDisplayText(message.content || ""),
   );
   const textPreview = markdownPreview || (item.streaming ? "..." : "");
-  const eventPreview = preview || (item.streaming ? "..." : "");
+  const eventPreview = isCompaction ? preview : preview || (item.streaming ? "..." : "");
   const shouldClampTextPreview = item.streaming;
 
   return (
@@ -99,10 +104,10 @@ const AgentTurnBubble: React.FC<{
           />
         ) : (
           <div className="agent-event-preview">
-            <div className="agent-event-title">{messageTitle}</div>
+            <div className={titleClassName}>{messageTitle}</div>
             {eventPreview ? (
               <pre
-                className={`agent-event-body ${isToolLike ? "tool-fixed" : ""}`}
+                className={`agent-event-body ${isToolLike ? "tool-fixed" : ""}${isCompaction ? " compaction" : ""}`}
               >
                 {eventPreview}
               </pre>

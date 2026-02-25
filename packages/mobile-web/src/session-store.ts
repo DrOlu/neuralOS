@@ -47,8 +47,8 @@ export function applyUiUpdate(session: SessionState, update: UIUpdateAction): vo
   switch (update.type) {
     case 'ADD_MESSAGE': {
       const message = cloneMessage(update.message)
-      // Keep reasoning transient in frontend: once any new message arrives, old reasoning is removed.
-      session.messages = session.messages.filter((item) => item.type !== 'reasoning')
+      // Keep reasoning/compaction transient in frontend: once any new message arrives, old transient activity banners are removed.
+      session.messages = session.messages.filter((item) => item.type !== 'reasoning' && item.type !== 'compaction')
       session.messages.push(message)
 
       if (message.role === 'user') {

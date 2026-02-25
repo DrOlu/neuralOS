@@ -327,16 +327,17 @@ export class UIHistoryService {
     } else if (type === 'sub_tool_started') {
       const stopAction = this.stopLatestStreaming(session, sessionId)
       if (stopAction) actions.push(stopAction)
-      const isReasoning = this.isReasoningSubToolEvent(event)
+      const messageType = this.getSubToolMessageType(event)
 
       const message = this.createMessage({
         role: 'assistant',
-        type: isReasoning ? 'reasoning' : 'sub_tool',
+        type: messageType,
         content: '',
         metadata: {
           subToolTitle: event.title || event.toolName || 'Sub Tool',
           subToolHint: event.hint,
           output: '',
+          subToolLevel: event.level || 'info',
           collapsed: true
         },
         streaming: true,
@@ -347,7 +348,9 @@ export class UIHistoryService {
     } else if (type === 'sub_tool_delta') {
       const msg = event.messageId
         ? session.messages.find((m) => m.backendMessageId === event.messageId)
-        : [...session.messages].reverse().find((m) => m.type === 'sub_tool' && m.streaming)
+        : [...session.messages]
+            .reverse()
+            .find((m) => (m.type === 'sub_tool' || m.type === 'reasoning' || m.type === 'compaction') && m.streaming)
 
       if (msg) {
         const delta = event.outputDelta || ''
@@ -360,7 +363,9 @@ export class UIHistoryService {
     } else if (type === 'sub_tool_finished') {
       const msg = event.messageId
         ? session.messages.find((m) => m.backendMessageId === event.messageId)
-        : [...session.messages].reverse().find((m) => m.type === 'sub_tool' && m.streaming)
+        : [...session.messages]
+            .reverse()
+            .find((m) => (m.type === 'sub_tool' || m.type === 'reasoning' || m.type === 'compaction') && m.streaming)
       if (msg) {
         msg.streaming = false
         actions.push({ type: 'UPDATE_MESSAGE', sessionId, messageId: msg.id, patch: { streaming: false } })
@@ -458,9 +463,11 @@ export class UIHistoryService {
     }
   }
 
-  private isReasoningSubToolEvent(event: AgentEvent): boolean {
+  private getSubToolMessageType(event: AgentEvent): ChatMessage['type'] {
     const rawTitle = String(event.title || event.toolName || '').trim().toLowerCase()
-    return rawTitle.startsWith('reasoning')
+    if (rawTitle.startsWith('reasoning')) return 'reasoning'
+    if (rawTitle.startsWith('compaction')) return 'compaction'
+    return 'sub_tool'
   }
 
   private checkAutoTitle(session: UIChatSession, role: string, content: string): void {
@@ -641,6 +648,17 @@ export class UIHistoryService {
         const title = this.normalizeText(msg.metadata?.subToolTitle || 'Sub Tool')
         const outputText = this.normalizeText(msg.metadata?.output || msg.content || '')
         chunks.push(`Sub Tool: ${title}`)
+        if (outputText) {
+          chunks.push('```text')
+          chunks.push(outputText)
+          chunks.push('```')
+        }
+        break
+      }
+      case 'compaction': {
+        const title = this.normalizeText(msg.metadata?.subToolTitle || 'Compaction')
+        const outputText = this.normalizeText(msg.metadata?.output || msg.content || '')
+        chunks.push(`Compaction: ${title}`)
         if (outputText) {
           chunks.push('```text')
           chunks.push(outputText)

@@ -577,6 +577,44 @@ button:disabled {
   letter-spacing: 0.04em;
 }
 
+.agent-event-title.special {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  position: relative;
+  overflow: hidden;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  background: color-mix(in srgb, var(--surface) 72%, var(--surface-muted));
+  padding: 2px 8px;
+  letter-spacing: 0.06em;
+}
+
+.agent-event-title.reasoning {
+  color: color-mix(in srgb, var(--ink-soft) 88%, var(--accent-strong));
+}
+
+.agent-event-title.compaction {
+  color: color-mix(in srgb, var(--accent-strong) 82%, var(--ink-soft));
+  border-color: color-mix(in srgb, var(--accent) 38%, transparent);
+}
+
+.agent-event-title.sweeping::after {
+  content: "";
+  position: absolute;
+  inset: -2px auto -2px -36%;
+  width: 36%;
+  pointer-events: none;
+  background: linear-gradient(
+    105deg,
+    transparent 0%,
+    color-mix(in srgb, var(--accent) 68%, transparent) 45%,
+    transparent 100%
+  );
+  animation: mobile-activity-title-sweep 1.25s linear infinite;
+}
+
 .agent-event-body {
   margin: 0;
   border-radius: 4px;
@@ -596,6 +634,20 @@ button:disabled {
   max-height: 120px;
   overflow-y: auto;
   overflow-x: hidden;
+}
+
+.agent-event-body.compaction {
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  background: color-mix(in srgb, var(--tool-soft) 78%, var(--accent-soft));
+}
+
+@keyframes mobile-activity-title-sweep {
+  0% {
+    left: -36%;
+  }
+  100% {
+    left: 108%;
+  }
 }
 
 .bubble-detail-btn {

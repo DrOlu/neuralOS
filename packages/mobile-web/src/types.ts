@@ -5,6 +5,7 @@ export type MessageType =
   | 'file_edit'
   | 'sub_tool'
   | 'reasoning'
+  | 'compaction'
   | 'alert'
   | 'error'
   | 'ask'

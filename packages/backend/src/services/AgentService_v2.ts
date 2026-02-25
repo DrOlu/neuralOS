@@ -1390,6 +1390,14 @@ export class AgentService_v2 {
       return { changed: false, messages }
     }
 
+    const compactionMessageId = uuidv4()
+    this.helpers.sendEvent(sessionId, {
+      messageId: compactionMessageId,
+      type: 'sub_tool_started',
+      title: 'Compaction...',
+      level: 'info'
+    })
+
     const historyBeforeProtectedRounds = messages.slice(0, insertionIndex)
     let summaryDecision: z.infer<typeof COMPACTION_SUMMARY_SCHEMA>
     try {
@@ -1407,11 +1415,19 @@ export class AgentService_v2 {
       )
     } catch (error) {
       console.warn('[AgentService_v2] History compaction summary generation failed:', error)
+      this.helpers.sendEvent(sessionId, {
+        messageId: compactionMessageId,
+        type: 'sub_tool_finished'
+      })
       return { changed: false, messages }
     }
 
     const summaryText = String(summaryDecision.summary || '').trim()
     if (!summaryText) {
+      this.helpers.sendEvent(sessionId, {
+        messageId: compactionMessageId,
+        type: 'sub_tool_finished'
+      })
       return { changed: false, messages }
     }
 
@@ -1430,6 +1446,10 @@ export class AgentService_v2 {
     console.log(
       `[TokenManager] Compaction inserted summary at index=${insertionIndex} (sessionId=${sessionId}).`
     )
+    this.helpers.sendEvent(sessionId, {
+      messageId: compactionMessageId,
+      type: 'sub_tool_finished'
+    })
     return { changed: true, messages: compactedMessages }
   }
 

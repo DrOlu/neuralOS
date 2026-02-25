@@ -81,6 +81,7 @@ const SLASH_COMMANDS: SlashOption[] = [
 ]
 
 const RUN_SPINNER_FRAMES = ['|', '/', '-', '\\']
+const ACTIVITY_SWEEP_FRAMES = ['[=   ]', '[ =  ]', '[  = ]', '[   =]', '[  = ]', '[ =  ]']
 
 const submitKeybindings: KeyBinding[] = [
   { name: 'return', action: 'submit' },
@@ -178,8 +179,10 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
     if (!messages.length) return messages
     const lastIndex = messages.length - 1
     return messages.filter((message, index) => {
-      if (message.type !== 'reasoning') return true
-      return message.streaming === true || index === lastIndex
+      if (message.type === 'reasoning' || message.type === 'compaction') {
+        return message.streaming === true || index === lastIndex
+      }
+      return true
     })
   })
 
@@ -1166,7 +1169,8 @@ function TuiApp(props: { client: GatewayClient; data: TuiBootstrapData; onExit: 
                 <box marginTop={showHeader(renderedMessages(), index()) ? 1 : 0} flexDirection="column">
                   <Show when={showHeader(renderedMessages(), index())}>
                     <text fg={ui.muted}>
-                      {labelForMessage(message)} <span style={{ fg: ui.subtle }}>{formatClock(message.timestamp)}</span>
+                      {messageHeaderLabel(message, runSpinnerIndex())}{' '}
+                      <span style={{ fg: ui.subtle }}>{formatClock(message.timestamp)}</span>
                     </text>
                   </Show>
 
@@ -1503,8 +1507,25 @@ function labelForMessage(message: ChatMessage): string {
   if (message.type === 'tool_call') return 'TOOL'
   if (message.type === 'file_edit') return 'PATCH'
   if (message.type === 'reasoning') return 'THINK'
+  if (message.type === 'compaction') return 'COMPACT'
   if (message.type === 'sub_tool') return 'STEP'
   return 'AI'
+}
+
+function messageHeaderLabel(message: ChatMessage, frameIndex: number): string {
+  const baseLabel = labelForMessage(message)
+  if (!isActivityBannerMessage(message)) return baseLabel
+  return `${baseLabel} ${activitySweepFrame(frameIndex)}`
+}
+
+function isActivityBannerMessage(message: ChatMessage): boolean {
+  return (message.type === 'reasoning' || message.type === 'compaction') && message.streaming === true
+}
+
+function activitySweepFrame(frameIndex: number): string {
+  if (ACTIVITY_SWEEP_FRAMES.length === 0) return '[=]'
+  const normalizedIndex = ((frameIndex % ACTIVITY_SWEEP_FRAMES.length) + ACTIVITY_SWEEP_FRAMES.length) % ACTIVITY_SWEEP_FRAMES.length
+  return ACTIVITY_SWEEP_FRAMES[normalizedIndex]
 }
 
 function borderColorForMessage(message: ChatMessage): RGBA {
@@ -1515,7 +1536,7 @@ function borderColorForMessage(message: ChatMessage): RGBA {
 }
 
 function textColorForMessage(message: ChatMessage): RGBA {
-  if (message.type === 'reasoning' || message.type === 'sub_tool' || message.type === 'tool_call') return ui.muted
+  if (message.type === 'reasoning' || message.type === 'compaction' || message.type === 'sub_tool' || message.type === 'tool_call') return ui.muted
   return ui.text
 }
 
@@ -1723,6 +1744,15 @@ function messageBodyLines(message: ChatMessage): string[] {
     if (!detail) return ['[THINK] thinking...']
     const summary = detail.replace(/^\[thinking\]\s*/i, '')
     return [`[THINK] ${truncateLine(summary || 'thinking...', 180)}`]
+  }
+
+  if (message.type === 'compaction') {
+    const title = message.metadata?.subToolTitle || 'compaction'
+    const output = normalizeOutputText(message.metadata?.output ?? message.content)
+    const summary = summarizeTerminalOutput(output)
+    if (summary) return [`[COMPACT] ${truncateLine(`${title} | ${summary}`, 180)}`]
+    if (output) return [`[COMPACT] ${truncateLine(output, 180)}`]
+    return [`[COMPACT] ${title}`]
   }
 
   if (message.type === 'sub_tool') {

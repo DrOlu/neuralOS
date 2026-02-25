@@ -145,6 +145,7 @@ export interface MobileTranslations {
     fileEdited: string;
     subTool: string;
     reasoning: string;
+    compaction: string;
     alert: string;
     error: string;
     permissionRequired: string;

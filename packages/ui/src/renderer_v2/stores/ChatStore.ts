@@ -7,7 +7,18 @@ const buildAutoSessionTitle = (content: string): string => {
   return normalized || 'New Chat'
 }
 
-export type MessageType = 'text' | 'command' | 'tool_call' | 'file_edit' | 'sub_tool' | 'reasoning' | 'alert' | 'error' | 'ask' | 'tokens_count'
+export type MessageType =
+  | 'text'
+  | 'command'
+  | 'tool_call'
+  | 'file_edit'
+  | 'sub_tool'
+  | 'reasoning'
+  | 'compaction'
+  | 'alert'
+  | 'error'
+  | 'ask'
+  | 'tokens_count'
 
 export interface ChatMessage {
   id: string

@@ -235,10 +235,22 @@ interface SubToolBannerProps {
   msg: ChatMessage
   forceExpanded?: boolean
   lockExpanded?: boolean
+  variant?: 'default' | 'reasoning' | 'compaction'
+  disableExpand?: boolean
+  hideContent?: boolean
+  hideHint?: boolean
 }
 
-export const SubToolBanner = observer(({ msg, forceExpanded = false, lockExpanded = false }: SubToolBannerProps) => {
-  const [expanded, setExpanded] = React.useState(forceExpanded)
+export const SubToolBanner = observer(({
+  msg,
+  forceExpanded = false,
+  lockExpanded = false,
+  variant = 'default',
+  disableExpand = false,
+  hideContent = false,
+  hideHint = false
+}: SubToolBannerProps) => {
+  const [expanded, setExpanded] = React.useState(forceExpanded && !disableExpand)
   const fullTitle = msg.metadata?.subToolTitle || 'Sub Tool'
   const maxLen = 40
   const renderTitle = (text: string) => {
@@ -262,22 +274,27 @@ export const SubToolBanner = observer(({ msg, forceExpanded = false, lockExpande
   const title = renderTitle(fullTitle)
   const hint = msg.metadata?.subToolHint
   const level = msg.metadata?.subToolLevel || 'info'
+  const shouldSweepTitle = (variant === 'reasoning' || variant === 'compaction') && !!msg.streaming
   const { ref, isSelected, setSelected } = useBannerSelection<HTMLDivElement>()
 
   React.useEffect(() => {
+    if (disableExpand) {
+      setExpanded(false)
+      return
+    }
     if (forceExpanded) setExpanded(true)
-  }, [forceExpanded])
+  }, [disableExpand, forceExpanded])
 
   const handleHeaderClick = () => {
     setSelected(true)
-    if (lockExpanded) return
+    if (lockExpanded || disableExpand) return
     setExpanded(!expanded)
   }
 
   return (
     <div
       ref={ref}
-      className={`message-banner subtool ${level === 'warning' ? 'warning' : 'info'} ${level === 'error' ? 'error' : ''} ${isSelected ? 'is-scroll-active' : ''}`}
+      className={`message-banner subtool ${level === 'warning' ? 'warning' : 'info'} ${level === 'error' ? 'error' : ''} ${variant === 'reasoning' ? 'reasoning' : ''} ${variant === 'compaction' ? 'compaction' : ''} ${shouldSweepTitle ? 'title-sweep' : ''} ${isSelected ? 'is-scroll-active' : ''}`}
       onClick={() => setSelected(true)}
       title={fullTitle.length > 30 ? fullTitle : undefined}
     >
@@ -286,14 +303,18 @@ export const SubToolBanner = observer(({ msg, forceExpanded = false, lockExpande
         onClick={handleHeaderClick}
       >
         <div className="banner-title subtool-title">
-          <span className="banner-type">{title}</span>
-          {hint ? <span className="subtool-hint">{hint}</span> : null}
+          <span className="banner-type" data-sweep-text={shouldSweepTitle ? title : undefined}>
+            {title}
+          </span>
+          {!hideHint && hint ? <span className="subtool-hint">{hint}</span> : null}
         </div>
-        <div className="banner-chevron">
-          {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-        </div>
+        {!disableExpand ? (
+          <div className="banner-chevron">
+            {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          </div>
+        ) : null}
       </div>
-      {expanded && (
+      {!hideContent && expanded && (
         <div className="banner-content subtool-content">
           <pre className="cmd-output">{msg.metadata?.output || ''}</pre>
         </div>
@@ -304,7 +325,20 @@ export const SubToolBanner = observer(({ msg, forceExpanded = false, lockExpande
 
 export const ReasoningBanner = observer(({ msg }: { msg: ChatMessage }) => {
   const isStreaming = !!msg.streaming
-  return <SubToolBanner msg={msg} forceExpanded={isStreaming} lockExpanded={isStreaming} />
+  return <SubToolBanner msg={msg} forceExpanded={isStreaming} lockExpanded={isStreaming} variant="reasoning" />
+})
+
+export const CompactionBanner = observer(({ msg }: { msg: ChatMessage }) => {
+  return (
+    <SubToolBanner
+      msg={msg}
+      variant="compaction"
+      disableExpand
+      hideContent
+      hideHint
+      lockExpanded
+    />
+  )
 })
 
 export const AskBanner = observer(

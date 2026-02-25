@@ -6,7 +6,7 @@ import remarkGfm from 'remark-gfm'
 import type { AppStore } from '../../stores/AppStore'
 import type { ChatMessage } from '../../stores/ChatStore'
 import { renderMentionContent } from '../../lib/MentionParser'
-import { CommandBanner, ToolCallBanner, FileEditBanner, SubToolBanner, ReasoningBanner, AskBanner, AlertBanner } from './ChatBanner'
+import { CommandBanner, ToolCallBanner, FileEditBanner, SubToolBanner, ReasoningBanner, CompactionBanner, AskBanner, AlertBanner } from './ChatBanner'
 
 interface MessageRowProps {
   store: AppStore
@@ -25,6 +25,7 @@ const SPECIAL_ASSISTANT_TYPES: ReadonlySet<ChatMessage['type']> = new Set([
   'file_edit',
   'sub_tool',
   'reasoning',
+  'compaction',
   'ask',
   'alert',
   'error'
@@ -68,7 +69,7 @@ const getRowDisplayKind = (session: MessageSessionShape, messageId: string): Row
   const isLastInSession = session.messageIds[session.messageIds.length - 1] === messageId
   const isRetryHint = candidate.type === 'alert' && candidate.metadata?.subToolLevel === 'info'
   if (isRetryHint && !isLastInSession) return 'hidden'
-  if (candidate.type === 'reasoning' && !isLastInSession) return 'hidden'
+  if ((candidate.type === 'reasoning' || candidate.type === 'compaction') && !isLastInSession) return 'hidden'
   if (SPECIAL_ASSISTANT_TYPES.has(candidate.type)) return 'assistant'
   return candidate.role === 'assistant' ? 'assistant' : 'hidden'
 }
@@ -187,7 +188,7 @@ export const MessageRow: React.FC<MessageRowProps> = observer(({
   if (isRetryHint && !isLastMessage) {
     return null
   }
-  if (msg.type === 'reasoning' && !isLastMessage) {
+  if ((msg.type === 'reasoning' || msg.type === 'compaction') && !isLastMessage) {
     return null
   }
 
@@ -253,6 +254,9 @@ export const MessageRow: React.FC<MessageRowProps> = observer(({
   }
   if (msg.type === 'reasoning') {
     return renderAssistantRow(<ReasoningBanner msg={msg} />)
+  }
+  if (msg.type === 'compaction') {
+    return renderAssistantRow(<CompactionBanner msg={msg} />)
   }
   if (msg.type === 'ask') {
     return renderAssistantRow(

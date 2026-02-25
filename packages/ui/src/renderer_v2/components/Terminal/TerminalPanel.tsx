@@ -12,6 +12,9 @@ export const TerminalPanel: React.FC<{ store: AppStore }> = observer(({ store })
   const rootRef = React.useRef<HTMLDivElement | null>(null)
   const menuRef = React.useRef<HTMLDivElement | null>(null)
   const t = store.i18n.t
+  const layoutSignature = `${store.layout.panelOrder.join(',')}|${store.layout.panelSizes
+    .map((size) => size.toFixed(3))
+    .join(',')}`
 
   // Dismiss menu on outside click / Escape
   React.useEffect(() => {
@@ -162,6 +165,7 @@ export const TerminalPanel: React.FC<{ store: AppStore }> = observer(({ store })
                     theme={store.xtermTheme}
                     terminalSettings={store.settings?.terminal}
                     isActive={isActive}
+                    layoutSignature={layoutSignature}
                     onSelectionChange={(text) => store.setTerminalSelection(tab.id, text)}
                   />
                 </div>
@@ -175,5 +179,3 @@ export const TerminalPanel: React.FC<{ store: AppStore }> = observer(({ store })
     </div>
   )
 })
-
-

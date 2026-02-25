@@ -138,7 +138,7 @@ export function compactMessageSummary(message: ChatMessage, showDetails: boolean
     return `${action} ${file}${stats}`
   }
 
-  if (message.type === 'sub_tool' || message.type === 'reasoning') {
+  if (message.type === 'sub_tool' || message.type === 'reasoning' || message.type === 'compaction') {
     const title = message.metadata?.subToolTitle ?? 'sub tool'
     const hint = message.metadata?.subToolHint ? ` (${message.metadata.subToolHint})` : ''
     return `${title}${hint}`

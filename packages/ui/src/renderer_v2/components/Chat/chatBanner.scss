@@ -289,6 +289,37 @@
   opacity: 0.75;
 }
 
+.message-banner.subtool.title-sweep .banner-type {
+  position: relative;
+  display: inline-block;
+  --subtool-sweep-width: 30%;
+  /*
+   * Keep the same hue, but make the base text lighter.
+   * The sweep layer uses the same hue with higher alpha.
+   */
+  opacity: 1;
+  color: color-mix(in srgb, var(--fg) 58%, transparent);
+}
+
+.message-banner.subtool.title-sweep .banner-type::after {
+  content: attr(data-sweep-text);
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  color: color-mix(in srgb, var(--fg) 92%, transparent);
+  opacity: 1;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 22%, #000 78%, transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0%, #000 22%, #000 78%, transparent 100%);
+  -webkit-mask-size: var(--subtool-sweep-width) 100%;
+  mask-size: var(--subtool-sweep-width) 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: -29% 0;
+  mask-position: -29% 0;
+  will-change: -webkit-mask-position, mask-position;
+  animation: subtool-title-sweep 2s linear infinite;
+}
+
 .subtool-hint {
   font-size: 12px;
   color: var(--fg);
@@ -329,6 +360,38 @@
 
 .message-banner.subtool .banner-header:hover {
   background: transparent;
+}
+
+@keyframes subtool-title-sweep {
+  0% {
+    /* 1% visible at the left edge */
+    -webkit-mask-position: -29% 0;
+    mask-position: -29% 0;
+  }
+  15% {
+    /* fully entered: occupies 30% from the left */
+    -webkit-mask-position: 0% 0;
+    mask-position: 0% 0;
+  }
+  60% {
+    /* fully inside near the right side: still 30% width */
+    -webkit-mask-position: 70% 0;
+    mask-position: 70% 0;
+  }
+  73% {
+    /* 1% remains on the right edge */
+    -webkit-mask-position: 99% 0;
+    mask-position: 99% 0;
+  }
+  75% {
+    /* fully out to the right, sweep finished */
+    -webkit-mask-position: 100% 0;
+    mask-position: 100% 0;
+  }
+  100% {
+    -webkit-mask-position: 100% 0;
+    mask-position: 100% 0;
+  }
 }
 
 .banner-header {

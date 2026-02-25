@@ -335,7 +335,7 @@ function handleHeadlessUiUpdate(
     outputCache.set(update.messageId, nextOutput)
 
     const type = messageTypes.get(update.messageId)
-    if (type !== 'command' && type !== 'sub_tool' && type !== 'reasoning') return
+    if (type !== 'command' && type !== 'sub_tool' && type !== 'reasoning' && type !== 'compaction') return
     if (!nextOutput) return
 
     const delta = nextOutput.startsWith(previous) ? nextOutput.slice(previous.length) : nextOutput

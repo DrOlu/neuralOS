@@ -33,7 +33,8 @@ export const DetailMessageCard: React.FC<DetailMessageCardProps> = ({
     message.type === "tool_call" ||
     message.type === "file_edit" ||
     message.type === "sub_tool" ||
-    message.type === "reasoning";
+    message.type === "reasoning" ||
+    message.type === "compaction";
 
   if (message.type === "text") {
     const displayText = trimOuterBlankLines(

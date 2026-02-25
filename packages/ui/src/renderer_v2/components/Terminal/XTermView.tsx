@@ -22,6 +22,7 @@ export function XTermView(props: {
     rightClickToPaste?: boolean
   }
   isActive?: boolean
+  layoutSignature?: string
   onSelectionChange?: (selectionText: string) => void
 }): React.ReactElement {
   const hostRef = useRef<HTMLDivElement>(null)
@@ -32,6 +33,23 @@ export function XTermView(props: {
   const onSelectionChangeRef = useRef<typeof props.onSelectionChange>(props.onSelectionChange)
   const settingsRef = useRef(props.terminalSettings)
   const scrollHideTimerRef = useRef<number | null>(null)
+  const isActiveRef = useRef(props.isActive ?? false)
+
+  const refitTerminal = React.useCallback(() => {
+    const host = hostRef.current
+    const fitAddon = fitRef.current
+    if (!host || !fitAddon) return
+    if (host.clientWidth <= 0 || host.clientHeight <= 0) return
+    try {
+      fitAddon.fit()
+      const next = fitAddon.proposeDimensions()
+      if (next) {
+        window.gyshell.terminal.resize(props.config.id, next.cols, next.rows)
+      }
+    } catch {
+      // ignore transient DOM/layout issues
+    }
+  }, [props.config.id])
 
   useEffect(() => {
     onSelectionChangeRef.current = props.onSelectionChange
@@ -40,6 +58,10 @@ export function XTermView(props: {
   useEffect(() => {
     settingsRef.current = props.terminalSettings
   }, [props.terminalSettings])
+
+  useEffect(() => {
+    isActiveRef.current = props.isActive ?? false
+  }, [props.isActive])
 
   // Create/dispose xterm instance
   useEffect(() => {
@@ -66,8 +88,13 @@ export function XTermView(props: {
     })
     term.loadAddon(webLinks)
 
-    term.open(hostRef.current)
-    fit.fit()
+    const hostEl = hostRef.current
+    term.open(hostEl)
+    try {
+      fit.fit()
+    } catch {
+      // ignore transient DOM/layout issues
+    }
 
     termRef.current = term
     fitRef.current = fit
@@ -88,18 +115,19 @@ export function XTermView(props: {
     })
 
     const handleResize = () => {
-      try {
-        fit.fit()
-        const next = fit.proposeDimensions()
-        if (next) {
-          window.gyshell.terminal.resize(props.config.id, next.cols, next.rows)
-        }
-      } catch {
-        // ignore transient DOM/layout issues
-      }
+      if (!isActiveRef.current) return
+      refitTerminal()
     }
 
     window.addEventListener('resize', handleResize)
+    const resizeObserver =
+      typeof ResizeObserver !== 'undefined'
+        ? new ResizeObserver(() => {
+            if (!isActiveRef.current) return
+            refitTerminal()
+          })
+        : null
+    resizeObserver?.observe(hostEl)
 
     // Input: xterm -> backend
     const inputDisposable = term.onData((data) => {
@@ -207,10 +235,10 @@ export function XTermView(props: {
       }
     }
 
-    hostRef.current.addEventListener('paste', handlePaste)
-    hostRef.current.addEventListener('dragover', handleDragOver)
-    hostRef.current.addEventListener('drop', handleDrop)
-    hostRef.current.addEventListener('contextmenu', handleContextMenu)
+    hostEl.addEventListener('paste', handlePaste)
+    hostEl.addEventListener('dragover', handleDragOver)
+    hostEl.addEventListener('drop', handleDrop)
+    hostEl.addEventListener('contextmenu', handleContextMenu)
     const removeContextMenuListener = window.gyshell.ui.onContextMenuAction(onContextMenuAction)
 
     // Output: backend -> xterm
@@ -231,17 +259,18 @@ export function XTermView(props: {
         window.clearTimeout(scrollHideTimerRef.current)
         scrollHideTimerRef.current = null
       }
-      hostRef.current?.removeEventListener('paste', handlePaste)
-      hostRef.current?.removeEventListener('dragover', handleDragOver)
-      hostRef.current?.removeEventListener('drop', handleDrop)
-      hostRef.current?.removeEventListener('contextmenu', handleContextMenu)
+      hostEl.removeEventListener('paste', handlePaste)
+      hostEl.removeEventListener('dragover', handleDragOver)
+      hostEl.removeEventListener('drop', handleDrop)
+      hostEl.removeEventListener('contextmenu', handleContextMenu)
       removeContextMenuListener()
       window.removeEventListener('resize', handleResize)
+      resizeObserver?.disconnect()
       term.dispose()
       termRef.current = null
       fitRef.current = null
     }
-  }, [props.config.id])
+  }, [props.config.id, refitTerminal])
 
   // Live-update theme (Tabby-style behavior)
   useEffect(() => {
@@ -261,15 +290,8 @@ export function XTermView(props: {
 
     // Refit after changes
     requestAnimationFrame(() => {
-      try {
-        fitRef.current?.fit()
-        const next = fitRef.current?.proposeDimensions()
-        if (next) {
-          window.gyshell.terminal.resize(props.config.id, next.cols, next.rows)
-        }
-      } catch {
-        // ignore
-      }
+      if (!props.isActive) return
+      refitTerminal()
     })
   }, [
     props.terminalSettings?.fontSize,
@@ -277,7 +299,9 @@ export function XTermView(props: {
     props.terminalSettings?.scrollback,
     props.terminalSettings?.cursorStyle,
     props.terminalSettings?.cursorBlink,
-    props.config.id
+    props.config.id,
+    props.isActive,
+    refitTerminal
   ])
 
   // Re-fit when the tab becomes active (Tabby-like behavior)
@@ -285,19 +309,10 @@ export function XTermView(props: {
     if (!props.isActive) return
     if (!fitRef.current || !termRef.current) return
     requestAnimationFrame(() => {
-      try {
-        fitRef.current?.fit()
-        const next = fitRef.current?.proposeDimensions()
-        if (next) {
-          window.gyshell.terminal.resize(props.config.id, next.cols, next.rows)
-        }
-      } catch {
-        // ignore
-      }
+      refitTerminal()
     })
-  }, [props.isActive, props.config.id])
+  }, [props.isActive, props.layoutSignature, props.config.id, refitTerminal])
 
   return <div className="xterm-host" ref={hostRef} />
 }
-
 
