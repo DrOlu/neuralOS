@@ -100,7 +100,7 @@ export const ComposerBar: React.FC<ComposerBarProps> = ({
             aria-label={t.composer.clearImages}
             title={t.composer.clearImages}
           >
-            <span>ALL</span>
+            <X size={22} strokeWidth={2.5} />
           </button>
           {images.map((image) => (
             <div key={image.id} className="composer-image-chip">
@@ -111,7 +111,7 @@ export const ComposerBar: React.FC<ComposerBarProps> = ({
                 aria-label={t.composer.removeImage}
                 title={t.composer.removeImage}
               >
-                <X size={10} />
+                <X size={13} strokeWidth={2.6} />
               </button>
               {image.previewUrl ? (
                 <img src={image.previewUrl} alt={image.fileName || image.attachmentId || "image"} />

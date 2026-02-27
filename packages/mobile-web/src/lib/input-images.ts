@@ -31,41 +31,22 @@ export function isSupportedImageFile(file: Pick<File, "type" | "name">): boolean
   return SUPPORTED_IMAGE_EXTENSIONS.some((ext) => name.endsWith(ext));
 }
 
-function buildClipboardImageKey(file: File): string {
-  const name = String(file.name || "").toLowerCase();
-  const type = String(file.type || "").toLowerCase();
-  const size = Number.isFinite(file.size) ? String(file.size) : "";
-  const lastModified = Number.isFinite(file.lastModified)
-    ? String(file.lastModified)
-    : "";
-  return `${name}|${type}|${size}|${lastModified}`;
-}
-
 export function extractClipboardImageFiles(
   clipboard: ClipboardDataLike | null | undefined,
 ): File[] {
   if (!clipboard) return [];
-  const out: File[] = [];
-  const seenKeys = new Set<string>();
+  const fromItems = toArray(clipboard.items)
+    .map((item) => {
+      if (!item || item.kind !== "file" || typeof item.getAsFile !== "function") return null;
+      return item.getAsFile();
+    })
+    .filter((file): file is File => !!file && isSupportedImageFile(file));
 
-  const pushIfImage = (file: File | null | undefined) => {
-    if (!file || !isSupportedImageFile(file)) return;
-    const key = buildClipboardImageKey(file);
-    if (seenKeys.has(key)) return;
-    seenKeys.add(key);
-    out.push(file);
-  };
+  if (fromItems.length > 0) {
+    return fromItems;
+  }
 
-  toArray(clipboard.items).forEach((item) => {
-    if (!item || item.kind !== "file" || typeof item.getAsFile !== "function") return;
-    pushIfImage(item.getAsFile());
-  });
-
-  toArray(clipboard.files).forEach((file) => {
-    pushIfImage(file);
-  });
-
-  return out;
+  return toArray(clipboard.files).filter((file) => !!file && isSupportedImageFile(file));
 }
 
 export function readFileAsDataUrl(file: Blob): Promise<string> {

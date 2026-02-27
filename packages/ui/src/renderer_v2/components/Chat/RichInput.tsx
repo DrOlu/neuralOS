@@ -1,6 +1,7 @@
 import React, { useRef, useState, useCallback, useImperativeHandle, forwardRef } from 'react';
 import { createPortal } from 'react-dom';
 import { observer } from 'mobx-react-lite';
+import { X } from 'lucide-react';
 import { AppStore } from '../../stores/AppStore';
 import {
   createImagePreviewDataUrl,
@@ -682,7 +683,7 @@ export const RichInput = observer(forwardRef<RichInputHandle, RichInputProps>(({
             aria-label="Remove all images"
             title="Remove all images"
           >
-            <span>ALL</span>
+            <X size={18} strokeWidth={2.5} />
           </button>
           {imageAttachments.map((image) => (
             <div key={image.id} className="rich-input-image-chip">
@@ -695,7 +696,7 @@ export const RichInput = observer(forwardRef<RichInputHandle, RichInputProps>(({
                 aria-label="Remove image"
                 title="Remove image"
               >
-                ×
+                <X size={13} strokeWidth={2.7} />
               </button>
               {image.previewUrl ? (
                 <img src={image.previewUrl} alt="Attached image" />
