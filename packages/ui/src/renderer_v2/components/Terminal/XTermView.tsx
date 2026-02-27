@@ -8,114 +8,356 @@ import './xtermView.scss'
 import type { TerminalConfig } from '../../lib/ipcTypes'
 
 const SCROLLBAR_HIDE_DELAY = 2000 // ms
+const RUNTIME_RELEASE_DELAY = 4000 // ms
+
+type TerminalSettings = {
+  fontSize?: number
+  lineHeight?: number
+  scrollback?: number
+  cursorStyle?: 'block' | 'underline' | 'bar'
+  cursorBlink?: boolean
+  copyOnSelect?: boolean
+  rightClickToPaste?: boolean
+}
+
+interface TerminalRuntime {
+  terminalId: string
+  term: Terminal
+  fit: FitAddon
+  mountEl: HTMLDivElement
+  contextMenuId: string
+  selectionHandler?: (selectionText: string) => void
+  settings?: TerminalSettings
+  isActive: boolean
+  hostEl: HTMLDivElement | null
+  refCount: number
+  releaseTimer: number | null
+  scrollHideTimer: number | null
+  cleanupBackendData: () => void
+  cleanupContextMenuListener: () => void
+  inputDispose: () => void
+  selectionDispose: () => void
+  scrollDispose: () => void
+  removeDomListeners: () => void
+}
+
+const runtimePool = new Map<string, TerminalRuntime>()
+
+const toPlainConfig = (config: TerminalConfig): TerminalConfig =>
+  JSON.parse(JSON.stringify(config)) as TerminalConfig
+
+const clearTimer = (timerId: number | null): void => {
+  if (timerId !== null) {
+    window.clearTimeout(timerId)
+  }
+}
+
+const refitRuntime = (runtime: TerminalRuntime): void => {
+  const host = runtime.hostEl
+  if (!host) return
+  if (host.clientWidth <= 0 || host.clientHeight <= 0) return
+  try {
+    runtime.fit.fit()
+    const next = runtime.fit.proposeDimensions()
+    if (next) {
+      window.gyshell.terminal.resize(runtime.terminalId, next.cols, next.rows)
+    }
+  } catch {
+    // ignore transient DOM/layout issues
+  }
+}
+
+const attachRuntimeToHost = (runtime: TerminalRuntime, hostEl: HTMLDivElement): void => {
+  if (runtime.hostEl === hostEl && runtime.mountEl.parentElement === hostEl) return
+  if (runtime.mountEl.parentElement && runtime.mountEl.parentElement !== hostEl) {
+    runtime.mountEl.parentElement.removeChild(runtime.mountEl)
+  }
+  hostEl.replaceChildren(runtime.mountEl)
+  runtime.hostEl = hostEl
+}
+
+const disposeRuntime = (runtime: TerminalRuntime): void => {
+  clearTimer(runtime.releaseTimer)
+  clearTimer(runtime.scrollHideTimer)
+  runtime.releaseTimer = null
+  runtime.scrollHideTimer = null
+  runtime.cleanupBackendData()
+  runtime.cleanupContextMenuListener()
+  runtime.inputDispose()
+  runtime.selectionDispose()
+  runtime.scrollDispose()
+  runtime.removeDomListeners()
+  runtime.hostEl = null
+  runtime.term.dispose()
+}
+
+const createRuntime = (
+  config: TerminalConfig,
+  theme: ITheme,
+  settings: TerminalSettings | undefined
+): TerminalRuntime => {
+  const term = new Terminal({
+    allowTransparency: true,
+    cursorBlink: settings?.cursorBlink ?? true,
+    cursorStyle: settings?.cursorStyle ?? 'block',
+    fontSize: settings?.fontSize ?? 14,
+    lineHeight: Math.max(1, settings?.lineHeight ?? 1.2),
+    scrollback: settings?.scrollback ?? 5000,
+    theme,
+    allowProposedApi: true
+  })
+
+  const fit = new FitAddon()
+  term.loadAddon(fit)
+
+  const webLinks = new WebLinksAddon((_event, url) => {
+    window.gyshell.system.openExternal(url).catch(() => {
+      // ignore
+    })
+  })
+  term.loadAddon(webLinks)
+
+  const mountEl = document.createElement('div')
+  mountEl.style.width = '100%'
+  mountEl.style.height = '100%'
+  mountEl.style.position = 'relative'
+
+  term.open(mountEl)
+  try {
+    fit.fit()
+  } catch {
+    // ignore transient DOM/layout issues
+  }
+
+  const plainConfig = toPlainConfig(config)
+  const dims = fit.proposeDimensions()
+  const cols = dims?.cols ?? term.cols ?? 80
+  const rows = dims?.rows ?? term.rows ?? 24
+  window.gyshell.terminal.createTab({ ...plainConfig, cols, rows }).catch(() => {
+    // ignore: backend is idempotent and may fail during hot reload; user will see logs in devtools
+  })
+  window.gyshell.terminal.resize(config.id, cols, rows).catch(() => {
+    // ignore
+  })
+
+  const runtime: TerminalRuntime = {
+    terminalId: config.id,
+    term,
+    fit,
+    mountEl,
+    contextMenuId: `terminal-${config.id}`,
+    selectionHandler: undefined,
+    settings,
+    isActive: false,
+    hostEl: null,
+    refCount: 0,
+    releaseTimer: null,
+    scrollHideTimer: null,
+    cleanupBackendData: () => {},
+    cleanupContextMenuListener: () => {},
+    inputDispose: () => {},
+    selectionDispose: () => {},
+    scrollDispose: () => {},
+    removeDomListeners: () => {}
+  }
+
+  const showScrollbar = () => {
+    runtime.hostEl?.classList.add('is-scrollbar-visible')
+    clearTimer(runtime.scrollHideTimer)
+    runtime.scrollHideTimer = window.setTimeout(() => {
+      runtime.hostEl?.classList.remove('is-scrollbar-visible')
+      runtime.scrollHideTimer = null
+    }, SCROLLBAR_HIDE_DELAY)
+  }
+
+  const inputDisposable = term.onData((data) => {
+    window.gyshell.terminal.write(config.id, data)
+  })
+
+  const selectionDisposable = term.onSelectionChange(() => {
+    const selectionText = term.getSelection()
+    runtime.selectionHandler?.(selectionText)
+    if (selectionText && runtime.settings?.copyOnSelect) {
+      navigator.clipboard.writeText(selectionText).catch(() => {
+        // ignore
+      })
+    }
+  })
+
+  const scrollDisposable = term.onScroll(() => {
+    showScrollbar()
+  })
+
+  const handlePaste = (event: ClipboardEvent) => {
+    const selectionText = term.getSelection()
+    if (selectionText) {
+      event.preventDefault()
+      navigator.clipboard
+        .writeText(selectionText)
+        .then(() => {
+          term.paste(selectionText)
+        })
+        .catch(() => {
+          term.paste(selectionText)
+        })
+    }
+  }
+
+  const handleDragOver = (event: DragEvent) => {
+    event.preventDefault()
+  }
+
+  const handleDrop = (event: DragEvent) => {
+    event.preventDefault()
+    const files = Array.from(event.dataTransfer?.files || [])
+    if (!files.length) return
+    const paths = files.map((file) => file.path).filter(Boolean)
+    if (!paths.length) return
+    window.gyshell.terminal.writePaths(config.id, paths).catch(() => {
+      // ignore
+    })
+  }
+
+  const handleContextMenu = (event: MouseEvent) => {
+    if (runtime.settings?.rightClickToPaste) {
+      event.preventDefault()
+      navigator.clipboard.readText().then((text) => {
+        if (text) term.paste(text)
+      }).catch(() => {
+        // ignore
+      })
+      return
+    }
+    event.preventDefault()
+    const selectionText = term.getSelection()
+    window.gyshell.ui.showContextMenu({
+      id: runtime.contextMenuId,
+      canCopy: selectionText.trim().length > 0,
+      canPaste: true
+    })
+  }
+
+  const onContextMenuAction = (data: { id: string; action: 'copy' | 'paste' }) => {
+    if (data.id !== runtime.contextMenuId) return
+    if (data.action === 'copy') {
+      const selectionText = term.getSelection()
+      if (selectionText) {
+        navigator.clipboard.writeText(selectionText).catch(() => {
+          // ignore
+        })
+      }
+      return
+    }
+    if (data.action === 'paste') {
+      const selectionText = term.getSelection()
+      if (selectionText) {
+        navigator.clipboard
+          .writeText(selectionText)
+          .then(() => {
+            term.paste(selectionText)
+          })
+          .catch(() => {
+            term.paste(selectionText)
+          })
+        return
+      }
+      navigator.clipboard.readText().then((text) => {
+        if (text) term.paste(text)
+      }).catch(() => {
+        // ignore
+      })
+    }
+  }
+
+  mountEl.addEventListener('paste', handlePaste)
+  mountEl.addEventListener('dragover', handleDragOver)
+  mountEl.addEventListener('drop', handleDrop)
+  mountEl.addEventListener('contextmenu', handleContextMenu)
+  const removeContextMenuListener = window.gyshell.ui.onContextMenuAction(onContextMenuAction)
+
+  const cleanup = window.gyshell.terminal.onData(({ terminalId, data }) => {
+    if (terminalId === config.id) {
+      term.write(data)
+    }
+  })
+
+  runtime.cleanupBackendData = cleanup
+  runtime.cleanupContextMenuListener = removeContextMenuListener
+  runtime.inputDispose = () => inputDisposable.dispose()
+  runtime.selectionDispose = () => selectionDisposable.dispose()
+  runtime.scrollDispose = () => scrollDisposable.dispose()
+  runtime.removeDomListeners = () => {
+    mountEl.removeEventListener('paste', handlePaste)
+    mountEl.removeEventListener('dragover', handleDragOver)
+    mountEl.removeEventListener('drop', handleDrop)
+    mountEl.removeEventListener('contextmenu', handleContextMenu)
+  }
+
+  return runtime
+}
+
+const acquireRuntime = (
+  config: TerminalConfig,
+  theme: ITheme,
+  settings: TerminalSettings | undefined
+): TerminalRuntime => {
+  let runtime = runtimePool.get(config.id)
+  if (!runtime) {
+    runtime = createRuntime(config, theme, settings)
+    runtimePool.set(config.id, runtime)
+  }
+  runtime.refCount += 1
+  clearTimer(runtime.releaseTimer)
+  runtime.releaseTimer = null
+  return runtime
+}
+
+const releaseRuntime = (terminalId: string): void => {
+  const runtime = runtimePool.get(terminalId)
+  if (!runtime) return
+  runtime.refCount = Math.max(0, runtime.refCount - 1)
+  if (runtime.refCount > 0) return
+
+  clearTimer(runtime.releaseTimer)
+  runtime.releaseTimer = window.setTimeout(() => {
+    const pending = runtimePool.get(terminalId)
+    if (!pending || pending.refCount > 0) return
+    disposeRuntime(pending)
+    runtimePool.delete(terminalId)
+  }, RUNTIME_RELEASE_DELAY)
+}
 
 export function XTermView(props: {
   config: TerminalConfig
   theme: ITheme
-  terminalSettings?: {
-    fontSize?: number
-    lineHeight?: number
-    scrollback?: number
-    cursorStyle?: 'block' | 'underline' | 'bar'
-    cursorBlink?: boolean
-    copyOnSelect?: boolean
-    rightClickToPaste?: boolean
-  }
+  terminalSettings?: TerminalSettings
   isActive?: boolean
   layoutSignature?: string
   onSelectionChange?: (selectionText: string) => void
 }): React.ReactElement {
   const hostRef = useRef<HTMLDivElement>(null)
-  const termRef = useRef<Terminal | null>(null)
-  const fitRef = useRef<FitAddon | null>(null)
-  const cleanupRef = useRef<(() => void) | null>(null)
-  const contextMenuIdRef = useRef<string>(`terminal-${props.config.id}`)
-  const onSelectionChangeRef = useRef<typeof props.onSelectionChange>(props.onSelectionChange)
-  const settingsRef = useRef(props.terminalSettings)
-  const scrollHideTimerRef = useRef<number | null>(null)
-  const isActiveRef = useRef(props.isActive ?? false)
+  const runtimeRef = useRef<TerminalRuntime | null>(null)
 
   const refitTerminal = React.useCallback(() => {
-    const host = hostRef.current
-    const fitAddon = fitRef.current
-    if (!host || !fitAddon) return
-    if (host.clientWidth <= 0 || host.clientHeight <= 0) return
-    try {
-      fitAddon.fit()
-      const next = fitAddon.proposeDimensions()
-      if (next) {
-        window.gyshell.terminal.resize(props.config.id, next.cols, next.rows)
-      }
-    } catch {
-      // ignore transient DOM/layout issues
-    }
-  }, [props.config.id])
+    const runtime = runtimeRef.current
+    if (!runtime) return
+    refitRuntime(runtime)
+  }, [])
 
   useEffect(() => {
-    onSelectionChangeRef.current = props.onSelectionChange
-  }, [props.onSelectionChange])
-
-  useEffect(() => {
-    settingsRef.current = props.terminalSettings
-  }, [props.terminalSettings])
-
-  useEffect(() => {
-    isActiveRef.current = props.isActive ?? false
-  }, [props.isActive])
-
-  // Create/dispose xterm instance
-  useEffect(() => {
-    if (!hostRef.current) return
-
-    const term = new Terminal({
-      allowTransparency: true,
-      cursorBlink: props.terminalSettings?.cursorBlink ?? true,
-      cursorStyle: props.terminalSettings?.cursorStyle ?? 'block',
-      fontSize: props.terminalSettings?.fontSize ?? 14,
-      lineHeight: Math.max(1, props.terminalSettings?.lineHeight ?? 1.2),
-      scrollback: props.terminalSettings?.scrollback ?? 5000,
-      theme: props.theme,
-      allowProposedApi: true
-    })
-
-    const fit = new FitAddon()
-    term.loadAddon(fit)
-
-    const webLinks = new WebLinksAddon((_event, url) => {
-      window.gyshell.system.openExternal(url).catch(() => {
-        // ignore
-      })
-    })
-    term.loadAddon(webLinks)
-
     const hostEl = hostRef.current
-    term.open(hostEl)
-    try {
-      fit.fit()
-    } catch {
-      // ignore transient DOM/layout issues
-    }
+    if (!hostEl) return
 
-    termRef.current = term
-    fitRef.current = fit
-
-    // Ensure backend tab exists (idempotent in main process)
-    const dims = fit.proposeDimensions()
-    const cols = dims?.cols ?? term.cols ?? 80
-    const rows = dims?.rows ?? term.rows ?? 24
-    
-    // Convert to plain object to avoid "could not be cloned" error with MobX proxies
-    const plainConfig = JSON.parse(JSON.stringify(props.config))
-    
-    window.gyshell.terminal.createTab({ ...plainConfig, cols, rows }).catch(() => {
-      // ignore: backend is idempotent and may fail during hot reload; user will see logs in devtools
-    })
-    window.gyshell.terminal.resize(props.config.id, cols, rows).catch(() => {
-      // ignore
-    })
+    const runtime = acquireRuntime(props.config, props.theme, props.terminalSettings)
+    runtime.selectionHandler = props.onSelectionChange
+    runtime.settings = props.terminalSettings
+    runtime.isActive = props.isActive ?? false
+    runtimeRef.current = runtime
+    attachRuntimeToHost(runtime, hostEl)
 
     const handleResize = () => {
-      if (!isActiveRef.current) return
+      const activeRuntime = runtimeRef.current
+      if (!activeRuntime?.isActive) return
       refitTerminal()
     }
 
@@ -123,165 +365,56 @@ export function XTermView(props: {
     const resizeObserver =
       typeof ResizeObserver !== 'undefined'
         ? new ResizeObserver(() => {
-            if (!isActiveRef.current) return
+            const activeRuntime = runtimeRef.current
+            if (!activeRuntime?.isActive) return
             refitTerminal()
           })
         : null
     resizeObserver?.observe(hostEl)
 
-    // Input: xterm -> backend
-    const inputDisposable = term.onData((data) => {
-      window.gyshell.terminal.write(props.config.id, data)
-    })
-
-    const selectionDisposable = term.onSelectionChange(() => {
-      const selectionText = term.getSelection()
-      onSelectionChangeRef.current?.(selectionText)
-      // Auto-copy to clipboard if enabled and selection is non-empty
-      if (selectionText && settingsRef.current?.copyOnSelect) {
-        navigator.clipboard.writeText(selectionText).catch(() => {
-          // ignore
-        })
-      }
-    })
-
-    const showScrollbar = () => {
-      if (!hostRef.current) return
-      hostRef.current.classList.add('is-scrollbar-visible')
-      if (scrollHideTimerRef.current) {
-        window.clearTimeout(scrollHideTimerRef.current)
-      }
-      scrollHideTimerRef.current = window.setTimeout(() => {
-        hostRef.current?.classList.remove('is-scrollbar-visible')
-      }, SCROLLBAR_HIDE_DELAY)
-    }
-
-    const scrollDisposable = term.onScroll(() => {
-      showScrollbar()
-    })
-
-    const handlePaste = (event: ClipboardEvent) => {
-      const selectionText = term.getSelection()
-      if (selectionText) {
-        event.preventDefault()
-        navigator.clipboard.writeText(selectionText).then(() => {
-          term.paste(selectionText)
-        }).catch(() => {
-          term.paste(selectionText)
-        })
-      }
-    }
-
-    const handleDragOver = (event: DragEvent) => {
-      event.preventDefault()
-    }
-
-    const handleDrop = (event: DragEvent) => {
-      event.preventDefault()
-      const files = Array.from(event.dataTransfer?.files || [])
-      if (!files.length) return
-      const paths = files.map((f) => f.path).filter(Boolean)
-      if (!paths.length) return
-      window.gyshell.terminal.writePaths(props.config.id, paths).catch(() => {
-        // ignore
-      })
-    }
-
-    const handleContextMenu = (event: MouseEvent) => {
-      if (settingsRef.current?.rightClickToPaste) {
-        event.preventDefault()
-        navigator.clipboard.readText().then(text => {
-          if (text) term.paste(text)
-        }).catch(() => {
-          // ignore
-        })
-        return
-      }
-      event.preventDefault()
-      const selectionText = term.getSelection()
-      window.gyshell.ui.showContextMenu({
-        id: contextMenuIdRef.current,
-        canCopy: selectionText.trim().length > 0,
-        canPaste: true
-      })
-    }
-
-    const onContextMenuAction = (data: { id: string; action: 'copy' | 'paste' }) => {
-      if (data.id !== contextMenuIdRef.current) return
-      if (data.action === 'copy') {
-        const selectionText = term.getSelection()
-        if (selectionText) {
-          navigator.clipboard.writeText(selectionText).catch(() => {
-            // ignore
-          })
-        }
-        return
-      }
-      if (data.action === 'paste') {
-        const selectionText = term.getSelection()
-        if (selectionText) {
-          navigator.clipboard.writeText(selectionText).then(() => {
-            term.paste(selectionText)
-          }).catch(() => {
-            term.paste(selectionText)
-          })
-          return
-        }
-        navigator.clipboard.readText().then(text => {
-            if (text) term.paste(text)
-        }).catch(() => {
-            // ignore
-        })
-      }
-    }
-
-    hostEl.addEventListener('paste', handlePaste)
-    hostEl.addEventListener('dragover', handleDragOver)
-    hostEl.addEventListener('drop', handleDrop)
-    hostEl.addEventListener('contextmenu', handleContextMenu)
-    const removeContextMenuListener = window.gyshell.ui.onContextMenuAction(onContextMenuAction)
-
-    // Output: backend -> xterm
-    const cleanup = window.gyshell.terminal.onData(({ terminalId, data }) => {
-      if (terminalId === props.config.id) {
-        term.write(data)
-      }
-    })
-    cleanupRef.current = cleanup
-
     return () => {
-      cleanupRef.current?.()
-      cleanupRef.current = null
-      inputDisposable.dispose()
-      selectionDisposable.dispose()
-      scrollDisposable.dispose()
-      if (scrollHideTimerRef.current) {
-        window.clearTimeout(scrollHideTimerRef.current)
-        scrollHideTimerRef.current = null
-      }
-      hostEl.removeEventListener('paste', handlePaste)
-      hostEl.removeEventListener('dragover', handleDragOver)
-      hostEl.removeEventListener('drop', handleDrop)
-      hostEl.removeEventListener('contextmenu', handleContextMenu)
-      removeContextMenuListener()
       window.removeEventListener('resize', handleResize)
       resizeObserver?.disconnect()
-      term.dispose()
-      termRef.current = null
-      fitRef.current = null
+      hostEl.classList.remove('is-scrollbar-visible')
+      const activeRuntime = runtimeRef.current
+      if (activeRuntime && activeRuntime.terminalId === props.config.id) {
+        runtimeRef.current = null
+      }
+      releaseRuntime(props.config.id)
     }
   }, [props.config.id, refitTerminal])
 
+  useEffect(() => {
+    const runtime = runtimeRef.current
+    if (!runtime) return
+    runtime.selectionHandler = props.onSelectionChange
+  }, [props.onSelectionChange, props.config.id])
+
+  useEffect(() => {
+    const runtime = runtimeRef.current
+    if (!runtime) return
+    runtime.settings = props.terminalSettings
+  }, [props.terminalSettings, props.config.id])
+
+  useEffect(() => {
+    const runtime = runtimeRef.current
+    if (!runtime) return
+    runtime.isActive = props.isActive ?? false
+  }, [props.isActive, props.config.id])
+
   // Live-update theme (Tabby-style behavior)
   useEffect(() => {
-    if (!termRef.current) return
-    termRef.current.options.theme = props.theme
-  }, [props.theme])
+    const runtime = runtimeRef.current
+    if (!runtime) return
+    runtime.term.options.theme = props.theme
+  }, [props.theme, props.config.id])
 
   // Live-update terminal settings
   useEffect(() => {
-    if (!termRef.current) return
-    const options = termRef.current.options
+    const runtime = runtimeRef.current
+    if (!runtime) return
+    runtime.settings = props.terminalSettings
+    const options = runtime.term.options
     if (props.terminalSettings?.fontSize) options.fontSize = props.terminalSettings.fontSize
     if (props.terminalSettings?.lineHeight) options.lineHeight = Math.max(1, props.terminalSettings.lineHeight)
     if (props.terminalSettings?.scrollback) options.scrollback = props.terminalSettings.scrollback
@@ -291,6 +424,8 @@ export function XTermView(props: {
     // Refit after changes
     requestAnimationFrame(() => {
       if (!props.isActive) return
+      const activeRuntime = runtimeRef.current
+      if (!activeRuntime || activeRuntime.terminalId !== props.config.id) return
       refitTerminal()
     })
   }, [
@@ -307,12 +442,14 @@ export function XTermView(props: {
   // Re-fit when the tab becomes active (Tabby-like behavior)
   useEffect(() => {
     if (!props.isActive) return
-    if (!fitRef.current || !termRef.current) return
+    const runtime = runtimeRef.current
+    if (!runtime || runtime.terminalId !== props.config.id) return
     requestAnimationFrame(() => {
+      const activeRuntime = runtimeRef.current
+      if (!activeRuntime || activeRuntime.terminalId !== props.config.id) return
       refitTerminal()
     })
   }, [props.isActive, props.layoutSignature, props.config.id, refitTerminal])
 
   return <div className="xterm-host" ref={hostRef} />
 }
-

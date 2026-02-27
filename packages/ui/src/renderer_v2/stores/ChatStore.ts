@@ -67,17 +67,21 @@ export interface ChatSession {
 
 export class ChatStore {
   sessions: ChatSession[] = []
+  sessionInventoryHydrated = false
   activeSessionId: string | null = null
   queue = new ChatQueueStore()
   private queueRunner?: (sessionId: string, input: UserInputPayload) => Promise<boolean>
+  private sessionsChangedListener?: (sessionIds: string[]) => void
 
   constructor() {
     makeObservable(this, {
       sessions: observable,
+      sessionInventoryHydrated: observable,
       activeSessionId: observable,
       activeSession: computed,
       activeSessionLatestTokens: computed,
       activeSessionLatestMaxTokens: computed,
+      hydrateSessionInventoryFromLayout: action,
       createSession: action,
       setActiveSession: action,
       closeSession: action,
@@ -94,6 +98,7 @@ export class ChatStore {
       rollbackToMessage: action,
       setSessionLockedProfile: action,
       setQueueRunner: action,
+      setSessionsChangedListener: action,
       setQueueMode: action,
       startQueue: action,
       stopQueue: action,
@@ -106,14 +111,33 @@ export class ChatStore {
     this.createSession('New Chat')
   }
 
+  private createEmptySession(id: string, title: string): ChatSession {
+    return {
+      id,
+      title,
+      messagesById: observable.map<string, ChatMessage>(),
+      messageIds: [],
+      isThinking: false,
+      isSessionBusy: false,
+      lockedProfileId: null
+    }
+  }
+
   get activeSession(): ChatSession | null {
     return this.sessions.find(s => s.id === this.activeSessionId) || null
   }
 
   get activeSessionLatestTokens(): number {
-    const session = this.activeSession
+    return this.getLatestTokens(this.activeSessionId)
+  }
+
+  get activeSessionLatestMaxTokens(): number {
+    return this.getLatestMaxTokens(this.activeSessionId)
+  }
+
+  getLatestTokens(sessionId: string | null): number {
+    const session = this.getSessionById(sessionId)
     if (!session) return 0
-    // Traverse messageIds from end to start
     for (let i = session.messageIds.length - 1; i >= 0; i--) {
       const msg = session.messagesById.get(session.messageIds[i])
       if (msg && msg.type === 'tokens_count') {
@@ -123,10 +147,9 @@ export class ChatStore {
     return 0
   }
 
-  get activeSessionLatestMaxTokens(): number {
-    const session = this.activeSession
+  getLatestMaxTokens(sessionId: string | null): number {
+    const session = this.getSessionById(sessionId)
     if (!session) return 0
-    // Traverse messageIds from end to start
     for (let i = session.messageIds.length - 1; i >= 0; i--) {
       const msg = session.messagesById.get(session.messageIds[i])
       if (msg && msg.type === 'tokens_count') {
@@ -136,21 +159,56 @@ export class ChatStore {
     return 0
   }
 
+  getSessionById(sessionId: string | null): ChatSession | null {
+    if (!sessionId) return null
+    return this.sessions.find((session) => session.id === sessionId) || null
+  }
+
+  setSessionsChangedListener(listener?: (sessionIds: string[]) => void): void {
+    this.sessionsChangedListener = listener
+  }
+
+  private emitSessionsChanged(): void {
+    this.sessionsChangedListener?.(this.sessions.map((session) => session.id))
+  }
+
+  hydrateSessionInventoryFromLayout(
+    sessionIds: string[],
+    preferredActiveSessionId?: string | null
+  ): void {
+    const ids = Array.from(new Set((sessionIds || []).filter((id) => typeof id === 'string' && id.length > 0)))
+    if (ids.length === 0) {
+      this.sessionInventoryHydrated = true
+      return
+    }
+
+    const existingById = new Map(this.sessions.map((session) => [session.id, session]))
+    const nextSessions = ids.map((id) => existingById.get(id) || this.createEmptySession(id, 'New Chat'))
+    this.sessions = nextSessions
+    const normalizedPreferredActiveId =
+      typeof preferredActiveSessionId === 'string' && preferredActiveSessionId.length > 0
+        ? preferredActiveSessionId
+        : null
+    const preferredActiveExists = !!normalizedPreferredActiveId && nextSessions.some((session) => session.id === normalizedPreferredActiveId)
+    const currentActiveExists =
+      !!this.activeSessionId && nextSessions.some((session) => session.id === this.activeSessionId)
+
+    if (preferredActiveExists) {
+      this.activeSessionId = normalizedPreferredActiveId
+    } else if (!currentActiveExists) {
+      this.activeSessionId = nextSessions[0]?.id || null
+    }
+    this.sessionInventoryHydrated = true
+  }
+
   createSession(title: string = 'New Chat'): string {
     const id = uuidv4()
-    const session: ChatSession = {
-      id,
-      title,
-      messagesById: observable.map<string, ChatMessage>(),
-      messageIds: [],
-      isThinking: false,
-      isSessionBusy: false,
-      lockedProfileId: null
-    }
+    const session = this.createEmptySession(id, title)
     runInAction(() => {
       this.sessions.push(session)
       this.activeSessionId = id
     })
+    this.emitSessionsChanged()
     return id
   }
 
@@ -176,8 +234,10 @@ export class ChatStore {
     this.queue.clearSession(id)
 
     if (this.sessions.length === 0) {
-        this.createSession()
+      this.createSession()
+      return
     }
+    this.emitSessionsChanged()
   }
 
   addMessage(msg: Omit<ChatMessage, 'id' | 'timestamp'>, sessionId: string): string {
@@ -415,6 +475,7 @@ export class ChatStore {
 
         this.activeSessionId = sessionId
       })
+      this.emitSessionsChanged()
 
       // Also load backend session for agent context
       await window.gyshell.agent.loadChatSession(sessionId)
@@ -447,12 +508,15 @@ export class ChatStore {
           // But we don't necessarily want to trigger UI navigation if we're in a modal
           if (this.sessions.length > 0) {
             this.activeSessionId = this.sessions[0].id
-          } else {
-            this.createSession()
           }
         }
       })
       this.queue.clearSession(sessionId)
+      if (this.sessions.length === 0) {
+        this.createSession()
+        return
+      }
+      this.emitSessionsChanged()
     } catch (error) {
       console.error('Failed to delete chat session:', error)
       throw error

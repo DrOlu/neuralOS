@@ -82,6 +82,7 @@ interface BackendSettings {
     }
     panelSizes?: number[]
     panelOrder?: string[]
+    v2?: unknown
   }
   recursionLimit?: number
   debugMode?: boolean

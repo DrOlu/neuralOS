@@ -74,6 +74,10 @@ body.chat-drag-selection-suppressed * {
   outline: none;
 }
 
+.chat-tab[draggable='true'] {
+  cursor: move;
+}
+
 .chat-tab:hover {
   background: color-mix(in srgb, var(--fg) 5%, transparent);
   color: var(--fg);

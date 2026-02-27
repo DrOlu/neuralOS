@@ -212,7 +212,7 @@ export const zh = {
     placeholder: '输入命令或问题...',
     send: '发送',
     stop: '停止',
-    dragHint: '拖到左右边缘以切换面板位置',
+    dragHint: '长按顶部栏并拖动以移动该面板',
     history: {
       title: '聊天历史',
       exportMenuTitle: '导出历史',
@@ -247,5 +247,13 @@ export const zh = {
       editConfirm: '覆盖并编辑',
       editCancel: '取消',
     },
+  },
+  layout: {
+    splitRightTerminal: '在右侧拆分终端面板',
+    splitDownTerminal: '在下方拆分终端面板',
+    splitRightChat: '在右侧拆分聊天面板',
+    splitDownChat: '在下方拆分聊天面板',
+    closePanel: '关闭面板',
+    managerBadge: '管理面板'
   },
 }

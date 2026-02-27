@@ -85,7 +85,27 @@ const TokenTooltip: React.FC<{
 
 // MessageRow replaces MessageItem for fine-grained reactivity
 
-export const ChatPanel: React.FC<{ store: AppStore }> = observer(({ store }) => {
+interface ChatPanelProps {
+  store: AppStore
+  panelId: string
+  sessionIds: string[]
+  activeSessionId: string | null
+  isManagerPanel: boolean
+  onSelectSession: (sessionId: string) => void
+  onLayoutHeaderMouseDown?: (event: React.MouseEvent<HTMLElement>) => void
+  onLayoutHeaderContextMenu?: (event: React.MouseEvent<HTMLElement>) => void
+}
+
+export const ChatPanel: React.FC<ChatPanelProps> = observer(({
+  store,
+  panelId,
+  sessionIds,
+  activeSessionId,
+  isManagerPanel,
+  onSelectSession,
+  onLayoutHeaderMouseDown,
+  onLayoutHeaderContextMenu
+}) => {
   const scrollRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const richInputRef = useRef<RichInputHandle>(null)
@@ -106,22 +126,21 @@ export const ChatPanel: React.FC<{ store: AppStore }> = observer(({ store }) => 
   const exportMenuButtonRef = useRef<HTMLButtonElement>(null)
   const exportMenuRef = useRef<HTMLDivElement>(null)
   const t = store.i18n.t
-  const contextMenuIdRef = useRef<string>('chat-panel')
+  const contextMenuId = React.useMemo(() => `chat-panel-${panelId}`, [panelId])
   
   // Get active session
-  const activeSession = store.chat.activeSession
+  const activeSession = store.chat.getSessionById(activeSessionId)
   const isOverlayOpen = store.view !== 'main'
   const messageIds = activeSession?.messageIds || []
   const isThinking = activeSession?.isThinking || false
-  const activeSessionId = store.chat.activeSessionId
   const isQueueMode = activeSessionId ? store.chat.queue.isQueueMode(activeSessionId) : false
   const queueItems = activeSessionId ? store.chat.queue.getQueue(activeSessionId) : []
   const isQueueRunning = activeSessionId ? store.chat.queue.isRunning(activeSessionId) : false
-  const inputDisabled = false
+  const inputDisabled = !activeSessionId
   const canQueueRun = isQueueMode && !isQueueRunning && queueItems.length > 0
   const primaryDisabled = isQueueMode ? (inputEmpty && !canQueueRun) : inputEmpty
-  const latestTokens = store.chat.activeSessionLatestTokens
-  const latestMaxTokens = store.chat.activeSessionLatestMaxTokens
+  const latestTokens = store.chat.getLatestTokens(activeSessionId)
+  const latestMaxTokens = store.chat.getLatestMaxTokens(activeSessionId)
   const askLabels = {
     allow: t.common.allow,
     deny: t.common.deny,
@@ -186,9 +205,9 @@ export const ChatPanel: React.FC<{ store: AppStore }> = observer(({ store }) => 
 
   const handleSendNormal = async (draft: ComposerDraft) => {
     if (!draft.text.trim() && draft.images.length === 0) return
-    const sessionId = store.chat.activeSessionId || store.chat.createSession()
+    if (!activeSessionId) return
     const sent = await store.sendChatMessage(
-      sessionId,
+      activeSessionId,
       {
         text: draft.text,
         ...(draft.images.length > 0 ? { images: normalizeInputImages(draft.images) } : {})
@@ -202,15 +221,15 @@ export const ChatPanel: React.FC<{ store: AppStore }> = observer(({ store }) => 
 
   const handleQueueAdd = (draft: ComposerDraft) => {
     if (!draft.text.trim() && draft.images.length === 0) return
-    const sessionId = store.chat.activeSessionId || store.chat.createSession()
-    store.chat.addQueueItem(sessionId, draft.text, normalizeInputImages(draft.images))
+    if (!activeSessionId) return
+    store.chat.addQueueItem(activeSessionId, draft.text, normalizeInputImages(draft.images))
     richInputRef.current?.clear()
     setInputEmpty(true)
   }
 
   const handleQueueRun = () => {
-    const sessionId = store.chat.activeSessionId || store.chat.createSession()
-    store.chat.startQueue(sessionId)
+    if (!activeSessionId) return
+    store.chat.startQueue(activeSessionId)
   }
 
   const handlePrimaryAction = async () => {
@@ -257,9 +276,9 @@ export const ChatPanel: React.FC<{ store: AppStore }> = observer(({ store }) => 
   }
 
   const handleHistoryExport = async (mode: 'simple' | 'detailed') => {
-    if (!store.chat.activeSessionId) return
+    if (!activeSessionId) return
     try {
-      await window.gyshell.agent.exportHistory(store.chat.activeSessionId, mode)
+      await window.gyshell.agent.exportHistory(activeSessionId, mode)
     } catch (error) {
       console.error('Failed to export history:', error)
     } finally {
@@ -268,7 +287,7 @@ export const ChatPanel: React.FC<{ store: AppStore }> = observer(({ store }) => 
   }
 
   const handleCopySessionId = async () => {
-    const sessionId = activeSession?.id || store.chat.activeSessionId
+    const sessionId = activeSession?.id || activeSessionId
     if (!sessionId) {
       setShowExportMenu(false)
       return
@@ -283,11 +302,11 @@ export const ChatPanel: React.FC<{ store: AppStore }> = observer(({ store }) => 
   }
 
   const stopCurrentRun = () => {
-    if (store.chat.activeSessionId) {
-      store.chat.stopQueue(store.chat.activeSessionId)
-      window.gyshell.agent.stopTask(store.chat.activeSessionId)
+    if (activeSessionId) {
+      store.chat.stopQueue(activeSessionId)
+      window.gyshell.agent.stopTask(activeSessionId)
       // Optimistically stop thinking in UI
-      store.chat.setThinking(false, store.chat.activeSessionId!)
+      store.chat.setThinking(false, activeSessionId)
     }
   }
 
@@ -309,81 +328,7 @@ export const ChatPanel: React.FC<{ store: AppStore }> = observer(({ store }) => 
     </button>
   )
 
-  // --- Drag & Drop Layout Logic ---
-  const dragTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  const setSelectionSuppressed = useCallback((suppressed: boolean) => {
-    const body = document.body
-    if (!body) return
-    body.classList.toggle('chat-drag-selection-suppressed', suppressed)
-  }, [])
-  
-  const handleTabMouseDown = useCallback((e: React.MouseEvent) => {
-    if (e.button !== 0) return
-    // Only allow dragging from the tab area background, not buttons
-    if ((e.target as HTMLElement).closest('button')) return
-    
-    const startX = e.clientX
-    setSelectionSuppressed(true)
-    
-    dragTimerRef.current = setTimeout(() => {
-      store.layout.setDragging(true)
-      store.layout.setDragX(startX)
-    }, 300) // 300ms long press
-
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      if (store.layout.isDragging) {
-        store.layout.setDragX(moveEvent.clientX)
-        
-        // Determine drop indicator
-        const vw = window.innerWidth
-        const threshold = vw * 0.2 // 20% from edge
-        if (moveEvent.clientX < threshold) {
-          store.layout.setDropIndicator('left')
-        } else if (moveEvent.clientX > vw - threshold) {
-          store.layout.setDropIndicator('right')
-        } else {
-          store.layout.setDropIndicator(null)
-        }
-      }
-    }
-
-    const handleMouseUp = () => {
-      if (dragTimerRef.current) {
-        clearTimeout(dragTimerRef.current)
-        dragTimerRef.current = null
-      }
-      setSelectionSuppressed(false)
-      
-      if (store.layout.isDragging) {
-        const indicator = store.layout.dropIndicator
-        const currentPos = store.layout.panelOrder.indexOf('chat')
-        
-        if ((indicator === 'left' && currentPos !== 0) || 
-            (indicator === 'right' && currentPos !== store.layout.panelOrder.length - 1)) {
-          store.layout.swapPanels()
-        }
-        
-        store.layout.setDragging(false)
-      }
-      
-      window.removeEventListener('mousemove', handleMouseMove)
-      window.removeEventListener('mouseup', handleMouseUp)
-    }
-
-    window.addEventListener('mousemove', handleMouseMove)
-    window.addEventListener('mouseup', handleMouseUp)
-  }, [setSelectionSuppressed, store.layout])
-
-  useEffect(() => {
-    return () => {
-      if (dragTimerRef.current) {
-        clearTimeout(dragTimerRef.current)
-        dragTimerRef.current = null
-      }
-      setSelectionSuppressed(false)
-    }
-  }, [setSelectionSuppressed])
+  const isLayoutDragSource = store.layout.draggingPanelId === panelId
 
   const profiles = store.settings?.models.profiles || []
   const activeProfileId = store.settings?.models.activeProfileId
@@ -454,6 +399,17 @@ export const ChatPanel: React.FC<{ store: AppStore }> = observer(({ store }) => 
     }
   }, [queueEditTarget, queueItems])
 
+  const sessionSignature = sessionIds.join('|')
+
+  useEffect(() => {
+    if (!isManagerPanel) return
+    const globalActiveSessionId = store.chat.activeSessionId
+    if (!globalActiveSessionId) return
+    if (!sessionIds.includes(globalActiveSessionId)) return
+    if (globalActiveSessionId === activeSessionId) return
+    onSelectSession(globalActiveSessionId)
+  }, [activeSessionId, isManagerPanel, onSelectSession, sessionIds, sessionSignature, store.chat.activeSessionId])
+
   useEffect(() => {
     const panelEl = panelRef.current
     if (!panelEl) return
@@ -464,17 +420,21 @@ export const ChatPanel: React.FC<{ store: AppStore }> = observer(({ store }) => 
     }
 
     const handleContextMenu = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target?.closest('.panel-header-minimal')) {
+        return
+      }
       event.preventDefault()
       const selectionText = getSelectionText()
       window.gyshell.ui.showContextMenu({
-        id: contextMenuIdRef.current,
+        id: contextMenuId,
         canCopy: selectionText.trim().length > 0,
         canPaste: true
       })
     }
 
     const onContextMenuAction = (data: { id: string; action: 'copy' | 'paste' }) => {
-      if (data.id !== contextMenuIdRef.current) return
+      if (data.id !== contextMenuId) return
       if (data.action === 'copy') {
         const selectionText = getSelectionText()
         if (selectionText) {
@@ -503,7 +463,7 @@ export const ChatPanel: React.FC<{ store: AppStore }> = observer(({ store }) => 
       panelEl.removeEventListener('contextmenu', handleContextMenu)
       removeContextMenuListener()
     }
-  }, [])
+  }, [contextMenuId])
 
   useEffect(() => {
     if (!showExportMenu) return
@@ -539,53 +499,78 @@ export const ChatPanel: React.FC<{ store: AppStore }> = observer(({ store }) => 
 
   return (
     <div 
-      className={`panel panel-chat${store.layout.isDragging ? ' is-dragging-source' : ''}`} 
+      className={`panel panel-chat${isLayoutDragSource ? ' is-dragging-source' : ''}`} 
       ref={panelRef}
     >
       <div
         className="panel-header-minimal is-draggable"
-        onMouseDown={handleTabMouseDown}
+        onMouseDown={onLayoutHeaderMouseDown}
+        onContextMenu={onLayoutHeaderContextMenu}
         title={t.chat.dragHint}
         aria-label={t.chat.dragHint}
       >
+        {isManagerPanel ? <div className="panel-manager-badge">{t.layout.managerBadge}</div> : null}
         <div className="chat-tabs">
-            {store.chat.sessions.map(s => (
-                <div 
-                    key={s.id} 
-                    className={`chat-tab ${s.id === store.chat.activeSessionId ? 'active' : ''}`}
-                    style={{ maxWidth: `${CHAT_PANEL_SESSION_TITLE_CHAR_LIMIT + 8}ch` }}
-                    onClick={() => store.chat.setActiveSession(s.id)}
+          {sessionIds.map((sessionId) => {
+            const session = store.chat.getSessionById(sessionId)
+            if (!session) return null
+            return (
+              <div
+                key={session.id}
+                className={`chat-tab ${session.id === activeSessionId ? 'active' : ''}`}
+                style={{ maxWidth: `${CHAT_PANEL_SESSION_TITLE_CHAR_LIMIT + 8}ch` }}
+                onClick={() => onSelectSession(session.id)}
+                draggable
+                data-layout-tab-draggable="true"
+                data-layout-tab-id={session.id}
+                data-layout-tab-kind="chat"
+                data-layout-tab-panel-id={panelId}
+              >
+                <span className="chat-tab-title">{formatChatPanelSessionTitle(session.title)}</span>
+                <button
+                  className="chat-tab-close"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    store.chat.closeSession(session.id)
+                  }}
                 >
-                    <span className="chat-tab-title">{formatChatPanelSessionTitle(s.title)}</span>
-                    <button 
-                        className="chat-tab-close"
-                        onClick={(e) => {
-                            e.stopPropagation()
-                            store.chat.closeSession(s.id)
-                        }}
-                    >
-                        <X size={12} />
-                    </button>
-                </div>
-            ))}
+                  <X size={12} />
+                </button>
+              </div>
+            )
+          })}
         </div>
-        <button className="chat-tab-add" onClick={() => store.chat.createSession()}>
-            <Plus size={14} />
-        </button>
-        <button className="chat-tab-history" onClick={() => setShowHistory(true)}>
-            <History size={14} />
-        </button>
-        <button
-          ref={exportMenuButtonRef}
-          className="chat-tab-history-menu"
-          onClick={toggleExportMenu}
-          title={t.chat.history.exportMenuTitle}
-          aria-label={t.chat.history.exportMenuTitle}
-          aria-haspopup="menu"
-          aria-expanded={showExportMenu}
-        >
-          <MoreVertical size={14} />
-        </button>
+        {isManagerPanel ? (
+          <>
+            <button
+              className="chat-tab-add"
+              onClick={() => {
+                const sessionId = store.chat.createSession()
+                store.layout.attachTabToManager('chat', sessionId)
+                const managerPanelId = store.layout.getManagerPanelId('chat')
+                if (managerPanelId) {
+                  store.layout.setPanelActiveTab(managerPanelId, sessionId)
+                }
+              }}
+            >
+              <Plus size={14} />
+            </button>
+            <button className="chat-tab-history" onClick={() => setShowHistory(true)}>
+              <History size={14} />
+            </button>
+            <button
+              ref={exportMenuButtonRef}
+              className="chat-tab-history-menu"
+              onClick={toggleExportMenu}
+              title={t.chat.history.exportMenuTitle}
+              aria-label={t.chat.history.exportMenuTitle}
+              aria-haspopup="menu"
+              aria-expanded={showExportMenu}
+            >
+              <MoreVertical size={14} />
+            </button>
+          </>
+        ) : null}
       </div>
 
       {showExportMenu && createPortal(

@@ -10,6 +10,7 @@ import { createImagePreviewDataUrl, readFileAsDataUrl, type InputImageAttachment
 import { I18nStore } from './I18nStore'
 import { ChatStore } from './ChatStore'
 import { LayoutStore } from './LayoutStore'
+import { buildLayoutTree, listPanels } from '../layout'
 
 const upsertById = <T extends { id: string }>(list: T[], entry: T): T[] => {
   const idx = list.findIndex((x) => x.id === entry.id)
@@ -60,6 +61,7 @@ export class AppStore {
   settingsSection: SettingsSection = 'general'
 
   terminalTabs: TerminalTabModel[] = []
+  terminalTabsHydrated = false
   activeTerminalId: string | null = null
   terminalSelections: Record<string, string> = {}
 
@@ -86,6 +88,7 @@ export class AppStore {
       isBootstrapped: observable,
       settingsSection: observable,
       terminalTabs: observable,
+      terminalTabsHydrated: observable,
       activeTerminalId: observable,
       terminalSelections: observable,
       xtermTheme: observable,
@@ -174,6 +177,7 @@ export class AppStore {
       reconcileTerminalTabs: action
     })
     this.chat.setQueueRunner((sessionId, input) => this.sendChatMessage(sessionId, input, { mode: 'queue' }))
+    this.chat.setSessionsChangedListener(() => this.layout.syncPanelBindings())
   }
 
   getUniqueTitle(baseTitle: string): string {
@@ -202,6 +206,78 @@ export class AppStore {
   get activeTerminal(): TerminalTabModel | null {
     if (!this.activeTerminalId) return null
     return this.terminalTabs.find((t) => t.id === this.activeTerminalId) ?? null
+  }
+
+  private collectPersistedChatInventoryState(layout: AppSettings['layout'] | undefined): {
+    tabIds: string[]
+    preferredActiveTabId: string | null
+  } {
+    const emptyState = {
+      tabIds: [],
+      preferredActiveTabId: null
+    }
+
+    try {
+      const tree = buildLayoutTree(layout)
+      const chatPanels = listPanels(tree).filter((panel) => panel.panel.kind === 'chat')
+      const chatPanelIds = chatPanels.map((panel) => panel.panel.id)
+      if (chatPanelIds.length === 0) {
+        return emptyState
+      }
+
+      const chatPanelSet = new Set(chatPanelIds)
+      const chatBindings = chatPanelIds.map((panelId) => {
+        const binding = tree.panelTabs?.[panelId]
+        const tabIds = Array.isArray(binding?.tabIds)
+          ? binding.tabIds.filter((tabId): tabId is string => typeof tabId === 'string' && tabId.length > 0)
+          : []
+        const activeTabId =
+          typeof binding?.activeTabId === 'string' && tabIds.includes(binding.activeTabId)
+            ? binding.activeTabId
+            : null
+        return {
+          panelId,
+          tabIds,
+          activeTabId
+        }
+      })
+      const seen = new Set<string>()
+      const tabIds: string[] = []
+
+      chatBindings.forEach(({ tabIds: bindingTabIds }) => {
+        bindingTabIds.forEach((tabId) => {
+          if (seen.has(tabId)) return
+          seen.add(tabId)
+          tabIds.push(tabId)
+        })
+      })
+
+      const focusedActiveTabId = (() => {
+        const focusedPanelId = tree.focusedPanelId
+        if (!focusedPanelId || !chatPanelSet.has(focusedPanelId)) {
+          return null
+        }
+        return chatBindings.find((binding) => binding.panelId === focusedPanelId)?.activeTabId || null
+      })()
+
+      const managerActiveTabId = (() => {
+        const managerPanelId = tree.managerPanels?.chat
+        if (!managerPanelId || !chatPanelSet.has(managerPanelId)) {
+          return null
+        }
+        return chatBindings.find((binding) => binding.panelId === managerPanelId)?.activeTabId || null
+      })()
+
+      const fallbackActiveTabId = chatBindings.find((binding) => !!binding.activeTabId)?.activeTabId || null
+      const preferredActiveTabId = focusedActiveTabId || managerActiveTabId || fallbackActiveTabId || tabIds[0] || null
+
+      return {
+        tabIds,
+        preferredActiveTabId
+      }
+    } catch {
+      return emptyState
+    }
   }
 
   private toTerminalConfig(item: {
@@ -255,7 +331,9 @@ export class AppStore {
     }
 
     this.terminalTabs = nextTabs
+    this.terminalTabsHydrated = true
     this.activeTerminalId = nextActive
+    this.layout.syncPanelBindings()
   }
 
   private async fetchCombinedSettings(): Promise<AppSettings> {
@@ -809,6 +887,7 @@ export class AppStore {
         ...backendSettings,
         ...uiSettings
       }
+      const persistedChatInventoryState = this.collectPersistedChatInventoryState(settings.layout)
       const theme = resolveTheme(settings.themeId, customThemes)
       applyAppThemeFromTerminalScheme(theme.terminal)
       const xtermTheme = toXtermTheme(theme.terminal, { transparentBackground: true })
@@ -819,6 +898,10 @@ export class AppStore {
         this.isBootstrapped = true
         this.i18n.setLocale(settings.language)
         this.customThemes = customThemes
+        this.chat.hydrateSessionInventoryFromLayout(
+          persistedChatInventoryState.tabIds,
+          persistedChatInventoryState.preferredActiveTabId
+        )
         this.layout.bootstrap()
       })
 
@@ -878,6 +961,7 @@ export class AppStore {
       console.error('Failed to bootstrap settings', err)
       runInAction(() => {
         this.isBootstrapped = true
+        this.chat.hydrateSessionInventoryFromLayout([])
       })
       if (this.terminalTabs.length === 0) {
         this.createLocalTab()
@@ -904,7 +988,9 @@ export class AppStore {
       runtimeState: 'initializing'
     }
     this.terminalTabs.push(tab)
+    this.terminalTabsHydrated = true
     this.activeTerminalId = id
+    this.layout.syncPanelBindings()
   }
 
   createSshTab(entryId: string): void {
@@ -949,7 +1035,9 @@ export class AppStore {
       runtimeState: 'initializing'
     }
     this.terminalTabs.push(tab)
+    this.terminalTabsHydrated = true
     this.activeTerminalId = id
+    this.layout.syncPanelBindings()
   }
 
   async saveSshConnection(entry: AppSettings['connections']['ssh'][number]): Promise<void> {
@@ -1180,6 +1268,7 @@ export class AppStore {
       this.terminalTabs = nextTabs
       this.activeTerminalId = nextActive
     })
+    this.layout.syncPanelBindings()
 
     // Kill backend session (best-effort)
     try {

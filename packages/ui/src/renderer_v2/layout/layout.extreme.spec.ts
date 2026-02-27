@@ -1,0 +1,224 @@
+import {
+  CHAT_GRID_TOTAL_ROWS,
+  CHAT_MIN_GRID_ROWS,
+  MAX_LAYOUT_PANELS,
+  MAX_LAYOUT_SPLIT_CHILDREN,
+  TECHNICAL_MIN_PANEL_SIZE_PX,
+  computeChildMinSizePercentages,
+  determineDropDirection,
+  getPanelCount,
+  listPanels,
+  movePanel,
+  removePanel,
+  setSplitSizes,
+  splitPanel,
+  validateLayoutTree,
+  type LayoutPanelNode,
+  type LayoutSplitNode,
+  type LayoutTree
+} from './index'
+
+const assertCondition = (condition: unknown, message: string): void => {
+  if (!condition) {
+    throw new Error(message)
+  }
+}
+
+const assertEqual = <T>(actual: T, expected: T, message: string): void => {
+  if (actual !== expected) {
+    throw new Error(`${message}. expected=${String(expected)} actual=${String(actual)}`)
+  }
+}
+
+const makePanel = (nodeId: string, panelId: string, kind: 'chat' | 'terminal'): LayoutPanelNode => ({
+  type: 'panel',
+  id: nodeId,
+  panel: {
+    id: panelId,
+    kind
+  }
+})
+
+const makeSplit = (
+  nodeId: string,
+  direction: 'horizontal' | 'vertical',
+  children: LayoutSplitNode['children'],
+  sizes: number[]
+): LayoutSplitNode => ({
+  type: 'split',
+  id: nodeId,
+  direction,
+  children,
+  sizes
+})
+
+const runCase = (name: string, fn: () => void): void => {
+  fn()
+  console.log(`PASS ${name}`)
+}
+
+runCase('splitPanel inserts a new panel and focuses it', () => {
+  const initial: LayoutTree = {
+    schemaVersion: 2,
+    root: makePanel('node-a', 'panel-a', 'chat'),
+    focusedPanelId: 'panel-a'
+  }
+
+  const next = splitPanel(initial, 'panel-a', 'terminal', 'horizontal', 'after')
+  assertEqual(getPanelCount(next), 2, 'splitPanel should increase panel count')
+  assertEqual(next.root.type, 'split', 'splitPanel should create split root')
+  if (next.root.type !== 'split') return
+  assertEqual(next.root.direction, 'horizontal', 'splitPanel should preserve requested direction')
+  const ids = listPanels(next).map((panel) => panel.panel.id)
+  assertCondition(ids.includes('panel-a'), 'original panel should remain in tree')
+  const insertedPanelId = ids.find((id) => id !== 'panel-a')
+  assertCondition(Boolean(insertedPanelId), 'splitPanel should insert a new panel id')
+  assertEqual(next.focusedPanelId, insertedPanelId, 'splitPanel should focus inserted panel')
+})
+
+runCase('movePanel center swaps panel payloads', () => {
+  const initial: LayoutTree = {
+    schemaVersion: 2,
+    root: makeSplit(
+      'root',
+      'horizontal',
+      [makePanel('node-a', 'panel-a', 'chat'), makePanel('node-b', 'panel-b', 'terminal')],
+      [50, 50]
+    )
+  }
+
+  const next = movePanel(initial, 'panel-a', 'panel-b', 'center')
+  assertEqual(next.root.type, 'split', 'center move should keep split root')
+  if (next.root.type !== 'split') return
+  const [left, right] = next.root.children
+  assertEqual(left.type, 'panel', 'left child should remain panel')
+  assertEqual(right.type, 'panel', 'right child should remain panel')
+  if (left.type !== 'panel' || right.type !== 'panel') return
+  assertEqual(left.panel.kind, 'terminal', 'center move should swap panel payloads')
+  assertEqual(right.panel.kind, 'chat', 'center move should swap panel payloads')
+})
+
+runCase('removePanel never removes the final panel', () => {
+  const initial: LayoutTree = {
+    schemaVersion: 2,
+    root: makePanel('node-only', 'panel-only', 'terminal'),
+    focusedPanelId: 'panel-only'
+  }
+
+  const next = removePanel(initial, 'panel-only')
+  assertCondition(next === initial, 'removePanel should no-op for final panel')
+  assertEqual(getPanelCount(next), 1, 'final panel must remain')
+})
+
+runCase('setSplitSizes normalizes arbitrary size vectors', () => {
+  const initial: LayoutTree = {
+    schemaVersion: 2,
+    root: makeSplit(
+      'root',
+      'horizontal',
+      [
+        makePanel('node-a', 'panel-a', 'terminal'),
+        makePanel('node-b', 'panel-b', 'terminal'),
+        makePanel('node-c', 'panel-c', 'chat')
+      ],
+      [10, 10, 80]
+    )
+  }
+
+  const next = setSplitSizes(initial, 'root', [20, 30, 0])
+  assertEqual(next.root.type, 'split', 'setSplitSizes should keep split node')
+  if (next.root.type !== 'split') return
+  assertEqual(next.root.sizes.length, 3, 'sizes count should match children')
+  const total = next.root.sizes.reduce((sum, size) => sum + size, 0)
+  assertCondition(Math.abs(total - 100) < 0.001, 'normalized sizes should sum to ~100')
+  assertCondition(next.root.sizes.every((size) => Number.isFinite(size) && size >= 0), 'sizes should be finite')
+  assertCondition(next.root.sizes[0] > 0 && next.root.sizes[1] > 0, 'positive sizes should stay positive')
+})
+
+runCase('validateLayoutTree enforces chat minimum rows in tall viewports', () => {
+  const tree: LayoutTree = {
+    schemaVersion: 2,
+    root: makeSplit(
+      'root',
+      'vertical',
+      [makePanel('chat-node', 'chat-panel', 'chat'), makePanel('term-node', 'term-panel', 'terminal')],
+      [5, 95]
+    )
+  }
+
+  const result = validateLayoutTree(tree, { width: 1600, height: 1200 })
+  assertEqual(result.valid, false, 'undersized chat panel must be rejected')
+  assertCondition(Boolean(result.reason?.startsWith('chat-height-limit:')), 'chat height limit reason should be reported')
+})
+
+runCase('computeChildMinSizePercentages reflects chat minimum height requirement', () => {
+  const split = makeSplit(
+    'root',
+    'vertical',
+    [makePanel('chat-node', 'chat-panel', 'chat'), makePanel('term-node', 'term-panel', 'terminal')],
+    [50, 50]
+  )
+
+  const percentages = computeChildMinSizePercentages(
+    split,
+    { left: 0, top: 0, width: 1200, height: 1200 },
+    1200
+  )
+  const expectedChatMinPx = Math.max(
+    TECHNICAL_MIN_PANEL_SIZE_PX,
+    Math.floor((1200 * CHAT_MIN_GRID_ROWS) / CHAT_GRID_TOTAL_ROWS)
+  )
+  assertCondition(Math.abs(percentages[0] - (expectedChatMinPx / 1200) * 100) < 0.001, 'chat min percentage should be exact')
+  assertCondition(percentages[0] > percentages[1], 'chat min percentage should exceed terminal in this viewport')
+})
+
+runCase('determineDropDirection classifies center and edges', () => {
+  const rect = { left: 100, top: 100, width: 300, height: 200 }
+  assertEqual(determineDropDirection(rect, 250, 200), 'center', 'center classification mismatch')
+  assertEqual(determineDropDirection(rect, 110, 200), 'left', 'left classification mismatch')
+  assertEqual(determineDropDirection(rect, 390, 200), 'right', 'right classification mismatch')
+  assertEqual(determineDropDirection(rect, 250, 110), 'top', 'top classification mismatch')
+  assertEqual(determineDropDirection(rect, 250, 290), 'bottom', 'bottom classification mismatch')
+})
+
+runCase('splitPanel stops at MAX_LAYOUT_PANELS', () => {
+  let tree: LayoutTree = {
+    schemaVersion: 2,
+    root: makePanel('seed-node', 'seed-panel', 'terminal')
+  }
+
+  while (getPanelCount(tree) < MAX_LAYOUT_PANELS) {
+    const targetId = listPanels(tree)[0].panel.id
+    tree = splitPanel(tree, targetId, 'terminal', 'horizontal', 'after')
+  }
+
+  const targetId = listPanels(tree)[0].panel.id
+  const saturated = splitPanel(tree, targetId, 'chat', 'vertical', 'after')
+  assertCondition(saturated === tree, 'splitPanel should no-op at max panel limit')
+  assertEqual(getPanelCount(saturated), MAX_LAYOUT_PANELS, 'max panel limit must be respected')
+})
+
+runCase('splitPanel keeps per-split child count bounded by dynamic wrapping', () => {
+  let tree: LayoutTree = {
+    schemaVersion: 2,
+    root: makePanel('seed-node', 'seed-panel', 'terminal')
+  }
+
+  for (let i = 0; i < 14; i += 1) {
+    const targetId = listPanels(tree)[0].panel.id
+    tree = splitPanel(tree, targetId, 'terminal', 'horizontal', 'after')
+  }
+
+  const stack = [tree.root]
+  while (stack.length > 0) {
+    const current = stack.pop()
+    if (!current || current.type !== 'split') continue
+    assertCondition(
+      current.children.length <= MAX_LAYOUT_SPLIT_CHILDREN,
+      'split node children should never exceed configured limit'
+    )
+    current.children.forEach((child) => stack.push(child))
+  }
+})
+
+console.log('All layout extreme tests passed.')

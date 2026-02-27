@@ -1,36 +1,55 @@
 import React from 'react'
 import { Laptop, Plus, Server, X } from 'lucide-react'
 import { observer } from 'mobx-react-lite'
-import type { AppStore } from '../../stores/AppStore'
+import type { AppStore, TerminalTabModel } from '../../stores/AppStore'
 import './terminal.scss'
 import { XTermView } from './XTermView'
 import { ConfirmDialog } from '../Common/ConfirmDialog'
 
-export const TerminalPanel: React.FC<{ store: AppStore }> = observer(({ store }) => {
+interface TerminalPanelProps {
+  store: AppStore
+  panelId: string
+  tabs: TerminalTabModel[]
+  activeTabId: string | null
+  isManagerPanel: boolean
+  onSelectTab: (tabId: string) => void
+  onLayoutHeaderMouseDown?: (event: React.MouseEvent<HTMLElement>) => void
+  onLayoutHeaderContextMenu?: (event: React.MouseEvent<HTMLElement>) => void
+}
+
+export const TerminalPanel: React.FC<TerminalPanelProps> = observer(({
+  store,
+  panelId,
+  tabs,
+  activeTabId,
+  isManagerPanel,
+  onSelectTab,
+  onLayoutHeaderMouseDown,
+  onLayoutHeaderContextMenu
+}) => {
   const [menuOpen, setMenuOpen] = React.useState(false)
   const [confirmCloseId, setConfirmCloseId] = React.useState<string | null>(null)
   const rootRef = React.useRef<HTMLDivElement | null>(null)
   const menuRef = React.useRef<HTMLDivElement | null>(null)
   const t = store.i18n.t
+  const isLayoutDragSource = store.layout.isDragging && store.layout.draggingPanelId === panelId
   const layoutSignature = `${store.layout.panelOrder.join(',')}|${store.layout.panelSizes
     .map((size) => size.toFixed(3))
     .join(',')}`
 
-  // Dismiss menu on outside click / Escape
   React.useEffect(() => {
     if (!menuOpen) return
 
-    const onMouseDown = (e: MouseEvent) => {
-      const target = e.target as Node | null
+    const onMouseDown = (event: MouseEvent) => {
+      const target = event.target as Node | null
       if (!target) return
       if (menuRef.current?.contains(target)) return
-      // clicking the + itself is inside root; we still want to close if click elsewhere
       if (rootRef.current?.contains(target) && (target as HTMLElement).closest('.tab-add-btn')) return
       setMenuOpen(false)
     }
 
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setMenuOpen(false)
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenuOpen(false)
     }
 
     window.addEventListener('mousedown', onMouseDown)
@@ -41,8 +60,10 @@ export const TerminalPanel: React.FC<{ store: AppStore }> = observer(({ store })
     }
   }, [menuOpen])
 
+  const closeableTabIds = new Set(tabs.map((tab) => tab.id))
+
   return (
-    <div className="panel panel-terminal" ref={rootRef}>
+    <div className={`panel panel-terminal${isLayoutDragSource ? ' is-dragging-source' : ''}`} ref={rootRef}>
       <ConfirmDialog
         open={!!confirmCloseId}
         title={t.terminal.confirmCloseTitle}
@@ -51,17 +72,23 @@ export const TerminalPanel: React.FC<{ store: AppStore }> = observer(({ store })
         cancelText={t.common.cancel}
         danger
         onConfirm={() => {
-          if (confirmCloseId) {
+          if (confirmCloseId && closeableTabIds.has(confirmCloseId)) {
             void store.closeTab(confirmCloseId)
-            setConfirmCloseId(null)
           }
+          setConfirmCloseId(null)
         }}
         onCancel={() => setConfirmCloseId(null)}
       />
-      <div className="terminal-tabs-container">
+
+      <div
+        className="terminal-tabs-container is-draggable"
+        onMouseDown={onLayoutHeaderMouseDown}
+        onContextMenu={onLayoutHeaderContextMenu}
+      >
+        {isManagerPanel ? <div className="panel-manager-badge">{t.layout.managerBadge}</div> : null}
         <div className="terminal-tabs-bar">
-          {store.terminalTabs.map((tab) => {
-            const isActive = tab.id === store.activeTerminalId
+          {tabs.map((tab) => {
+            const isActive = tab.id === activeTabId
             const Icon = tab.config.type === 'ssh' ? Server : Laptop
             const runtimeState = tab.runtimeState || 'initializing'
             const runtimeIndicatorState =
@@ -70,13 +97,19 @@ export const TerminalPanel: React.FC<{ store: AppStore }> = observer(({ store })
                   ? 'ready'
                   : 'inactive'
                 : runtimeState
+
             return (
               <div
                 key={tab.id}
                 className={isActive ? 'tab is-active' : 'tab'}
-                onClick={() => store.setActiveTerminal(tab.id)}
+                onClick={() => onSelectTab(tab.id)}
                 role="button"
                 tabIndex={0}
+                draggable
+                data-layout-tab-draggable="true"
+                data-layout-tab-id={tab.id}
+                data-layout-tab-kind="terminal"
+                data-layout-tab-panel-id={panelId}
               >
                 <span className="tab-icon">
                   <Icon size={14} strokeWidth={2} />
@@ -89,8 +122,8 @@ export const TerminalPanel: React.FC<{ store: AppStore }> = observer(({ store })
                 <button
                   className="tab-close"
                   title={t.common.close}
-                  onClick={(e) => {
-                    e.stopPropagation()
+                  onClick={(event) => {
+                    event.stopPropagation()
                     setConfirmCloseId(tab.id)
                   }}
                 >
@@ -100,11 +133,14 @@ export const TerminalPanel: React.FC<{ store: AppStore }> = observer(({ store })
             )
           })}
         </div>
-        <button className="icon-btn-sm tab-add-btn" title={t.terminal.newTab} onClick={() => setMenuOpen((v) => !v)}>
-          <Plus size={14} strokeWidth={2} />
-        </button>
 
-        {menuOpen ? (
+        {isManagerPanel ? (
+          <button className="icon-btn-sm tab-add-btn" title={t.terminal.newTab} onClick={() => setMenuOpen((v) => !v)}>
+            <Plus size={14} strokeWidth={2} />
+          </button>
+        ) : null}
+
+        {isManagerPanel && menuOpen ? (
           <div className="tab-menu" role="menu" ref={menuRef}>
             <button
               className="tab-menu-item"
@@ -117,21 +153,19 @@ export const TerminalPanel: React.FC<{ store: AppStore }> = observer(({ store })
               <span>{t.terminal.local}</span>
             </button>
 
-            {store.settings?.connections?.ssh?.length ? (
-              <div className="tab-menu-sep" />
-            ) : null}
+            {store.settings?.connections?.ssh?.length ? <div className="tab-menu-sep" /> : null}
 
-            {store.settings?.connections?.ssh?.map((e) => (
+            {store.settings?.connections?.ssh?.map((entry) => (
               <button
-                key={e.id}
+                key={entry.id}
                 className="tab-menu-item"
                 onClick={() => {
-                  store.createSshTab(e.id)
+                  store.createSshTab(entry.id)
                   setMenuOpen(false)
                 }}
               >
                 <Server size={14} strokeWidth={2} />
-                <span>{e.name || `${e.username}@${e.host}`}</span>
+                <span>{entry.name || `${entry.username}@${entry.host}`}</span>
               </button>
             ))}
 
@@ -149,17 +183,14 @@ export const TerminalPanel: React.FC<{ store: AppStore }> = observer(({ store })
           </div>
         ) : null}
       </div>
-      
+
       <div className="panel-body">
-        {store.terminalTabs.length ? (
+        {tabs.length ? (
           <div className="terminal-stack">
-            {store.terminalTabs.map((tab) => {
-              const isActive = tab.id === store.activeTerminalId
+            {tabs.map((tab) => {
+              const isActive = tab.id === activeTabId
               return (
-                <div
-                  key={tab.id}
-                  className={isActive ? 'terminal-layer is-active' : 'terminal-layer'}
-                >
+                <div key={tab.id} className={isActive ? 'terminal-layer is-active' : 'terminal-layer'}>
                   <XTermView
                     config={tab.config}
                     theme={store.xtermTheme}

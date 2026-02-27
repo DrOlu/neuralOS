@@ -42,6 +42,7 @@
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "test:backend-regression": "node tests/backend-regression-tests.cjs",
     "test:backend-extreme": "node tests/backend-extreme-tests.cjs",
+    "test:layout-ui-extreme": "tsx packages/ui/src/renderer_v2/layout/layout.extreme.spec.ts && tsx packages/ui/src/renderer_v2/stores/layoutStore.extreme.spec.ts && tsx packages/ui/src/renderer_v2/stores/appStore.extreme.spec.ts",
     "test:cli-install": "node tests-cli-install.cjs",
     "lint": "eslint .",
     "format": "prettier --write .",
@@ -105,6 +106,7 @@
     "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.7.4",
     "sass": "^1.91.0",
+    "tsx": "4.20.6",
     "typescript": "^5.3.3",
     "vite": "^5.0.10"
   }

@@ -215,7 +215,7 @@ export const en = {
     placeholder: 'Type a command or question...',
     send: 'Send',
     stop: 'Stop',
-    dragHint: 'Drag to the edges to swap panels',
+    dragHint: 'Long-press the header and drag to move this panel',
     history: {
       title: 'Chat History',
       exportMenuTitle: 'Export History',
@@ -250,5 +250,13 @@ export const en = {
       editConfirm: 'Replace and Edit',
       editCancel: 'Cancel',
     },
+  },
+  layout: {
+    splitRightTerminal: 'Split Right with Terminal',
+    splitDownTerminal: 'Split Down with Terminal',
+    splitRightChat: 'Split Right with Chat',
+    splitDownChat: 'Split Down with Chat',
+    closePanel: 'Close Panel',
+    managerBadge: 'Manager'
   },
 }

@@ -151,6 +151,11 @@ export interface BackendSettings {
     }
     panelSizes?: number[]
     panelOrder?: string[] // e.g. ['chat', 'terminal']
+    /**
+     * Renderer-owned layout tree payload for advanced multi-panel composition.
+     * Kept as unknown at backend boundary to avoid coupling renderer internals.
+     */
+    v2?: unknown
   }
   /** Agent recursion limit */
   recursionLimit?: number

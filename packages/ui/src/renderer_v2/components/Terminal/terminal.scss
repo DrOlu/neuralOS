@@ -10,9 +10,19 @@
   height: 32px;
   display: flex;
   align-items: center;
+  padding-left: 8px;
   background: color-mix(in srgb, var(--fg) 3%, transparent);
   border-bottom: 1px solid var(--border);
   position: relative;
+}
+
+.terminal-tabs-container.is-draggable {
+  cursor: grab;
+  user-select: none;
+}
+
+.panel-terminal.is-dragging-source .terminal-tabs-container.is-draggable {
+  cursor: grabbing;
 }
 
 .terminal-tabs-bar {
@@ -56,6 +66,10 @@
   transition: all 0.1s;
   flex-shrink: 0;
   outline: none;
+}
+
+.tab[draggable='true'] {
+  cursor: move;
 }
 
 .tab-title {

@@ -10,10 +10,6 @@
   position: relative;
 }
 
-.gyshell-panels {
-  height: 100%;
-}
-
 .gyshell-main {
   height: 100%;
 }
@@ -35,15 +31,47 @@
   display: block;
 }
 
+.gyshell-layout-root {
+  height: 100%;
+  min-height: 0;
+  position: relative;
+}
+
+.gyshell-layout-split {
+  height: 100%;
+  width: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+
+.gyshell-layout-leaf {
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+}
+
+.gyshell-layout-leaf.is-drag-source {
+  > .panel {
+    opacity: 0.58;
+    pointer-events: none;
+  }
+}
+
 .gyshell-resize-handle {
-  width: 1px;
   background: var(--border);
   position: relative;
   transition: background 0.2s;
 }
 
 .gyshell-resize-handle[data-panel-group-direction='horizontal'] {
+  width: 1px;
   cursor: col-resize;
+}
+
+.gyshell-resize-handle[data-panel-group-direction='vertical'] {
+  height: 1px;
+  cursor: row-resize;
 }
 
 .gyshell-resize-handle:hover,
@@ -54,74 +82,98 @@
 .gyshell-resize-handle::after {
   content: '';
   position: absolute;
-  left: -4px;
-  right: -4px;
   top: 0;
   bottom: 0;
 }
 
-// Drag & Drop Layout Styles
-.gyshell-drag-overlay {
+.gyshell-resize-handle[data-panel-group-direction='horizontal']::after {
+  left: -4px;
+  right: -4px;
+}
+
+.gyshell-resize-handle[data-panel-group-direction='vertical']::after {
+  top: -4px;
+  bottom: -4px;
+  left: 0;
+  right: 0;
+}
+
+.gyshell-layout-drop-target-overlay,
+.gyshell-layout-drop-preview-overlay {
   position: absolute;
-  inset: 0;
   pointer-events: none;
-  z-index: 1000;
-  display: flex;
+  z-index: 22;
+  box-sizing: border-box;
+  border-radius: 2px;
+}
+
+.gyshell-layout-drop-target-overlay {
+  border: 1px dashed color-mix(in srgb, var(--accent) 42%, transparent);
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+}
+
+.gyshell-layout-drop-preview-overlay {
+  border: 1px solid color-mix(in srgb, var(--accent) 72%, transparent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.gyshell-layout-menu {
+  position: fixed;
+  min-width: 216px;
+  border-radius: 2px;
+  border: 1px solid var(--border-strong);
+  background: var(--panel-bg);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.46);
   padding: 4px;
-  gap: 8px;
-
-  .gyshell-drop-indicator {
-    height: 100%;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    background: transparent;
-    border: 2px dashed transparent;
-    border-radius: 4px; /* Sharper */
-    box-sizing: border-box;
-    min-width: 0;
-
-    &.center {
-      flex: 1;
-      border: none;
-      background: transparent;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    &.is-active {
-      background: rgba(var(--accent-rgb, 78, 161, 255), 0.12);
-      border-color: var(--accent);
-      box-shadow: 0 0 20px rgba(var(--accent-rgb, 78, 161, 255), 0.15);
-      border-style: solid;
-    }
-  }
-
-  .drag-hint {
-    background: var(--panel-bg);
-    border: 1px solid var(--border-strong);
-    border-radius: 2px;
-    padding: 8px 14px;
-    color: var(--fg);
-    box-shadow: var(--shadow);
-    font-weight: 500;
-    opacity: 0.9;
-  }
+  z-index: 80;
 }
 
-.panel-chat {
-  &.is-dragging-source {
-    opacity: 0.6;
-    cursor: grabbing !important;
-    user-select: none;
-    
-    * {
-      pointer-events: none !important;
-    }
-  }
+.gyshell-layout-menu-item {
+  width: 100%;
+  height: 30px;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  text-align: left;
+  padding: 0 10px;
+  cursor: pointer;
+  border-radius: 1px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
-.chat-tab-title {
-  user-select: none;
+.gyshell-layout-menu-item:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
 }
 
+.gyshell-layout-menu-item.is-danger {
+  color: var(--danger);
+}
 
+.gyshell-layout-menu-item:disabled,
+.gyshell-layout-menu-item.is-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.panel-manager-badge {
+  flex: 0 0 auto;
+  height: 18px;
+  margin-right: 8px;
+  padding: 0 6px;
+  border-radius: 2px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  color: color-mix(in srgb, var(--accent) 80%, var(--fg));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
