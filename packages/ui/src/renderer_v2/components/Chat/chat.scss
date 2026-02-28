@@ -17,9 +17,20 @@
   height: 32px; /* Unified height with terminal tabs */
   display: flex;
   align-items: center;
-  padding: 0 8px;
+  padding: 0 4px;
   background: color-mix(in srgb, var(--fg) 3%, transparent); /* Match terminal tab bar background */
   border-bottom: 1px solid var(--border);
+}
+
+.panel-tab-drag-handle {
+  width: 14px;
+  height: 32px;
+  flex: 0 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-faint);
+  margin-right: 4px;
 }
 
 .panel-header-minimal.is-draggable {

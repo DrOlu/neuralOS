@@ -10,10 +10,21 @@
   height: 32px;
   display: flex;
   align-items: center;
-  padding-left: 8px;
+  padding-left: 4px;
   background: color-mix(in srgb, var(--fg) 3%, transparent);
   border-bottom: 1px solid var(--border);
   position: relative;
+}
+
+.panel-tab-drag-handle {
+  width: 14px;
+  height: 32px;
+  flex: 0 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-faint);
+  margin-right: 4px;
 }
 
 .terminal-tabs-container.is-draggable {

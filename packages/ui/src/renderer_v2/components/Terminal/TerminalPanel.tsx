@@ -1,18 +1,17 @@
 import React from 'react'
-import { Laptop, Plus, Server, X } from 'lucide-react'
+import { GripVertical, Laptop, Plus, Server, X } from 'lucide-react'
 import { observer } from 'mobx-react-lite'
 import type { AppStore, TerminalTabModel } from '../../stores/AppStore'
 import './terminal.scss'
 import { XTermView } from './XTermView'
-import { ConfirmDialog } from '../Common/ConfirmDialog'
 
 interface TerminalPanelProps {
   store: AppStore
   panelId: string
   tabs: TerminalTabModel[]
   activeTabId: string | null
-  isManagerPanel: boolean
   onSelectTab: (tabId: string) => void
+  onRequestCloseTabs?: (tabIds: string[]) => void
   onLayoutHeaderMouseDown?: (event: React.MouseEvent<HTMLElement>) => void
   onLayoutHeaderContextMenu?: (event: React.MouseEvent<HTMLElement>) => void
 }
@@ -22,13 +21,12 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = observer(({
   panelId,
   tabs,
   activeTabId,
-  isManagerPanel,
   onSelectTab,
+  onRequestCloseTabs,
   onLayoutHeaderMouseDown,
   onLayoutHeaderContextMenu
 }) => {
   const [menuOpen, setMenuOpen] = React.useState(false)
-  const [confirmCloseId, setConfirmCloseId] = React.useState<string | null>(null)
   const rootRef = React.useRef<HTMLDivElement | null>(null)
   const menuRef = React.useRef<HTMLDivElement | null>(null)
   const t = store.i18n.t
@@ -60,34 +58,23 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = observer(({
     }
   }, [menuOpen])
 
-  const closeableTabIds = new Set(tabs.map((tab) => tab.id))
-
   return (
     <div className={`panel panel-terminal${isLayoutDragSource ? ' is-dragging-source' : ''}`} ref={rootRef}>
-      <ConfirmDialog
-        open={!!confirmCloseId}
-        title={t.terminal.confirmCloseTitle}
-        message={t.terminal.confirmCloseMessage}
-        confirmText={t.common.close}
-        cancelText={t.common.cancel}
-        danger
-        onConfirm={() => {
-          if (confirmCloseId && closeableTabIds.has(confirmCloseId)) {
-            void store.closeTab(confirmCloseId)
-          }
-          setConfirmCloseId(null)
-        }}
-        onCancel={() => setConfirmCloseId(null)}
-      />
-
       <div
         className="terminal-tabs-container is-draggable"
         onMouseDown={onLayoutHeaderMouseDown}
         onContextMenu={onLayoutHeaderContextMenu}
       >
-        {isManagerPanel ? <div className="panel-manager-badge">{t.layout.managerBadge}</div> : null}
-        <div className="terminal-tabs-bar">
-          {tabs.map((tab) => {
+        <div className="panel-tab-drag-handle" aria-hidden="true">
+          <GripVertical size={12} strokeWidth={2.4} />
+        </div>
+        <div
+          className="terminal-tabs-bar"
+          data-layout-tab-bar="true"
+          data-layout-tab-panel-id={panelId}
+          data-layout-tab-kind="terminal"
+        >
+          {tabs.map((tab, index) => {
             const isActive = tab.id === activeTabId
             const Icon = tab.config.type === 'ssh' ? Server : Laptop
             const runtimeState = tab.runtimeState || 'initializing'
@@ -110,6 +97,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = observer(({
                 data-layout-tab-id={tab.id}
                 data-layout-tab-kind="terminal"
                 data-layout-tab-panel-id={panelId}
+                data-layout-tab-index={index}
               >
                 <span className="tab-icon">
                   <Icon size={14} strokeWidth={2} />
@@ -124,7 +112,11 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = observer(({
                   title={t.common.close}
                   onClick={(event) => {
                     event.stopPropagation()
-                    setConfirmCloseId(tab.id)
+                    if (onRequestCloseTabs) {
+                      onRequestCloseTabs([tab.id])
+                      return
+                    }
+                    void store.closeTab(tab.id)
                   }}
                 >
                   <X size={14} strokeWidth={2} />
@@ -134,18 +126,16 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = observer(({
           })}
         </div>
 
-        {isManagerPanel ? (
-          <button className="icon-btn-sm tab-add-btn" title={t.terminal.newTab} onClick={() => setMenuOpen((v) => !v)}>
-            <Plus size={14} strokeWidth={2} />
-          </button>
-        ) : null}
+        <button className="icon-btn-sm tab-add-btn" title={t.terminal.newTab} onClick={() => setMenuOpen((v) => !v)}>
+          <Plus size={14} strokeWidth={2} />
+        </button>
 
-        {isManagerPanel && menuOpen ? (
+        {menuOpen ? (
           <div className="tab-menu" role="menu" ref={menuRef}>
             <button
               className="tab-menu-item"
               onClick={() => {
-                store.createLocalTab()
+                store.createLocalTab(panelId)
                 setMenuOpen(false)
               }}
             >
@@ -160,7 +150,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = observer(({
                 key={entry.id}
                 className="tab-menu-item"
                 onClick={() => {
-                  store.createSshTab(entry.id)
+                  store.createSshTab(entry.id, panelId)
                   setMenuOpen(false)
                 }}
               >
@@ -195,6 +185,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = observer(({
                     config={tab.config}
                     theme={store.xtermTheme}
                     terminalSettings={store.settings?.terminal}
+                    isOwnedByUi={() => store.terminalTabs.some((candidate) => candidate.id === tab.id)}
                     isActive={isActive}
                     layoutSignature={layoutSignature}
                     onSelectionChange={(text) => store.setTerminalSelection(tab.id, text)}

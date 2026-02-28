@@ -3,6 +3,7 @@ import { observer } from 'mobx-react-lite'
 import clsx from 'clsx'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
 import type { ImperativePanelGroupHandle } from 'react-resizable-panels'
+import { Trash2 } from 'lucide-react'
 import type { AppStore } from '../../stores/AppStore'
 import {
   MAX_LAYOUT_PANELS,
@@ -14,10 +15,47 @@ import {
   type PanelKind,
   type TabDragPayload
 } from '../../layout'
+import { ConfirmDialog } from '../Common/ConfirmDialog'
 import { renderPanelByKind } from './panelRenderRegistry'
+import { PanelTypeRail } from './PanelTypeRail'
 
 interface LayoutWorkspaceProps {
   store: AppStore
+}
+
+type LayoutMenuMode = 'tab' | 'bar'
+
+type LayoutMenuAction =
+  | 'close-tab'
+  | 'close-other-tabs'
+  | 'close-all-tabs'
+  | 'split-left'
+  | 'split-right'
+  | 'split-up'
+  | 'split-down'
+  | 'close-panel'
+
+type LayoutMenuLabelKey =
+  | 'closeTab'
+  | 'closeOtherTabs'
+  | 'closeAllTabs'
+  | 'splitLeft'
+  | 'splitRight'
+  | 'splitUp'
+  | 'splitDown'
+  | 'closePanel'
+
+interface LayoutMenuState {
+  panelId: string
+  panelKind: PanelKind
+  mode: LayoutMenuMode
+  targetTabId: string | null
+  x: number
+  y: number
+}
+
+interface PendingTerminalCloseRequest {
+  tabIds: string[]
 }
 
 const DragOverlay: React.FC<{
@@ -58,11 +96,11 @@ const PanelLeaf: React.FC<{
   store: AppStore
   onHeaderMouseDown: (panelId: string, event: React.MouseEvent<HTMLElement>) => void
   onHeaderContextMenu: (panelId: string, event: React.MouseEvent<HTMLElement>) => void
-}> = observer(({ node, store, onHeaderMouseDown, onHeaderContextMenu }) => {
+  onRequestCloseTabsByKind: (kind: PanelKind, tabIds: string[]) => void
+}> = observer(({ node, store, onHeaderMouseDown, onHeaderContextMenu, onRequestCloseTabsByKind }) => {
   const panelId = node.panel.id
   const dragSource = store.layout.isDragging && store.layout.draggingPanelId === panelId
   const isDropTarget = store.layout.isDragging && store.layout.dropTargetPanelId === panelId
-  const isManagerPanel = store.layout.isManagerPanel(panelId)
   const panelTabIds = store.layout.getPanelTabIds(panelId)
 
   return (
@@ -79,8 +117,8 @@ const PanelLeaf: React.FC<{
         panelId,
         tabIds: panelTabIds,
         activeTabId: store.layout.getPanelActiveTabId(panelId),
-        isManagerPanel,
         onSelectTab: (tabId) => store.layout.setPanelActiveTab(panelId, tabId),
+        onRequestCloseTabs: (tabIds) => onRequestCloseTabsByKind(node.panel.kind, tabIds),
         onLayoutHeaderMouseDown: (event) => onHeaderMouseDown(panelId, event),
         onLayoutHeaderContextMenu: (event) => onHeaderContextMenu(panelId, event)
       })}
@@ -93,7 +131,8 @@ const SplitNodeView: React.FC<{
   store: AppStore
   onHeaderMouseDown: (panelId: string, event: React.MouseEvent<HTMLElement>) => void
   onHeaderContextMenu: (panelId: string, event: React.MouseEvent<HTMLElement>) => void
-}> = observer(({ node, store, onHeaderMouseDown, onHeaderContextMenu }) => {
+  onRequestCloseTabsByKind: (kind: PanelKind, tabIds: string[]) => void
+}> = observer(({ node, store, onHeaderMouseDown, onHeaderContextMenu, onRequestCloseTabsByKind }) => {
   const panelGroupRef = React.useRef<ImperativePanelGroupHandle | null>(null)
   const applyingLayoutRef = React.useRef(false)
 
@@ -146,6 +185,7 @@ const SplitNodeView: React.FC<{
                 store={store}
                 onHeaderMouseDown={onHeaderMouseDown}
                 onHeaderContextMenu={onHeaderContextMenu}
+                onRequestCloseTabsByKind={onRequestCloseTabsByKind}
               />
             </Panel>
             {index < node.children.length - 1 ? <PanelResizeHandle className="gyshell-resize-handle" /> : null}
@@ -161,7 +201,8 @@ const LayoutNodeView: React.FC<{
   store: AppStore
   onHeaderMouseDown: (panelId: string, event: React.MouseEvent<HTMLElement>) => void
   onHeaderContextMenu: (panelId: string, event: React.MouseEvent<HTMLElement>) => void
-}> = ({ node, store, onHeaderMouseDown, onHeaderContextMenu }) => {
+  onRequestCloseTabsByKind: (kind: PanelKind, tabIds: string[]) => void
+}> = ({ node, store, onHeaderMouseDown, onHeaderContextMenu, onRequestCloseTabsByKind }) => {
   if (node.type === 'panel') {
     return (
       <PanelLeaf
@@ -169,6 +210,7 @@ const LayoutNodeView: React.FC<{
         store={store}
         onHeaderMouseDown={onHeaderMouseDown}
         onHeaderContextMenu={onHeaderContextMenu}
+        onRequestCloseTabsByKind={onRequestCloseTabsByKind}
       />
     )
   }
@@ -179,79 +221,112 @@ const LayoutNodeView: React.FC<{
       store={store}
       onHeaderMouseDown={onHeaderMouseDown}
       onHeaderContextMenu={onHeaderContextMenu}
+      onRequestCloseTabsByKind={onRequestCloseTabsByKind}
     />
   )
 }
 
-const layoutMenuItems: Array<{
-  id: string
-  labelKey:
-    | 'splitRightTerminal'
-    | 'splitDownTerminal'
-    | 'splitRightChat'
-    | 'splitDownChat'
-    | 'closePanel'
-  kind?: PanelKind
-  direction?: 'horizontal' | 'vertical'
-  position?: 'before' | 'after'
-  danger?: boolean
-  action: 'split' | 'remove'
+const splitActions: Array<{
+  action: LayoutMenuAction
+  labelKey: LayoutMenuLabelKey
+  direction: 'horizontal' | 'vertical'
+  position: 'before' | 'after'
 }> = [
   {
-    id: 'split-right-terminal',
-    labelKey: 'splitRightTerminal',
-    kind: 'terminal',
-    direction: 'horizontal',
-    position: 'after',
-    action: 'split'
-  },
-  {
-    id: 'split-bottom-terminal',
-    labelKey: 'splitDownTerminal',
-    kind: 'terminal',
+    action: 'split-up',
+    labelKey: 'splitUp',
     direction: 'vertical',
-    position: 'after',
-    action: 'split'
+    position: 'before'
   },
   {
-    id: 'split-right-chat',
-    labelKey: 'splitRightChat',
-    kind: 'chat',
-    direction: 'horizontal',
-    position: 'after',
-    action: 'split'
-  },
-  {
-    id: 'split-bottom-chat',
-    labelKey: 'splitDownChat',
-    kind: 'chat',
+    action: 'split-down',
+    labelKey: 'splitDown',
     direction: 'vertical',
-    position: 'after',
-    action: 'split'
+    position: 'after'
   },
   {
-    id: 'remove-panel',
-    labelKey: 'closePanel',
-    action: 'remove',
-    danger: true
+    action: 'split-left',
+    labelKey: 'splitLeft',
+    direction: 'horizontal',
+    position: 'before'
+  },
+  {
+    action: 'split-right',
+    labelKey: 'splitRight',
+    direction: 'horizontal',
+    position: 'after'
   }
 ]
 
 export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store }) => {
-  const containerRef = React.useRef<HTMLDivElement | null>(null)
+  const rootRef = React.useRef<HTMLDivElement | null>(null)
+  const canvasRef = React.useRef<HTMLDivElement | null>(null)
   const menuRef = React.useRef<HTMLDivElement | null>(null)
+  const trashRef = React.useRef<HTMLDivElement | null>(null)
+  const isTrashHoverRef = React.useRef(false)
   const t = store.i18n.t
   const dragTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const [layoutMenu, setLayoutMenu] = React.useState<{
-    panelId: string
-    x: number
-    y: number
-  } | null>(null)
+  const [layoutMenu, setLayoutMenu] = React.useState<LayoutMenuState | null>(null)
+  const [isTrashHover, setIsTrashHover] = React.useState(false)
+  const [pendingTerminalCloseRequest, setPendingTerminalCloseRequest] = React.useState<PendingTerminalCloseRequest | null>(null)
+  const [tabInsertIndicatorRect, setTabInsertIndicatorRect] = React.useState<LayoutRect | null>(null)
 
   const setSelectionSuppressed = React.useCallback((suppressed: boolean) => {
     document.body?.classList.toggle('chat-drag-selection-suppressed', suppressed)
   }, [])
+
+  const setTrashHover = React.useCallback((value: boolean) => {
+    isTrashHoverRef.current = value
+    setIsTrashHover(value)
+  }, [])
+
+  const clearTabInsertIndicator = React.useCallback(() => {
+    setTabInsertIndicatorRect(null)
+  }, [])
+
+  const normalizeClosableTabIds = React.useCallback(
+    (kind: PanelKind, tabIds: string[]): string[] => {
+      const ownerIds =
+        kind === 'terminal'
+          ? new Set(store.terminalTabs.map((tab) => tab.id))
+          : new Set(store.chat.sessions.map((session) => session.id))
+      const seen = new Set<string>()
+      const next: string[] = []
+      tabIds.forEach((tabId) => {
+        if (!tabId || seen.has(tabId) || !ownerIds.has(tabId)) return
+        seen.add(tabId)
+        next.push(tabId)
+      })
+      return next
+    },
+    [store.chat.sessions, store.terminalTabs]
+  )
+
+  const requestCloseTabsByKind = React.useCallback(
+    (kind: PanelKind, tabIds: string[]) => {
+      const ids = normalizeClosableTabIds(kind, tabIds)
+      if (ids.length === 0) return
+      if (kind === 'terminal') {
+        setPendingTerminalCloseRequest({
+          tabIds: ids
+        })
+        return
+      }
+      ids.forEach((sessionId) => {
+        store.chat.closeSession(sessionId)
+      })
+    },
+    [normalizeClosableTabIds, store.chat]
+  )
+
+  const requestClosePanel = React.useCallback(
+    (panelId: string) => {
+      if (!store.layout.canRemovePanel(panelId)) return
+      store.layout.removePanel(panelId)
+    },
+    [store.layout]
+  )
 
   const terminalSignature = store.terminalTabs.map((tab) => tab.id).join('|')
   const chatSignature = store.chat.sessions.map((session) => session.id).join('|')
@@ -261,7 +336,7 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
   }, [chatSignature, store.layout, terminalSignature])
 
   React.useEffect(() => {
-    const element = containerRef.current
+    const element = canvasRef.current
     if (!element) return
 
     const updateViewport = () => {
@@ -303,29 +378,161 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
     }
   }, [layoutMenu])
 
+  const isPointerOnTrash = React.useCallback((targetElement: HTMLElement | null, clientX: number, clientY: number): boolean => {
+    const trashElement = trashRef.current
+    if (!trashElement) return false
+    if (targetElement && trashElement.contains(targetElement)) return true
+    const rect = trashElement.getBoundingClientRect()
+    return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom
+  }, [])
+
+  const resolveTabBarReorderHint = React.useCallback(
+    (
+      tabBarElement: HTMLElement,
+      targetPanelId: string,
+      draggingTabId: string,
+      clientX: number
+    ): {
+      anchorTabId: string | null
+      position: 'before' | 'after'
+      indicatorRect: LayoutRect
+    } | null => {
+      const tabElements = Array.from(tabBarElement.querySelectorAll<HTMLElement>('[data-layout-tab-id]'))
+        .filter((element) => element.getAttribute('data-layout-tab-panel-id') === targetPanelId)
+        .map((element) => {
+          const tabId = element.getAttribute('data-layout-tab-id')
+          if (!tabId || tabId === draggingTabId) return null
+          return {
+            tabId,
+            rect: element.getBoundingClientRect()
+          }
+        })
+        .filter((entry): entry is { tabId: string; rect: DOMRect } => !!entry)
+        .sort((a, b) => a.rect.left - b.rect.left)
+
+      const tabBarRect = tabBarElement.getBoundingClientRect()
+      const indicatorTop = tabBarRect.top + 4
+      const indicatorHeight = Math.max(16, tabBarRect.height - 8)
+      const buildIndicatorRect = (left: number): LayoutRect => ({
+        left: Math.round(left - 1),
+        top: Math.round(indicatorTop),
+        width: 2,
+        height: Math.round(indicatorHeight)
+      })
+
+      if (tabElements.length === 0) {
+        return {
+          anchorTabId: null,
+          position: 'after',
+          indicatorRect: buildIndicatorRect(tabBarRect.left + 8)
+        }
+      }
+
+      const firstTab = tabElements[0]
+      const firstTabMidX = firstTab.rect.left + firstTab.rect.width / 2
+      if (clientX <= firstTabMidX) {
+        return {
+          anchorTabId: firstTab.tabId,
+          position: 'before',
+          indicatorRect: buildIndicatorRect(firstTab.rect.left)
+        }
+      }
+
+      const lastTab = tabElements[tabElements.length - 1]
+      const lastTabMidX = lastTab.rect.left + lastTab.rect.width / 2
+      if (clientX >= lastTabMidX) {
+        return {
+          anchorTabId: lastTab.tabId,
+          position: 'after',
+          indicatorRect: buildIndicatorRect(lastTab.rect.right)
+        }
+      }
+
+      const beforeTarget = tabElements.find((entry) => clientX < entry.rect.left + entry.rect.width / 2)
+      if (!beforeTarget) {
+        return {
+          anchorTabId: lastTab.tabId,
+          position: 'after',
+          indicatorRect: buildIndicatorRect(lastTab.rect.right)
+        }
+      }
+
+      return {
+        anchorTabId: beforeTarget.tabId,
+        position: 'before',
+        indicatorRect: buildIndicatorRect(beforeTarget.rect.left)
+      }
+    },
+    []
+  )
+
   const updateDropTarget = React.useCallback(
     (targetElement: HTMLElement | null, clientX: number, clientY: number) => {
       const panelHost = targetElement?.closest?.('[data-layout-panel-id]') as HTMLElement | null
       const targetPanelId = panelHost?.getAttribute('data-layout-panel-id') || null
       const targetPanelKind = panelHost?.getAttribute('data-layout-panel-kind') as PanelKind | null
+
+      if (store.layout.dragType === 'tab') {
+        const draggingTab = store.layout.draggingTab
+        const tabBarElement = targetElement?.closest?.('[data-layout-tab-bar="true"]') as HTMLElement | null
+        const tabBarPanelId = tabBarElement?.getAttribute('data-layout-tab-panel-id') || null
+        const tabBarKind = tabBarElement?.getAttribute('data-layout-tab-kind') as PanelKind | null
+
+        if (draggingTab && tabBarElement && tabBarPanelId && tabBarKind === draggingTab.kind) {
+          const reorderHint = resolveTabBarReorderHint(tabBarElement, tabBarPanelId, draggingTab.tabId, clientX)
+          if (reorderHint) {
+            store.layout.setTabReorderTarget(tabBarPanelId, reorderHint.anchorTabId, reorderHint.position)
+            store.layout.setDropTarget(tabBarPanelId, 'center')
+            setTabInsertIndicatorRect(reorderHint.indicatorRect)
+            return
+          }
+        }
+      }
+
+      clearTabInsertIndicator()
       if (!panelHost || !targetPanelId) {
+        store.layout.clearTabReorderTarget()
         store.layout.setDropTarget(null, null)
         return
       }
 
       if (store.layout.dragType === 'panel' && targetPanelId === store.layout.draggingPanelId) {
+        store.layout.clearTabReorderTarget()
         store.layout.setDropTarget(null, null)
         return
       }
 
+      const tabHost = (targetElement?.closest?.('[data-layout-tab-id]') as HTMLElement | null) || null
       if (store.layout.dragType === 'tab') {
         const draggingTab = store.layout.draggingTab
         if (!draggingTab || !targetPanelKind || targetPanelKind !== draggingTab.kind) {
+          store.layout.clearTabReorderTarget()
           store.layout.setDropTarget(null, null)
+          return
+        }
+
+        const targetTabId = tabHost?.getAttribute('data-layout-tab-id') || null
+        const targetTabPanelId = tabHost?.getAttribute('data-layout-tab-panel-id') || null
+        if (targetTabId && targetTabId === draggingTab.tabId) {
+          store.layout.clearTabReorderTarget()
+          store.layout.setDropTarget(null, null)
+          return
+        }
+        if (
+          tabHost &&
+          targetTabId &&
+          targetTabPanelId === targetPanelId &&
+          targetTabId !== draggingTab.tabId
+        ) {
+          const tabRect = tabHost.getBoundingClientRect()
+          const position = clientX < tabRect.left + tabRect.width / 2 ? 'before' : 'after'
+          store.layout.setTabReorderTarget(targetPanelId, targetTabId, position)
+          store.layout.setDropTarget(targetPanelId, 'center')
           return
         }
       }
 
+      store.layout.clearTabReorderTarget()
       const rect = panelHost.getBoundingClientRect()
       const direction = determineDropDirection(
         {
@@ -339,7 +546,7 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
       )
       store.layout.setDropTarget(targetPanelId, direction)
     },
-    [store.layout]
+    [clearTabInsertIndicator, resolveTabBarReorderHint, store.layout]
   )
 
   const handleHeaderMouseDown = React.useCallback(
@@ -358,9 +565,17 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
 
       const handleMouseMove = (moveEvent: MouseEvent) => {
         store.layout.setDragPointer(moveEvent.clientX, moveEvent.clientY)
-        if (store.layout.isDragging) {
-          updateDropTarget(moveEvent.target as HTMLElement | null, moveEvent.clientX, moveEvent.clientY)
+        if (!store.layout.isDragging) return
+
+        const trashHover = isPointerOnTrash(moveEvent.target as HTMLElement | null, moveEvent.clientX, moveEvent.clientY)
+        setTrashHover(trashHover)
+        if (trashHover) {
+          clearTabInsertIndicator()
+          store.layout.clearTabReorderTarget()
+          store.layout.setDropTarget(null, null)
+          return
         }
+        updateDropTarget(moveEvent.target as HTMLElement | null, moveEvent.clientX, moveEvent.clientY)
       }
 
       const handleMouseUp = () => {
@@ -370,12 +585,23 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
         }
 
         setSelectionSuppressed(false)
-        if (store.layout.isDragging) {
+        if (
+          store.layout.isDragging &&
+          store.layout.dragType === 'panel' &&
+          isTrashHoverRef.current &&
+          store.layout.draggingPanelId
+        ) {
+          const draggedPanelId = store.layout.draggingPanelId
+          store.layout.clearDragging()
+          requestClosePanel(draggedPanelId)
+        } else if (store.layout.isDragging) {
           store.layout.commitDragging()
         } else {
           store.layout.clearDragging()
         }
 
+        setTrashHover(false)
+        clearTabInsertIndicator()
         window.removeEventListener('mousemove', handleMouseMove)
         window.removeEventListener('mouseup', handleMouseUp)
       }
@@ -383,11 +609,11 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
       window.addEventListener('mousemove', handleMouseMove)
       window.addEventListener('mouseup', handleMouseUp)
     },
-    [setSelectionSuppressed, store.layout, updateDropTarget]
+    [clearTabInsertIndicator, isPointerOnTrash, requestClosePanel, setSelectionSuppressed, setTrashHover, store.layout, updateDropTarget]
   )
 
   React.useEffect(() => {
-    const host = containerRef.current
+    const host = rootRef.current
     if (!host) return
 
     const readPayload = (target: EventTarget | null): TabDragPayload | null => {
@@ -404,6 +630,12 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
       }
     }
 
+    const clearDropPreview = () => {
+      clearTabInsertIndicator()
+      store.layout.clearTabReorderTarget()
+      store.layout.setDropTarget(null, null)
+    }
+
     const handleDragStart = (event: DragEvent) => {
       const payload = readPayload(event.target)
       if (!payload) return
@@ -412,6 +644,7 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
         event.dataTransfer.effectAllowed = 'move'
       }
       setSelectionSuppressed(true)
+      clearTabInsertIndicator()
       store.layout.startTabDragging(payload, event.clientX, event.clientY)
     }
 
@@ -419,44 +652,113 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
       if (!store.layout.isDragging || store.layout.dragType !== 'tab') return
       event.preventDefault()
       store.layout.setDragPointer(event.clientX, event.clientY)
+
+      const trashHover = isPointerOnTrash(event.target as HTMLElement | null, event.clientX, event.clientY)
+      setTrashHover(trashHover)
+      if (trashHover) {
+        clearDropPreview()
+        if (event.dataTransfer) {
+          event.dataTransfer.dropEffect = 'move'
+        }
+        return
+      }
+
       updateDropTarget(event.target as HTMLElement | null, event.clientX, event.clientY)
       if (event.dataTransfer) {
-        event.dataTransfer.dropEffect = store.layout.dropPreviewRect ? 'move' : 'none'
+        event.dataTransfer.dropEffect = store.layout.dropTargetPanelId ? 'move' : 'none'
       }
+    }
+
+    const handleDragLeave = (event: DragEvent) => {
+      if (!store.layout.isDragging || store.layout.dragType !== 'tab') return
+      const rect = host.getBoundingClientRect()
+      const outside =
+        event.clientX < rect.left ||
+        event.clientX > rect.right ||
+        event.clientY < rect.top ||
+        event.clientY > rect.bottom
+      if (!outside) return
+      clearDropPreview()
+      setTrashHover(false)
     }
 
     const handleDrop = (event: DragEvent) => {
       if (!store.layout.isDragging || store.layout.dragType !== 'tab') return
       event.preventDefault()
       store.layout.setDragPointer(event.clientX, event.clientY)
+      const draggingTab = store.layout.draggingTab
+      const trashHover = isPointerOnTrash(event.target as HTMLElement | null, event.clientX, event.clientY)
+      if (trashHover && draggingTab) {
+        store.layout.clearDragging()
+        setSelectionSuppressed(false)
+        setTrashHover(false)
+        clearTabInsertIndicator()
+        requestCloseTabsByKind(draggingTab.kind, [draggingTab.tabId])
+        return
+      }
+
       updateDropTarget(event.target as HTMLElement | null, event.clientX, event.clientY)
       store.layout.commitDragging()
       setSelectionSuppressed(false)
+      setTrashHover(false)
+      clearTabInsertIndicator()
     }
 
     const handleDragEnd = () => {
       if (!store.layout.isDragging || store.layout.dragType !== 'tab') return
       store.layout.clearDragging()
       setSelectionSuppressed(false)
+      setTrashHover(false)
+      clearTabInsertIndicator()
+    }
+
+    const handleWindowDragOver = (event: DragEvent) => {
+      if (!store.layout.isDragging || store.layout.dragType !== 'tab') return
+      const rect = host.getBoundingClientRect()
+      const inside =
+        event.clientX >= rect.left &&
+        event.clientX <= rect.right &&
+        event.clientY >= rect.top &&
+        event.clientY <= rect.bottom
+      if (inside) return
+      clearDropPreview()
+      setTrashHover(false)
     }
 
     host.addEventListener('dragstart', handleDragStart)
     host.addEventListener('dragover', handleDragOver)
+    host.addEventListener('dragleave', handleDragLeave)
     host.addEventListener('drop', handleDrop)
     host.addEventListener('dragend', handleDragEnd)
+    window.addEventListener('dragover', handleWindowDragOver)
 
     return () => {
       host.removeEventListener('dragstart', handleDragStart)
       host.removeEventListener('dragover', handleDragOver)
+      host.removeEventListener('dragleave', handleDragLeave)
       host.removeEventListener('drop', handleDrop)
       host.removeEventListener('dragend', handleDragEnd)
+      window.removeEventListener('dragover', handleWindowDragOver)
     }
-  }, [setSelectionSuppressed, store.layout, updateDropTarget])
+  }, [clearTabInsertIndicator, isPointerOnTrash, requestCloseTabsByKind, setSelectionSuppressed, setTrashHover, store.layout, updateDropTarget])
 
   const handleHeaderContextMenu = React.useCallback((panelId: string, event: React.MouseEvent<HTMLElement>) => {
     event.preventDefault()
-    setLayoutMenu({ panelId, x: event.clientX, y: event.clientY })
-  }, [])
+    const panelKind = store.layout.getPanelKindById(panelId)
+    if (!panelKind) return
+    const tabElement = (event.target as HTMLElement | null)?.closest?.('[data-layout-tab-id]') as HTMLElement | null
+    const targetTabId = tabElement?.getAttribute('data-layout-tab-id') || null
+    const targetTabPanelId = tabElement?.getAttribute('data-layout-tab-panel-id') || null
+    const mode: LayoutMenuMode = targetTabId && targetTabPanelId === panelId ? 'tab' : 'bar'
+    setLayoutMenu({
+      panelId,
+      panelKind,
+      mode,
+      targetTabId: mode === 'tab' ? targetTabId : null,
+      x: event.clientX,
+      y: event.clientY
+    })
+  }, [store.layout])
 
   React.useEffect(() => {
     return () => {
@@ -465,63 +767,236 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
         dragTimerRef.current = null
       }
       setSelectionSuppressed(false)
+      setTrashHover(false)
+      clearTabInsertIndicator()
       store.layout.clearDragging()
     }
-  }, [setSelectionSuppressed, store.layout])
+  }, [clearTabInsertIndicator, setSelectionSuppressed, setTrashHover, store.layout])
+
+  const menuTabIds = layoutMenu ? store.layout.getPanelTabIds(layoutMenu.panelId) : []
+  const menuItems: Array<{
+    action: LayoutMenuAction
+    labelKey: LayoutMenuLabelKey
+    danger?: boolean
+    disabled?: boolean
+  }> = (() => {
+    if (!layoutMenu) return []
+    const canSplit = store.layout.panelCount < MAX_LAYOUT_PANELS
+    const canClosePanel = store.layout.canRemovePanel(layoutMenu.panelId)
+
+    if (layoutMenu.mode === 'bar') {
+      return [
+        {
+          action: 'close-panel',
+          labelKey: 'closePanel',
+          danger: true,
+          disabled: !canClosePanel
+        },
+        {
+          action: 'close-all-tabs',
+          labelKey: 'closeAllTabs',
+          danger: true,
+          disabled: menuTabIds.length === 0
+        }
+      ]
+    }
+
+    const hasTargetTab = !!layoutMenu.targetTabId && menuTabIds.includes(layoutMenu.targetTabId)
+    const closeItems: Array<{
+      action: LayoutMenuAction
+      labelKey: LayoutMenuLabelKey
+      danger?: boolean
+      disabled?: boolean
+    }> = [
+      {
+        action: 'close-tab',
+        labelKey: 'closeTab',
+        danger: true,
+        disabled: !hasTargetTab
+      },
+      {
+        action: 'close-other-tabs',
+        labelKey: 'closeOtherTabs',
+        danger: true,
+        disabled: !hasTargetTab || menuTabIds.length <= 1
+      },
+      {
+        action: 'close-all-tabs',
+        labelKey: 'closeAllTabs',
+        danger: true,
+        disabled: menuTabIds.length === 0
+      }
+    ]
+
+    const splitItems = splitActions.map((entry) => ({
+      action: entry.action,
+      labelKey: entry.labelKey,
+      disabled: !canSplit || !hasTargetTab
+    }))
+
+    return [
+      ...closeItems,
+      ...splitItems,
+      {
+        action: 'close-panel',
+        labelKey: 'closePanel',
+        danger: true,
+        disabled: !canClosePanel
+      }
+    ]
+  })()
+
+  const runMenuAction = React.useCallback((action: LayoutMenuAction) => {
+    if (!layoutMenu) return
+    const panelTabIds = store.layout.getPanelTabIds(layoutMenu.panelId)
+
+    if (action === 'close-tab' && layoutMenu.targetTabId) {
+      requestCloseTabsByKind(layoutMenu.panelKind, [layoutMenu.targetTabId])
+      setLayoutMenu(null)
+      return
+    }
+
+    if (action === 'close-other-tabs' && layoutMenu.targetTabId) {
+      requestCloseTabsByKind(
+        layoutMenu.panelKind,
+        panelTabIds.filter((tabId) => tabId !== layoutMenu.targetTabId)
+      )
+      setLayoutMenu(null)
+      return
+    }
+
+    if (action === 'close-all-tabs') {
+      requestCloseTabsByKind(layoutMenu.panelKind, panelTabIds)
+      setLayoutMenu(null)
+      return
+    }
+
+    const splitEntry = splitActions.find((entry) => entry.action === action)
+    if (splitEntry) {
+      const dropDirection =
+        splitEntry.direction === 'horizontal'
+          ? splitEntry.position === 'before'
+            ? 'left'
+            : 'right'
+          : splitEntry.position === 'before'
+            ? 'top'
+            : 'bottom'
+
+      if (layoutMenu.mode === 'tab' && layoutMenu.targetTabId) {
+        store.layout.splitTabToDirection(
+          {
+            tabId: layoutMenu.targetTabId,
+            kind: layoutMenu.panelKind,
+            sourcePanelId: layoutMenu.panelId
+          },
+          layoutMenu.panelId,
+          dropDirection
+        )
+      }
+      setLayoutMenu(null)
+      return
+    }
+
+    if (action === 'close-panel') {
+      requestClosePanel(layoutMenu.panelId)
+      setLayoutMenu(null)
+    }
+  }, [layoutMenu, requestClosePanel, requestCloseTabsByKind, store.layout])
 
   const targetRect = store.layout.dropTargetPanelId
     ? store.layout.getPanelRect(store.layout.dropTargetPanelId)
     : null
 
+  const pendingTerminalCloseCount = pendingTerminalCloseRequest?.tabIds.length || 0
+
   return (
-    <div ref={containerRef} className="gyshell-layout-root">
-      <LayoutNodeView
-        node={store.layout.tree.root}
-        store={store}
-        onHeaderMouseDown={handleHeaderMouseDown}
-        onHeaderContextMenu={handleHeaderContextMenu}
-      />
-
-      {store.layout.isDragging ? (
-        <DragOverlay
-          targetRect={targetRect}
-          previewRect={store.layout.dropPreviewRect}
+    <div ref={rootRef} className="gyshell-layout-root">
+      <PanelTypeRail store={store} />
+      <div ref={canvasRef} className="gyshell-layout-canvas">
+        <ConfirmDialog
+          open={pendingTerminalCloseCount > 0}
+          title={t.terminal.confirmCloseTitle}
+          message={
+            pendingTerminalCloseCount > 1
+              ? t.terminal.confirmCloseManyMessage(pendingTerminalCloseCount)
+              : t.terminal.confirmCloseMessage
+          }
+          confirmText={t.common.close}
+          cancelText={t.common.cancel}
+          danger
+          onCancel={() => setPendingTerminalCloseRequest(null)}
+          onConfirm={() => {
+            const request = pendingTerminalCloseRequest
+            if (!request) return
+            setPendingTerminalCloseRequest(null)
+            void (async () => {
+              for (const tabId of request.tabIds) {
+                await store.closeTab(tabId)
+              }
+            })()
+          }}
         />
-      ) : null}
 
-      {layoutMenu ? (
-        <div
-          ref={menuRef}
-          className="gyshell-layout-menu"
-          style={{ left: layoutMenu.x, top: layoutMenu.y }}
-        >
-          {layoutMenuItems.map((item) => {
-            const disabled =
-              (item.action === 'remove' && !store.layout.canRemovePanel(layoutMenu.panelId)) ||
-              (item.action === 'split' && store.layout.panelCount >= MAX_LAYOUT_PANELS)
-            return (
+        <LayoutNodeView
+          node={store.layout.tree.root}
+          store={store}
+          onHeaderMouseDown={handleHeaderMouseDown}
+          onHeaderContextMenu={handleHeaderContextMenu}
+          onRequestCloseTabsByKind={requestCloseTabsByKind}
+        />
+
+        {store.layout.isDragging ? (
+          <DragOverlay
+            targetRect={targetRect}
+            previewRect={store.layout.dropPreviewRect}
+          />
+        ) : null}
+
+        {store.layout.isDragging && store.layout.dragType === 'tab' && tabInsertIndicatorRect ? (
+          <div
+            className="gyshell-layout-tab-insert-indicator"
+            style={{
+              left: tabInsertIndicatorRect.left,
+              top: tabInsertIndicatorRect.top,
+              height: tabInsertIndicatorRect.height
+            }}
+          />
+        ) : null}
+
+        {store.layout.isDragging ? (
+          <div
+            ref={trashRef}
+            className={clsx('gyshell-layout-trash-drop', {
+              'is-hot': isTrashHover
+            })}
+            data-layout-trash-drop="true"
+          >
+            <Trash2 size={16} strokeWidth={2.2} />
+          </div>
+        ) : null}
+
+        {layoutMenu ? (
+          <div
+            ref={menuRef}
+            className="gyshell-layout-menu"
+            style={{ left: layoutMenu.x, top: layoutMenu.y }}
+          >
+            {menuItems.map((item) => (
               <button
-                key={item.id}
+                key={item.action}
                 className={clsx('gyshell-layout-menu-item', {
                   'is-danger': item.danger,
-                  'is-disabled': disabled
+                  'is-disabled': item.disabled
                 })}
-                disabled={disabled}
-                onClick={() => {
-                  if (item.action === 'split' && item.kind && item.direction && item.position) {
-                    store.layout.splitPanel(layoutMenu.panelId, item.kind, item.direction, item.position)
-                  } else if (item.action === 'remove') {
-                    store.layout.removePanel(layoutMenu.panelId)
-                  }
-                  setLayoutMenu(null)
-                }}
+                disabled={item.disabled}
+                onClick={() => runMenuAction(item.action)}
               >
                 {t.layout[item.labelKey]}
               </button>
-            )
-          })}
-        </div>
-      ) : null}
+            ))}
+          </div>
+        ) : null}
+      </div>
     </div>
   )
 })

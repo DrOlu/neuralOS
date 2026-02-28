@@ -9,8 +9,8 @@ export interface LayoutPanelRenderProps {
   panelId: string
   tabIds: string[]
   activeTabId: string | null
-  isManagerPanel: boolean
   onSelectTab: (tabId: string) => void
+  onRequestCloseTabs?: (tabIds: string[]) => void
   onLayoutHeaderMouseDown?: (event: React.MouseEvent<HTMLElement>) => void
   onLayoutHeaderContextMenu?: (event: React.MouseEvent<HTMLElement>) => void
 }
@@ -22,8 +22,8 @@ const TerminalPanelRenderer: LayoutPanelRenderer = ({
   panelId,
   tabIds,
   activeTabId,
-  isManagerPanel,
   onSelectTab,
+  onRequestCloseTabs,
   onLayoutHeaderMouseDown,
   onLayoutHeaderContextMenu
 }) => (
@@ -34,8 +34,8 @@ const TerminalPanelRenderer: LayoutPanelRenderer = ({
       .map((tabId) => store.terminalTabs.find((tab) => tab.id === tabId))
       .filter((tab): tab is NonNullable<typeof tab> => !!tab)}
     activeTabId={activeTabId}
-    isManagerPanel={isManagerPanel}
     onSelectTab={onSelectTab}
+    onRequestCloseTabs={onRequestCloseTabs}
     onLayoutHeaderMouseDown={onLayoutHeaderMouseDown}
     onLayoutHeaderContextMenu={onLayoutHeaderContextMenu}
   />
@@ -46,8 +46,8 @@ const ChatPanelRenderer: LayoutPanelRenderer = ({
   panelId,
   tabIds,
   activeTabId,
-  isManagerPanel,
   onSelectTab,
+  onRequestCloseTabs,
   onLayoutHeaderMouseDown,
   onLayoutHeaderContextMenu
 }) => (
@@ -56,8 +56,8 @@ const ChatPanelRenderer: LayoutPanelRenderer = ({
     panelId={panelId}
     sessionIds={tabIds}
     activeSessionId={activeTabId}
-    isManagerPanel={isManagerPanel}
     onSelectSession={onSelectTab}
+    onRequestCloseTabs={onRequestCloseTabs}
     onLayoutHeaderMouseDown={onLayoutHeaderMouseDown}
     onLayoutHeaderContextMenu={onLayoutHeaderContextMenu}
   />

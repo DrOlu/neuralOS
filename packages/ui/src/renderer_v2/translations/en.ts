@@ -209,6 +209,8 @@ export const en = {
     newTab: 'New Tab',
     confirmCloseTitle: 'Close Terminal',
     confirmCloseMessage: 'Are you sure you want to close this terminal tab? Any running process will be terminated.',
+    confirmCloseManyMessage: (count: number) =>
+      `Are you sure you want to close ${count} terminal tabs? Any running process will be terminated.`,
   },
   chat: {
     dialog: 'Dialog',
@@ -256,7 +258,17 @@ export const en = {
     splitDownTerminal: 'Split Down with Terminal',
     splitRightChat: 'Split Right with Chat',
     splitDownChat: 'Split Down with Chat',
+    splitLeft: 'Split Left',
+    splitRight: 'Split Right',
+    splitUp: 'Split Up',
+    splitDown: 'Split Down',
     closePanel: 'Close Panel',
-    managerBadge: 'Manager'
+    closeTab: 'Close',
+    closeOtherTabs: 'Close Other',
+    closeAllTabs: 'Close All',
+    chatKind: 'Chat',
+    terminalKind: 'Terminal',
+    addChatSession: 'New Chat Session',
+    addTerminalTab: 'New Local Terminal'
   },
 }

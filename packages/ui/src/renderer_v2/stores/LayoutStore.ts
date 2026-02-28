@@ -32,6 +32,11 @@ const DEFAULT_VIEWPORT: LayoutViewport = {
 }
 
 const PREVIEW_PANEL_ID = '__layout-preview-panel__'
+const MIN_PANEL_COUNT_BY_KIND: Partial<Record<PanelKind, number>> = {
+  chat: 1
+}
+
+const getMinPanelCountForKind = (kind: PanelKind): number => MIN_PANEL_COUNT_BY_KIND[kind] ?? 0
 
 const toSplitPlacement = (
   direction: DropDirection
@@ -55,6 +60,11 @@ const unique = (items: string[]): string[] => {
 }
 
 type DragType = 'panel' | 'tab' | null
+type TabReorderTarget = {
+  panelId: string
+  anchorTabId: string | null
+  position: 'before' | 'after'
+} | null
 
 export class LayoutStore {
   tree: LayoutTree = buildLayoutTree(undefined)
@@ -72,6 +82,7 @@ export class LayoutStore {
   dropTargetPanelId: string | null = null
   dropDirection: DropDirection | null = null
   dropPreviewRect: LayoutRect | null = null
+  tabReorderTarget: TabReorderTarget = null
 
   private appStore: AppStore
   private persistTimer: ReturnType<typeof setTimeout> | null = null
@@ -92,6 +103,7 @@ export class LayoutStore {
       dropTargetPanelId: observable,
       dropDirection: observable,
       dropPreviewRect: observable,
+      tabReorderTarget: observable,
       panelOrder: computed,
       panelSizes: computed,
       panelNodes: computed,
@@ -103,6 +115,13 @@ export class LayoutStore {
       setSplitSizes: action,
       splitPanel: action,
       removePanel: action,
+      ensurePrimaryPanelForKind: action,
+      focusPrimaryPanel: action,
+      attachTabToPanel: action,
+      attachTabToPrimaryPanel: action,
+      splitTabToDirection: action,
+      setTabReorderTarget: action,
+      clearTabReorderTarget: action,
       setFocusedPanel: action,
       setPanelActiveTab: action,
       startPanelDragging: action,
@@ -170,11 +189,13 @@ export class LayoutStore {
     let pass = 0
     while (pass < MAX_LAYOUT_PANELS + 2) {
       pass += 1
-      const { panelTabs, managerPanels } = this.computeBindingsForTree(nextTree)
+      const panelTabs = this.computeBindingsForTree(nextTree)
+      const { managerPanels: _legacyManagerPanels, ...treeWithoutManager } = nextTree as LayoutTree & {
+        managerPanels?: Partial<Record<PanelKind, string>>
+      }
       nextTree = {
-        ...nextTree,
-        panelTabs,
-        managerPanels
+        ...treeWithoutManager,
+        panelTabs
       }
       Object.entries(panelTabs).forEach(([panelId, binding]) => {
         if ((binding.tabIds || []).length > 0) {
@@ -245,10 +266,14 @@ export class LayoutStore {
 
   canRemovePanel(panelId: string): boolean {
     if (this.panelCount <= 1) return false
-    const kind = this.getPanelKind(panelId)
-    if (!kind) return false
-    const sameKindCount = this.panelNodes.filter((node) => node.panel.kind === kind).length
-    return sameKindCount > 1
+    const panelNode = this.panelNodes.find((node) => node.panel.id === panelId)
+    if (!panelNode) return false
+
+    const minCount = getMinPanelCountForKind(panelNode.panel.kind)
+    if (minCount <= 0) return true
+
+    const sameKindPanelCount = this.panelNodes.filter((node) => node.panel.kind === panelNode.panel.kind).length
+    return sameKindPanelCount > minCount
   }
 
   setFocusedPanel(panelId: string) {
@@ -259,18 +284,12 @@ export class LayoutStore {
     this.saveLayoutDebounced()
   }
 
-  isManagerPanel(panelId: string): boolean {
-    const kind = this.getPanelKind(panelId)
-    if (!kind) return false
-    return this.tree.managerPanels?.[kind] === panelId
+  getPanelIdsByKind(kind: PanelKind): string[] {
+    return this.panelNodes.filter((node) => node.panel.kind === kind).map((node) => node.panel.id)
   }
 
-  getManagerPanelId(kind: PanelKind): string | null {
-    const managerId = this.tree.managerPanels?.[kind]
-    if (managerId && this.panelNodes.some((node) => node.panel.id === managerId)) {
-      return managerId
-    }
-    return this.panelNodes.find((node) => node.panel.kind === kind)?.panel.id || null
+  getPrimaryPanelId(kind: PanelKind): string | null {
+    return this.getPanelIdsByKind(kind)[0] || null
   }
 
   getPanelTabIds(panelId: string): string[] {
@@ -287,7 +306,7 @@ export class LayoutStore {
   }
 
   setPanelActiveTab(panelId: string, tabId: string) {
-    const kind = this.getPanelKind(panelId)
+    const kind = this.getPanelKindById(panelId)
     if (!kind) return
     const current = this.tree.panelTabs?.[panelId]
     if (!current || !current.tabIds.includes(tabId)) return
@@ -307,10 +326,79 @@ export class LayoutStore {
     this.syncGlobalActiveFromPanel(kind, tabId)
   }
 
-  attachTabToManager(kind: PanelKind, tabId: string) {
-    const managerPanelId = this.getManagerPanelId(kind)
-    if (!managerPanelId) return
-    this.moveTabBinding(kind, tabId, managerPanelId)
+  ensurePrimaryPanelForKind(kind: PanelKind): string | null {
+    const existing = this.getPrimaryPanelId(kind)
+    if (existing) {
+      return existing
+    }
+    if (this.panelCount >= MAX_LAYOUT_PANELS) {
+      return null
+    }
+
+    const targetPanelId =
+      (this.tree.focusedPanelId && this.panelNodes.some((node) => node.panel.id === this.tree.focusedPanelId)
+        ? this.tree.focusedPanelId
+        : this.panelNodes[0]?.panel.id) || null
+    if (!targetPanelId) {
+      return null
+    }
+
+    const createdPanelId = makeLayoutId(`panel-${kind}`)
+    const nextTree = splitPanelWithPanelId(
+      this.tree,
+      targetPanelId,
+      {
+        kind,
+        panelId: createdPanelId
+      },
+      'horizontal',
+      'after'
+    )
+    if (nextTree === this.tree) {
+      return null
+    }
+    this.pinnedEmptyPanelIds.add(createdPanelId)
+    this.applyTree(nextTree)
+    return this.getPrimaryPanelId(kind)
+  }
+
+  focusPrimaryPanel(kind: PanelKind): string | null {
+    const panelId = this.getPrimaryPanelId(kind)
+    if (!panelId) return null
+    this.setFocusedPanel(panelId)
+    return panelId
+  }
+
+  attachTabToPanel(kind: PanelKind, tabId: string, targetPanelId: string) {
+    this.moveTabBinding(kind, tabId, targetPanelId)
+  }
+
+  attachTabToPrimaryPanel(kind: PanelKind, tabId: string) {
+    const panelId = this.getPrimaryPanelId(kind)
+    if (!panelId) return
+    this.moveTabBinding(kind, tabId, panelId)
+  }
+
+  splitTabToDirection(
+    payload: TabDragPayload,
+    targetPanelId: string,
+    direction: Exclude<DropDirection, 'center'>
+  ) {
+    this.commitTabDrop(payload, targetPanelId, direction)
+  }
+
+  setTabReorderTarget(panelId: string, anchorTabId: string | null, position: 'before' | 'after') {
+    this.tabReorderTarget = {
+      panelId,
+      anchorTabId,
+      position
+    }
+    this.dropPreviewRect = this.computeDropPreviewRect()
+  }
+
+  clearTabReorderTarget() {
+    this.tabReorderTarget = null
+    this.dropPreviewRect = this.computeDropPreviewRect()
   }
 
   startPanelDragging(panelId: string, x: number, y: number) {
@@ -323,6 +411,7 @@ export class LayoutStore {
     this.dropTargetPanelId = null
     this.dropDirection = null
     this.dropPreviewRect = null
+    this.tabReorderTarget = null
   }
 
   startTabDragging(payload: TabDragPayload, x: number, y: number) {
@@ -335,6 +424,7 @@ export class LayoutStore {
     this.dropTargetPanelId = null
     this.dropDirection = null
     this.dropPreviewRect = null
+    this.tabReorderTarget = null
   }
 
   setDragPointer(x: number, y: number) {
@@ -345,6 +435,9 @@ export class LayoutStore {
   setDropTarget(panelId: string | null, direction: DropDirection | null) {
     this.dropTargetPanelId = panelId
     this.dropDirection = direction
+    if (direction !== 'center') {
+      this.tabReorderTarget = null
+    }
     this.dropPreviewRect = this.computeDropPreviewRect()
   }
 
@@ -356,6 +449,7 @@ export class LayoutStore {
     this.dropTargetPanelId = null
     this.dropDirection = null
     this.dropPreviewRect = null
+    this.tabReorderTarget = null
   }
 
   commitDragging() {
@@ -375,8 +469,9 @@ export class LayoutStore {
       const payload = this.draggingTab
       const targetPanelId = this.dropTargetPanelId
       const dropDirection = this.dropDirection
+      const reorderTarget = this.tabReorderTarget
       this.clearDragging()
-      this.commitTabDrop(payload, targetPanelId, dropDirection)
+      this.commitTabDrop(payload, targetPanelId, dropDirection, reorderTarget || undefined)
       return
     }
 
@@ -387,13 +482,28 @@ export class LayoutStore {
     return this.geometry.panelRects[panelId] || null
   }
 
-  private commitTabDrop(payload: TabDragPayload, targetPanelId: string, direction: DropDirection) {
+  private commitTabDrop(
+    payload: TabDragPayload,
+    targetPanelId: string,
+    direction: DropDirection,
+    reorderTarget?: Exclude<TabReorderTarget, null>
+  ) {
     if (!this.canAcceptTabDrop(payload, targetPanelId, direction)) {
       return
     }
 
     if (direction === 'center') {
-      this.moveTabBinding(payload.kind, payload.tabId, targetPanelId)
+      this.moveTabBinding(
+        payload.kind,
+        payload.tabId,
+        targetPanelId,
+        reorderTarget
+          ? {
+              anchorTabId: reorderTarget.anchorTabId,
+              position: reorderTarget.position
+            }
+          : undefined
+      )
       this.setPanelActiveTab(targetPanelId, payload.tabId)
       return
     }
@@ -440,6 +550,12 @@ export class LayoutStore {
         return null
       }
       if (this.dropDirection === 'center') {
+        if (
+          this.tabReorderTarget &&
+          this.tabReorderTarget.panelId === this.dropTargetPanelId
+        ) {
+          return null
+        }
         return this.geometry.panelRects[this.dropTargetPanelId] || null
       }
       const splitPlacement = toSplitPlacement(this.dropDirection)
@@ -463,7 +579,7 @@ export class LayoutStore {
   }
 
   private canAcceptTabDrop(payload: TabDragPayload, targetPanelId: string, direction: DropDirection): boolean {
-    const targetKind = this.getPanelKind(targetPanelId)
+    const targetKind = this.getPanelKindById(targetPanelId)
     if (!targetKind || targetKind !== payload.kind) return false
 
     if (direction === 'center') {
@@ -492,32 +608,21 @@ export class LayoutStore {
     return validateLayoutTree(projectedTree, this.viewport).valid
   }
 
-  private getPanelKind(panelId: string): PanelKind | null {
+  getPanelKindById(panelId: string): PanelKind | null {
     return this.panelNodes.find((node) => node.panel.id === panelId)?.panel.kind || null
   }
 
-  private computeBindingsForTree(tree: LayoutTree): {
-    panelTabs: Record<string, LayoutPanelTabBinding>
-    managerPanels: Partial<Record<PanelKind, string>>
-  } {
+  private computeBindingsForTree(tree: LayoutTree): Record<string, LayoutPanelTabBinding> {
     const panelNodes = listPanels(tree)
     const panelTabs: Record<string, LayoutPanelTabBinding> = {}
-    const managerPanels: Partial<Record<PanelKind, string>> = {
-      ...tree.managerPanels
-    }
 
     PANEL_KIND_LIST.forEach((kind) => {
       const adapter = getPanelKindAdapter(kind)
       const inventoryHydrated = adapter.isOwnerInventoryHydrated(this.appStore)
       const panelIds = panelNodes.filter((node) => node.panel.kind === kind).map((node) => node.panel.id)
       if (panelIds.length === 0) {
-        delete managerPanels[kind]
         return
       }
-
-      const existingManager = managerPanels[kind]
-      const managerPanelId = existingManager && panelIds.includes(existingManager) ? existingManager : panelIds[0]
-      managerPanels[kind] = managerPanelId
 
       if (!inventoryHydrated) {
         panelIds.forEach((panelId) => {
@@ -548,9 +653,10 @@ export class LayoutStore {
 
       const missing = ownerTabIds.filter((tabId) => !consumed.has(tabId))
       if (missing.length > 0) {
-        panelTabs[managerPanelId] = {
-          ...panelTabs[managerPanelId],
-          tabIds: unique([...(panelTabs[managerPanelId]?.tabIds || []), ...missing])
+        const primaryPanelId = panelIds[0]
+        panelTabs[primaryPanelId] = {
+          ...panelTabs[primaryPanelId],
+          tabIds: unique([...(panelTabs[primaryPanelId]?.tabIds || []), ...missing])
         }
       }
 
@@ -581,10 +687,7 @@ export class LayoutStore {
       }
     })
 
-    return {
-      panelTabs,
-      managerPanels
-    }
+    return panelTabs
   }
 
   private findAutoRemovableEmptyPanelId(
@@ -592,8 +695,17 @@ export class LayoutStore {
     panelTabs: Record<string, LayoutPanelTabBinding>
   ): string | null {
     const panels = listPanels(tree)
+    const panelCountByKind = new Map<PanelKind, number>()
+    panels.forEach((panel) => {
+      const kind = panel.panel.kind
+      panelCountByKind.set(kind, (panelCountByKind.get(kind) || 0) + 1)
+    })
     const eligible = panels.filter((panel) => {
       if (!getPanelKindAdapter(panel.panel.kind).isOwnerInventoryHydrated(this.appStore)) {
+        return false
+      }
+      const kindCount = panelCountByKind.get(panel.panel.kind) || 0
+      if (kindCount <= getMinPanelCountForKind(panel.panel.kind)) {
         return false
       }
       if (this.pinnedEmptyPanelIds.has(panel.panel.id)) {
@@ -601,17 +713,23 @@ export class LayoutStore {
       }
       const tabIds = panelTabs[panel.panel.id]?.tabIds || []
       if (tabIds.length > 0) return false
-      const sameKindCount = panels.filter((entry) => entry.panel.kind === panel.panel.kind).length
-      return sameKindCount > 1
+      return panels.length > 1
     })
     if (eligible.length === 0) return null
 
-    const nonManager = eligible.find((panel) => tree.managerPanels?.[panel.panel.kind] !== panel.panel.id)
-    return (nonManager || eligible[0])?.panel.id || null
+    return eligible[0]?.panel.id || null
   }
 
-  private moveTabBinding(kind: PanelKind, tabId: string, targetPanelId: string) {
-    const nextTree = this.createTreeWithMovedTab(this.tree, kind, tabId, targetPanelId)
+  private moveTabBinding(
+    kind: PanelKind,
+    tabId: string,
+    targetPanelId: string,
+    options?: {
+      anchorTabId?: string | null
+      position?: 'before' | 'after'
+    }
+  ) {
+    const nextTree = this.createTreeWithMovedTab(this.tree, kind, tabId, targetPanelId, options)
     if (!nextTree) return
     this.tree = nextTree
     this.syncPanelBindings({ persist: false })
@@ -623,7 +741,11 @@ export class LayoutStore {
     tree: LayoutTree,
     kind: PanelKind,
     tabId: string,
-    targetPanelId: string
+    targetPanelId: string,
+    options?: {
+      anchorTabId?: string | null
+      position?: 'before' | 'after'
+    }
   ): LayoutTree | null {
     const panelIds = listPanels(tree)
       .filter((node) => node.panel.kind === kind)
@@ -652,9 +774,18 @@ export class LayoutStore {
     })
 
     const target = nextPanelTabs[targetPanelId] || { tabIds: [] }
+    const targetTabIds = unique(target.tabIds)
+    const anchorTabId = options?.anchorTabId || null
+    const targetAnchorIndex = anchorTabId ? targetTabIds.indexOf(anchorTabId) : -1
+    const insertionIndex = (() => {
+      if (targetAnchorIndex < 0) return targetTabIds.length
+      if (options?.position === 'before') return targetAnchorIndex
+      return targetAnchorIndex + 1
+    })()
+    targetTabIds.splice(Math.max(0, Math.min(targetTabIds.length, insertionIndex)), 0, tabId)
     nextPanelTabs[targetPanelId] = {
       ...target,
-      tabIds: unique([...target.tabIds, tabId]),
+      tabIds: targetTabIds,
       activeTabId: tabId
     }
 

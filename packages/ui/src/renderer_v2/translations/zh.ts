@@ -206,6 +206,8 @@ export const zh = {
     newTab: '新标签页',
     confirmCloseTitle: '关闭终端',
     confirmCloseMessage: '确定要关闭这个标签页吗？正在运行的任务将被终止。',
+    confirmCloseManyMessage: (count: number) =>
+      `确定要关闭这 ${count} 个标签页吗？正在运行的任务将被终止。`,
   },
   chat: {
     dialog: '对话',
@@ -253,7 +255,17 @@ export const zh = {
     splitDownTerminal: '在下方拆分终端面板',
     splitRightChat: '在右侧拆分聊天面板',
     splitDownChat: '在下方拆分聊天面板',
+    splitLeft: '向左拆分',
+    splitRight: '向右拆分',
+    splitUp: '向上拆分',
+    splitDown: '向下拆分',
     closePanel: '关闭面板',
-    managerBadge: '管理面板'
+    closeTab: '关闭',
+    closeOtherTabs: '关闭其他',
+    closeAllTabs: '全部关闭',
+    chatKind: '聊天',
+    terminalKind: '终端',
+    addChatSession: '新建聊天会话',
+    addTerminalTab: '新建本地终端'
   },
 }

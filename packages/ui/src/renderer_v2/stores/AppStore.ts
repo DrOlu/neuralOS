@@ -260,16 +260,8 @@ export class AppStore {
         return chatBindings.find((binding) => binding.panelId === focusedPanelId)?.activeTabId || null
       })()
 
-      const managerActiveTabId = (() => {
-        const managerPanelId = tree.managerPanels?.chat
-        if (!managerPanelId || !chatPanelSet.has(managerPanelId)) {
-          return null
-        }
-        return chatBindings.find((binding) => binding.panelId === managerPanelId)?.activeTabId || null
-      })()
-
       const fallbackActiveTabId = chatBindings.find((binding) => !!binding.activeTabId)?.activeTabId || null
-      const preferredActiveTabId = focusedActiveTabId || managerActiveTabId || fallbackActiveTabId || tabIds[0] || null
+      const preferredActiveTabId = focusedActiveTabId || fallbackActiveTabId || tabIds[0] || null
 
       return {
         tabIds,
@@ -976,7 +968,7 @@ export class AppStore {
     }
   }
 
-  createLocalTab(): void {
+  createLocalTab(targetPanelId?: string): string {
     const id = `local-${uuidv4()}`
     const title = this.getUniqueTitle('Local')
     const cfg: TerminalConfig = { type: 'local', id, title, cols: 80, rows: 24 }
@@ -991,13 +983,17 @@ export class AppStore {
     this.terminalTabsHydrated = true
     this.activeTerminalId = id
     this.layout.syncPanelBindings()
+    if (targetPanelId) {
+      this.layout.attachTabToPanel('terminal', id, targetPanelId)
+    }
+    return id
   }
 
-  createSshTab(entryId: string): void {
+  createSshTab(entryId: string, targetPanelId?: string): string | null {
     const entry = this.settings?.connections?.ssh?.find((x) => x.id === entryId)
     if (!entry) {
       console.warn('SSH entry not found', entryId)
-      return
+      return null
     }
     const proxy = entry.proxyId
       ? this.settings?.connections?.proxies?.find((p) => p.id === entry.proxyId)
@@ -1038,6 +1034,10 @@ export class AppStore {
     this.terminalTabsHydrated = true
     this.activeTerminalId = id
     this.layout.syncPanelBindings()
+    if (targetPanelId) {
+      this.layout.attachTabToPanel('terminal', id, targetPanelId)
+    }
+    return id
   }
 
   async saveSshConnection(entry: AppSettings['connections']['ssh'][number]): Promise<void> {
@@ -1277,10 +1277,6 @@ export class AppStore {
       // ignore
     }
 
-    // Never leave the app without a terminal
-    if (this.terminalTabs.length === 0) {
-      this.createLocalTab()
-    }
   }
 
   private sanitizeImageAttachmentForSend(image: InputImageAttachment): InputImageAttachment {

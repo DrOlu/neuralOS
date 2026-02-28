@@ -6,6 +6,9 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
 import './xtermView.scss'
 import type { TerminalConfig } from '../../lib/ipcTypes'
+import { isTerminalTrackedByBackend } from './runtimeRetention'
+import { resolveTerminalSize } from './terminalDimensions'
+import { isRuntimeOwnedByUi } from './runtimeOwnership'
 
 const SCROLLBAR_HIDE_DELAY = 2000 // ms
 const RUNTIME_RELEASE_DELAY = 4000 // ms
@@ -28,6 +31,7 @@ interface TerminalRuntime {
   contextMenuId: string
   selectionHandler?: (selectionText: string) => void
   settings?: TerminalSettings
+  uiOwnershipCheck?: () => boolean
   isActive: boolean
   hostEl: HTMLDivElement | null
   refCount: number
@@ -59,9 +63,11 @@ const refitRuntime = (runtime: TerminalRuntime): void => {
   try {
     runtime.fit.fit()
     const next = runtime.fit.proposeDimensions()
-    if (next) {
-      window.gyshell.terminal.resize(runtime.terminalId, next.cols, next.rows)
-    }
+    const size = resolveTerminalSize(next, {
+      cols: runtime.term.cols,
+      rows: runtime.term.rows
+    })
+    window.gyshell.terminal.resize(runtime.terminalId, size.cols, size.rows)
   } catch {
     // ignore transient DOM/layout issues
   }
@@ -131,12 +137,14 @@ const createRuntime = (
 
   const plainConfig = toPlainConfig(config)
   const dims = fit.proposeDimensions()
-  const cols = dims?.cols ?? term.cols ?? 80
-  const rows = dims?.rows ?? term.rows ?? 24
-  window.gyshell.terminal.createTab({ ...plainConfig, cols, rows }).catch(() => {
+  const size = resolveTerminalSize(dims, {
+    cols: term.cols,
+    rows: term.rows
+  })
+  window.gyshell.terminal.createTab({ ...plainConfig, cols: size.cols, rows: size.rows }).catch(() => {
     // ignore: backend is idempotent and may fail during hot reload; user will see logs in devtools
   })
-  window.gyshell.terminal.resize(config.id, cols, rows).catch(() => {
+  window.gyshell.terminal.resize(config.id, size.cols, size.rows).catch(() => {
     // ignore
   })
 
@@ -148,6 +156,7 @@ const createRuntime = (
     contextMenuId: `terminal-${config.id}`,
     selectionHandler: undefined,
     settings,
+    uiOwnershipCheck: undefined,
     isActive: false,
     hostEl: null,
     refCount: 0,
@@ -299,12 +308,16 @@ const createRuntime = (
 const acquireRuntime = (
   config: TerminalConfig,
   theme: ITheme,
-  settings: TerminalSettings | undefined
+  settings: TerminalSettings | undefined,
+  uiOwnershipCheck?: () => boolean
 ): TerminalRuntime => {
   let runtime = runtimePool.get(config.id)
   if (!runtime) {
     runtime = createRuntime(config, theme, settings)
     runtimePool.set(config.id, runtime)
+  }
+  if (uiOwnershipCheck) {
+    runtime.uiOwnershipCheck = uiOwnershipCheck
   }
   runtime.refCount += 1
   clearTimer(runtime.releaseTimer)
@@ -312,18 +325,48 @@ const acquireRuntime = (
   return runtime
 }
 
-const releaseRuntime = (terminalId: string): void => {
+const releaseRuntime = (
+  terminalId: string,
+  options?: {
+    decrementRefCount?: boolean
+  }
+): void => {
   const runtime = runtimePool.get(terminalId)
   if (!runtime) return
-  runtime.refCount = Math.max(0, runtime.refCount - 1)
+  if (options?.decrementRefCount !== false) {
+    runtime.refCount = Math.max(0, runtime.refCount - 1)
+  }
   if (runtime.refCount > 0) return
 
   clearTimer(runtime.releaseTimer)
   runtime.releaseTimer = window.setTimeout(() => {
     const pending = runtimePool.get(terminalId)
     if (!pending || pending.refCount > 0) return
-    disposeRuntime(pending)
-    runtimePool.delete(terminalId)
+    if (!isRuntimeOwnedByUi(pending.uiOwnershipCheck)) {
+      disposeRuntime(pending)
+      runtimePool.delete(terminalId)
+      return
+    }
+
+    isTerminalTrackedByBackend(terminalId).then((stillTrackedByBackend) => {
+      const latest = runtimePool.get(terminalId)
+      if (!latest || latest.refCount > 0) return
+      if (!isRuntimeOwnedByUi(latest.uiOwnershipCheck)) {
+        disposeRuntime(latest)
+        runtimePool.delete(terminalId)
+        return
+      }
+
+      if (stillTrackedByBackend) {
+        latest.releaseTimer = window.setTimeout(() => {
+          releaseRuntime(terminalId, { decrementRefCount: false })
+        }, RUNTIME_RELEASE_DELAY)
+        return
+      }
+
+      disposeRuntime(latest)
+      runtimePool.delete(terminalId)
+    })
   }, RUNTIME_RELEASE_DELAY)
 }
 
@@ -331,6 +374,7 @@ export function XTermView(props: {
   config: TerminalConfig
   theme: ITheme
   terminalSettings?: TerminalSettings
+  isOwnedByUi?: () => boolean
   isActive?: boolean
   layoutSignature?: string
   onSelectionChange?: (selectionText: string) => void
@@ -348,9 +392,10 @@ export function XTermView(props: {
     const hostEl = hostRef.current
     if (!hostEl) return
 
-    const runtime = acquireRuntime(props.config, props.theme, props.terminalSettings)
+    const runtime = acquireRuntime(props.config, props.theme, props.terminalSettings, props.isOwnedByUi)
     runtime.selectionHandler = props.onSelectionChange
     runtime.settings = props.terminalSettings
+    runtime.uiOwnershipCheck = props.isOwnedByUi
     runtime.isActive = props.isActive ?? false
     runtimeRef.current = runtime
     attachRuntimeToHost(runtime, hostEl)
@@ -395,6 +440,12 @@ export function XTermView(props: {
     if (!runtime) return
     runtime.settings = props.terminalSettings
   }, [props.terminalSettings, props.config.id])
+
+  useEffect(() => {
+    const runtime = runtimeRef.current
+    if (!runtime) return
+    runtime.uiOwnershipCheck = props.isOwnedByUi
+  }, [props.isOwnedByUi, props.config.id])
 
   useEffect(() => {
     const runtime = runtimeRef.current

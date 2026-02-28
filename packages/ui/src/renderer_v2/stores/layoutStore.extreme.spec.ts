@@ -97,7 +97,7 @@ const runCase = async (name: string, fn: () => Promise<void> | void): Promise<vo
 }
 
 const run = async (): Promise<void> => {
-  await runCase('bootstrap loads v2 tree, sets focus, and creates manager bindings', async () => {
+  await runCase('bootstrap loads v2 tree, sets focus, and assigns chat bindings', async () => {
     const persistedTree: LayoutTree = {
       schemaVersion: 2,
       root: {
@@ -123,10 +123,9 @@ const run = async (): Promise<void> => {
     assertEqual(store.panelCount, 1, 'bootstrap should restore panel count')
     assertEqual(store.tree.root.type, 'panel', 'bootstrap should preserve persisted root')
     assertEqual(store.tree.focusedPanelId, 'panel-chat', 'bootstrap should set focused panel when missing')
-    assertEqual(store.tree.managerPanels?.chat, 'panel-chat', 'chat manager should default to the only chat panel')
     assertCondition(
       JSON.stringify(store.getPanelTabIds('panel-chat')) === JSON.stringify(['chat-a', 'chat-b']),
-      'chat tabs should be assigned to manager panel on bootstrap'
+      'chat tabs should be assigned to the only chat panel on bootstrap'
     )
   })
 
@@ -211,12 +210,12 @@ const run = async (): Promise<void> => {
     })
     store.bootstrap()
 
-    const managerPanelId = store.getManagerPanelId('terminal')
-    assertCondition(Boolean(managerPanelId), 'terminal manager panel should exist')
+    const primaryPanelId = store.getPrimaryPanelId('terminal')
+    assertCondition(Boolean(primaryPanelId), 'terminal primary panel should exist')
     assertEqual(
-      store.getPanelActiveTabId(managerPanelId!),
+      store.getPanelActiveTabId(primaryPanelId!),
       'term-b',
-      'manager panel active tab should align to global active terminal'
+      'primary panel active tab should align to global active terminal'
     )
   })
 
@@ -228,9 +227,9 @@ const run = async (): Promise<void> => {
     })
     store.bootstrap()
 
-    const terminalManagerId = store.getManagerPanelId('terminal')
-    assertCondition(Boolean(terminalManagerId), 'terminal manager should exist before split')
-    store.splitPanel(terminalManagerId!, 'terminal', 'horizontal', 'after')
+    const terminalPrimaryId = store.getPrimaryPanelId('terminal')
+    assertCondition(Boolean(terminalPrimaryId), 'terminal primary panel should exist before split')
+    store.splitPanel(terminalPrimaryId!, 'terminal', 'horizontal', 'after')
 
     const terminalPanels = store.panelNodes.filter((node) => node.panel.kind === 'terminal')
     assertEqual(terminalPanels.length, 2, 'split should retain two terminal panels')
@@ -464,19 +463,19 @@ const run = async (): Promise<void> => {
     store.bootstrap()
     store.setViewport(1400, 900)
 
-    const managerPanelId = store.getManagerPanelId('terminal')
-    assertCondition(Boolean(managerPanelId), 'terminal manager panel should exist')
+    const primaryPanelId = store.getPrimaryPanelId('terminal')
+    assertCondition(Boolean(primaryPanelId), 'terminal primary panel should exist')
 
     store.startTabDragging(
       {
         tabId: 'term-b',
         kind: 'terminal',
-        sourcePanelId: managerPanelId!
+        sourcePanelId: primaryPanelId!
       },
       220,
       220
     )
-    store.setDropTarget(managerPanelId!, 'right')
+    store.setDropTarget(primaryPanelId!, 'right')
     store.commitDragging()
     assertEqual(store.panelCount, 3, 'should create an extra terminal panel after edge split')
 
@@ -484,7 +483,7 @@ const run = async (): Promise<void> => {
       .panelNodes
       .filter((node) => node.panel.kind === 'terminal')
       .map((node) => node.panel.id)
-      .find((id) => id !== managerPanelId)
+      .find((id) => id !== primaryPanelId)
     assertCondition(Boolean(detachedPanelId), 'detached terminal panel should exist')
     assertEqual(
       JSON.stringify(store.getPanelTabIds(detachedPanelId!)),
@@ -501,7 +500,7 @@ const run = async (): Promise<void> => {
       320,
       320
     )
-    store.setDropTarget(managerPanelId!, 'center')
+    store.setDropTarget(primaryPanelId!, 'center')
     store.commitDragging()
 
     assertEqual(store.panelCount, 2, 'empty source panel should be pruned immediately after center move')
@@ -514,7 +513,7 @@ const run = async (): Promise<void> => {
     )
   })
 
-  await runCase('syncPanelBindings auto-removes empty non-manager panels', async () => {
+  await runCase('syncPanelBindings auto-removes empty panels', async () => {
     const store = createStore({
       terminalIds: ['term-a', 'term-b'],
       chatIds: ['chat-a']
@@ -522,24 +521,24 @@ const run = async (): Promise<void> => {
     store.bootstrap()
     store.setViewport(1400, 900)
 
-    const managerPanelId = store.getManagerPanelId('terminal')
-    assertCondition(Boolean(managerPanelId), 'terminal manager should exist')
+    const primaryPanelId = store.getPrimaryPanelId('terminal')
+    assertCondition(Boolean(primaryPanelId), 'terminal primary panel should exist')
     store.startTabDragging(
       {
         tabId: 'term-b',
         kind: 'terminal',
-        sourcePanelId: managerPanelId!
+        sourcePanelId: primaryPanelId!
       },
       300,
       300
     )
-    store.setDropTarget(managerPanelId!, 'right')
+    store.setDropTarget(primaryPanelId!, 'right')
     store.commitDragging()
     assertEqual(store.panelCount, 3, 'layout should include chat plus two terminal panels before cleanup')
 
     const terminalPanels = store.panelNodes.filter((node) => node.panel.kind === 'terminal').map((node) => node.panel.id)
     assertEqual(terminalPanels.length, 2, 'should have two terminal panels after tab split')
-    const detachedPanelId = terminalPanels.find((id) => id !== managerPanelId)
+    const detachedPanelId = terminalPanels.find((id) => id !== primaryPanelId)
     assertCondition(Boolean(detachedPanelId), 'detached terminal panel should exist')
     assertEqual(
       JSON.stringify(store.getPanelTabIds(detachedPanelId!)),
@@ -561,40 +560,244 @@ const run = async (): Promise<void> => {
     assertEqual(JSON.stringify(remainingTabIds), JSON.stringify(['term-a']), 'remaining terminal panel should keep valid tab ids')
   })
 
-  await runCase('removing manager panel reassigns manager role and keeps tab bindings valid', async () => {
+  await runCase('removing primary panel keeps terminal tab bindings valid', async () => {
     const store = createStore({
       terminalIds: ['term-a', 'term-b']
     })
     store.bootstrap()
     store.setViewport(1400, 900)
 
-    const originalManager = store.getManagerPanelId('terminal')
-    assertCondition(Boolean(originalManager), 'terminal manager should exist')
+    const originalPrimary = store.getPrimaryPanelId('terminal')
+    assertCondition(Boolean(originalPrimary), 'terminal primary panel should exist')
     store.startTabDragging(
       {
         tabId: 'term-b',
         kind: 'terminal',
-        sourcePanelId: originalManager!
+        sourcePanelId: originalPrimary!
       },
       240,
       240
     )
-    store.setDropTarget(originalManager!, 'right')
+    store.setDropTarget(originalPrimary!, 'right')
     store.commitDragging()
     const terminalPanels = store.panelNodes.filter((node) => node.panel.kind === 'terminal').map((node) => node.panel.id)
     assertEqual(terminalPanels.length, 2, 'should have two terminal panels after tab split')
-    assertCondition(store.canRemovePanel(originalManager!), 'original manager panel should be removable after split')
+    assertCondition(store.canRemovePanel(originalPrimary!), 'original primary panel should be removable after split')
 
-    store.removePanel(originalManager!)
-    const nextManager = store.getManagerPanelId('terminal')
-    assertCondition(Boolean(nextManager), 'next manager should exist')
-    assertCondition(nextManager !== originalManager, 'manager should switch after removing original manager')
+    store.removePanel(originalPrimary!)
+    const nextPrimary = store.getPrimaryPanelId('terminal')
+    assertCondition(Boolean(nextPrimary), 'next primary panel should exist')
+    assertCondition(nextPrimary !== originalPrimary, 'primary panel should switch after removing original panel')
     const assigned = store
       .panelNodes
       .filter((node) => node.panel.kind === 'terminal')
       .flatMap((node) => store.getPanelTabIds(node.panel.id))
       .sort()
     assertEqual(JSON.stringify(assigned), JSON.stringify(['term-a', 'term-b']), 'all terminal tabs should remain assigned')
+  })
+
+  await runCase('tab center drop supports in-panel visual reorder before target tab', async () => {
+    const store = createStore({
+      terminalIds: ['term-a', 'term-b', 'term-c'],
+      chatIds: ['chat-a']
+    })
+    store.bootstrap()
+    store.setViewport(1400, 900)
+
+    const primaryPanelId = store.getPrimaryPanelId('terminal')
+    assertCondition(Boolean(primaryPanelId), 'terminal primary panel should exist')
+    assertEqual(
+      JSON.stringify(store.getPanelTabIds(primaryPanelId!)),
+      JSON.stringify(['term-a', 'term-b', 'term-c']),
+      'precondition: terminal tabs should be in owner order'
+    )
+
+    store.startTabDragging(
+      {
+        tabId: 'term-c',
+        kind: 'terminal',
+        sourcePanelId: primaryPanelId!
+      },
+      200,
+      200
+    )
+    store.setTabReorderTarget(primaryPanelId!, 'term-a', 'before')
+    store.setDropTarget(primaryPanelId!, 'center')
+    store.commitDragging()
+
+    assertEqual(
+      JSON.stringify(store.getPanelTabIds(primaryPanelId!)),
+      JSON.stringify(['term-c', 'term-a', 'term-b']),
+      'center drop reorder should move dragged tab before target tab'
+    )
+  })
+
+  await runCase('tab center drop supports cross-panel insertion position', async () => {
+    const store = createStore({
+      terminalIds: ['term-a', 'term-b', 'term-c'],
+      chatIds: ['chat-a']
+    })
+    store.bootstrap()
+    store.setViewport(1400, 900)
+
+    const primaryPanelId = store.getPrimaryPanelId('terminal')
+    assertCondition(Boolean(primaryPanelId), 'terminal primary panel should exist')
+
+    store.startTabDragging(
+      {
+        tabId: 'term-c',
+        kind: 'terminal',
+        sourcePanelId: primaryPanelId!
+      },
+      220,
+      220
+    )
+    store.setDropTarget(primaryPanelId!, 'right')
+    store.commitDragging()
+
+    const targetPanelId = store
+      .panelNodes
+      .filter((node) => node.panel.kind === 'terminal')
+      .map((node) => node.panel.id)
+      .find((id) => id !== primaryPanelId)
+    assertCondition(Boolean(targetPanelId), 'target terminal panel should exist after split')
+    assertEqual(
+      JSON.stringify(store.getPanelTabIds(targetPanelId!)),
+      JSON.stringify(['term-c']),
+      'target panel should contain dragged tab after split'
+    )
+
+    store.startTabDragging(
+      {
+        tabId: 'term-a',
+        kind: 'terminal',
+        sourcePanelId: primaryPanelId!
+      },
+      260,
+      260
+    )
+    store.setTabReorderTarget(targetPanelId!, 'term-c', 'before')
+    store.setDropTarget(targetPanelId!, 'center')
+    store.commitDragging()
+
+    assertEqual(
+      JSON.stringify(store.getPanelTabIds(targetPanelId!)),
+      JSON.stringify(['term-a', 'term-c']),
+      'center drop with target tab should insert dragged tab before target in destination panel'
+    )
+  })
+
+  await runCase('splitTabToDirection moves selected tab instead of creating an empty panel', async () => {
+    const store = createStore({
+      terminalIds: ['term-a'],
+      chatIds: ['chat-a']
+    })
+    store.bootstrap()
+    store.setViewport(1400, 900)
+
+    const primaryPanelId = store.getPrimaryPanelId('terminal')
+    assertCondition(Boolean(primaryPanelId), 'terminal primary panel should exist before split')
+    assertEqual(store.panelCount, 2, 'precondition: layout should contain chat and terminal panels')
+
+    store.splitTabToDirection(
+      {
+        tabId: 'term-a',
+        kind: 'terminal',
+        sourcePanelId: primaryPanelId!
+      },
+      primaryPanelId!,
+      'right'
+    )
+
+    const terminalPanels = store.panelNodes.filter((node) => node.panel.kind === 'terminal')
+    assertEqual(terminalPanels.length, 1, 'single-tab split should not leave an extra empty terminal panel')
+    assertEqual(store.panelCount, 2, 'single-tab split should keep total panel count stable')
+    assertEqual(
+      JSON.stringify(store.getPanelTabIds(terminalPanels[0].panel.id)),
+      JSON.stringify(['term-a']),
+      'the selected tab should remain alive and attached to the resulting terminal panel'
+    )
+  })
+
+  await runCase('tab center drop accepts null anchor reorder target for empty destination tab bar', async () => {
+    const store = createStore({
+      terminalIds: ['term-a', 'term-b'],
+      chatIds: ['chat-a']
+    })
+    store.bootstrap()
+    store.setViewport(1400, 900)
+
+    const primaryPanelId = store.getPrimaryPanelId('terminal')
+    assertCondition(Boolean(primaryPanelId), 'terminal primary panel should exist')
+    store.splitPanel(primaryPanelId!, 'terminal', 'horizontal', 'after')
+    const destinationPanelId = store.tree.focusedPanelId
+    assertCondition(Boolean(destinationPanelId), 'split should create a focused empty destination panel')
+    assertEqual(store.getPanelTabIds(destinationPanelId!).length, 0, 'destination panel should be empty before insertion')
+
+    store.startTabDragging(
+      {
+        tabId: 'term-b',
+        kind: 'terminal',
+        sourcePanelId: primaryPanelId!
+      },
+      260,
+      260
+    )
+    store.setTabReorderTarget(destinationPanelId!, null, 'after')
+    store.setDropTarget(destinationPanelId!, 'center')
+    store.commitDragging()
+
+    assertEqual(
+      JSON.stringify(store.getPanelTabIds(destinationPanelId!)),
+      JSON.stringify(['term-b']),
+      'null-anchor reorder target should insert dragged tab into empty destination panel'
+    )
+  })
+
+  await runCase('can remove the last panel of a kind when other kinds still exist', async () => {
+    const store = createStore({
+      terminalIds: ['term-a'],
+      chatIds: ['chat-a']
+    })
+    const internal = store as any
+    store.bootstrap()
+    store.setViewport(1400, 900)
+
+    const terminalPanelId = store.getPrimaryPanelId('terminal')
+    const chatPanelId = store.getPrimaryPanelId('chat')
+    assertCondition(Boolean(terminalPanelId), 'terminal panel should exist')
+    assertCondition(Boolean(chatPanelId), 'chat panel should exist')
+    assertCondition(store.canRemovePanel(terminalPanelId!), 'terminal panel should be removable')
+
+    store.removePanel(terminalPanelId!)
+    assertEqual(store.getPrimaryPanelId('terminal'), null, 'terminal panels can all be closed from layout')
+    assertEqual(store.panelCount, 1, 'layout should still keep at least one panel in total')
+    assertEqual(store.getPrimaryPanelId('chat'), chatPanelId, 'chat panel should remain intact')
+    assertEqual(
+      JSON.stringify(internal.appStore.terminalTabs.map((tab: { id: string }) => tab.id)),
+      JSON.stringify(['term-a']),
+      'removing a panel must not close owner terminal tabs'
+    )
+  })
+
+  await runCase('cannot remove the final chat panel when other kinds still exist', async () => {
+    const store = createStore({
+      terminalIds: ['term-a'],
+      chatIds: ['chat-a']
+    })
+    store.bootstrap()
+    store.setViewport(1400, 900)
+
+    const chatPanelId = store.getPrimaryPanelId('chat')
+    const terminalPanelId = store.getPrimaryPanelId('terminal')
+    assertCondition(Boolean(chatPanelId), 'chat panel should exist')
+    assertCondition(Boolean(terminalPanelId), 'terminal panel should exist')
+    assertEqual(store.panelCount, 2, 'default layout should start with one chat and one terminal panel')
+    assertEqual(store.canRemovePanel(chatPanelId!), false, 'final chat panel should not be removable')
+
+    store.removePanel(chatPanelId!)
+    assertEqual(store.panelCount, 2, 'attempting to remove final chat panel should be a no-op')
+    assertEqual(store.getPrimaryPanelId('chat'), chatPanelId, 'chat panel must remain present after blocked removal')
   })
 }
 

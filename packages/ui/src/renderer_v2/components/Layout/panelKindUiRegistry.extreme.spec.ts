@@ -1,0 +1,38 @@
+import { resolveDefaultRailClickIntent } from './panelKindUiRegistry'
+
+const assertEqual = <T>(actual: T, expected: T, message: string): void => {
+  if (actual !== expected) {
+    throw new Error(`${message}. expected=${String(expected)} actual=${String(actual)}`)
+  }
+}
+
+const runCase = (name: string, fn: () => void): void => {
+  fn()
+  console.log(`PASS ${name}`)
+}
+
+runCase('rail click opens panel only when owner tabs exist but no panel exists', () => {
+  const intent = resolveDefaultRailClickIntent({
+    panelCount: 0,
+    ownerTabCount: 3
+  })
+  assertEqual(intent, 'open-panel-only', 'rail click should only open panel for existing tabs')
+})
+
+runCase('rail click creates tab when no panel and no owner tabs exist', () => {
+  const intent = resolveDefaultRailClickIntent({
+    panelCount: 0,
+    ownerTabCount: 0
+  })
+  assertEqual(intent, 'create-new-tab', 'rail click should create first tab when inventory is empty')
+})
+
+runCase('rail click creates tab when panel already exists', () => {
+  const intent = resolveDefaultRailClickIntent({
+    panelCount: 2,
+    ownerTabCount: 5
+  })
+  assertEqual(intent, 'create-new-tab', 'rail click should create tab when panel exists')
+})
+
+console.log('All panel kind rail strategy extreme tests passed.')

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useLayoutEffect, useCallback } from 'react'
-import { Square, Plus, X, History, CornerDownLeft, Play, MoreVertical } from 'lucide-react'
+import { Square, Plus, X, History, CornerDownLeft, Play, MoreVertical, GripVertical } from 'lucide-react'
 import { observer } from 'mobx-react-lite'
 import type { AppStore } from '../../stores/AppStore'
 import type { ChatMessage } from '../../stores/ChatStore'
@@ -90,8 +90,8 @@ interface ChatPanelProps {
   panelId: string
   sessionIds: string[]
   activeSessionId: string | null
-  isManagerPanel: boolean
   onSelectSession: (sessionId: string) => void
+  onRequestCloseTabs?: (tabIds: string[]) => void
   onLayoutHeaderMouseDown?: (event: React.MouseEvent<HTMLElement>) => void
   onLayoutHeaderContextMenu?: (event: React.MouseEvent<HTMLElement>) => void
 }
@@ -101,8 +101,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = observer(({
   panelId,
   sessionIds,
   activeSessionId,
-  isManagerPanel,
   onSelectSession,
+  onRequestCloseTabs,
   onLayoutHeaderMouseDown,
   onLayoutHeaderContextMenu
 }) => {
@@ -399,17 +399,6 @@ export const ChatPanel: React.FC<ChatPanelProps> = observer(({
     }
   }, [queueEditTarget, queueItems])
 
-  const sessionSignature = sessionIds.join('|')
-
-  useEffect(() => {
-    if (!isManagerPanel) return
-    const globalActiveSessionId = store.chat.activeSessionId
-    if (!globalActiveSessionId) return
-    if (!sessionIds.includes(globalActiveSessionId)) return
-    if (globalActiveSessionId === activeSessionId) return
-    onSelectSession(globalActiveSessionId)
-  }, [activeSessionId, isManagerPanel, onSelectSession, sessionIds, sessionSignature, store.chat.activeSessionId])
-
   useEffect(() => {
     const panelEl = panelRef.current
     if (!panelEl) return
@@ -509,9 +498,16 @@ export const ChatPanel: React.FC<ChatPanelProps> = observer(({
         title={t.chat.dragHint}
         aria-label={t.chat.dragHint}
       >
-        {isManagerPanel ? <div className="panel-manager-badge">{t.layout.managerBadge}</div> : null}
-        <div className="chat-tabs">
-          {sessionIds.map((sessionId) => {
+        <div className="panel-tab-drag-handle" aria-hidden="true">
+          <GripVertical size={12} strokeWidth={2.4} />
+        </div>
+        <div
+          className="chat-tabs"
+          data-layout-tab-bar="true"
+          data-layout-tab-panel-id={panelId}
+          data-layout-tab-kind="chat"
+        >
+          {sessionIds.map((sessionId, index) => {
             const session = store.chat.getSessionById(sessionId)
             if (!session) return null
             return (
@@ -525,12 +521,17 @@ export const ChatPanel: React.FC<ChatPanelProps> = observer(({
                 data-layout-tab-id={session.id}
                 data-layout-tab-kind="chat"
                 data-layout-tab-panel-id={panelId}
+                data-layout-tab-index={index}
               >
                 <span className="chat-tab-title">{formatChatPanelSessionTitle(session.title)}</span>
                 <button
                   className="chat-tab-close"
                   onClick={(event) => {
                     event.stopPropagation()
+                    if (onRequestCloseTabs) {
+                      onRequestCloseTabs([session.id])
+                      return
+                    }
                     store.chat.closeSession(session.id)
                   }}
                 >
@@ -540,37 +541,29 @@ export const ChatPanel: React.FC<ChatPanelProps> = observer(({
             )
           })}
         </div>
-        {isManagerPanel ? (
-          <>
-            <button
-              className="chat-tab-add"
-              onClick={() => {
-                const sessionId = store.chat.createSession()
-                store.layout.attachTabToManager('chat', sessionId)
-                const managerPanelId = store.layout.getManagerPanelId('chat')
-                if (managerPanelId) {
-                  store.layout.setPanelActiveTab(managerPanelId, sessionId)
-                }
-              }}
-            >
-              <Plus size={14} />
-            </button>
-            <button className="chat-tab-history" onClick={() => setShowHistory(true)}>
-              <History size={14} />
-            </button>
-            <button
-              ref={exportMenuButtonRef}
-              className="chat-tab-history-menu"
-              onClick={toggleExportMenu}
-              title={t.chat.history.exportMenuTitle}
-              aria-label={t.chat.history.exportMenuTitle}
-              aria-haspopup="menu"
-              aria-expanded={showExportMenu}
-            >
-              <MoreVertical size={14} />
-            </button>
-          </>
-        ) : null}
+        <button
+          className="chat-tab-add"
+          onClick={() => {
+            const sessionId = store.chat.createSession()
+            store.layout.attachTabToPanel('chat', sessionId, panelId)
+          }}
+        >
+          <Plus size={14} />
+        </button>
+        <button className="chat-tab-history" onClick={() => setShowHistory(true)}>
+          <History size={14} />
+        </button>
+        <button
+          ref={exportMenuButtonRef}
+          className="chat-tab-history-menu"
+          onClick={toggleExportMenu}
+          title={t.chat.history.exportMenuTitle}
+          aria-label={t.chat.history.exportMenuTitle}
+          aria-haspopup="menu"
+          aria-expanded={showExportMenu}
+        >
+          <MoreVertical size={14} />
+        </button>
       </div>
 
       {showExportMenu && createPortal(

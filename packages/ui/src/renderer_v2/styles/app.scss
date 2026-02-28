@@ -34,6 +34,14 @@
 .gyshell-layout-root {
   height: 100%;
   min-height: 0;
+  min-width: 0;
+  display: flex;
+}
+
+.gyshell-layout-canvas {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
   position: relative;
 }
 
@@ -117,9 +125,21 @@
   background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
+.gyshell-layout-tab-insert-indicator {
+  position: fixed;
+  width: 2px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--accent) 92%, white);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 32%, transparent);
+  pointer-events: none;
+  z-index: 24;
+}
+
 .gyshell-layout-menu {
   position: fixed;
-  min-width: 216px;
+  width: max-content;
+  min-width: 0;
+  max-width: min(420px, calc(100vw - 24px));
   border-radius: 2px;
   border: 1px solid var(--border-strong);
   background: var(--panel-bg);
@@ -129,7 +149,8 @@
 }
 
 .gyshell-layout-menu-item {
-  width: 100%;
+  width: auto;
+  min-width: 100%;
   height: 30px;
   border: 0;
   background: transparent;
@@ -143,6 +164,7 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  white-space: nowrap;
 }
 
 .gyshell-layout-menu-item:hover:not(:disabled) {
@@ -159,21 +181,25 @@
   cursor: not-allowed;
 }
 
-.panel-manager-badge {
-  flex: 0 0 auto;
-  height: 18px;
-  margin-right: 8px;
-  padding: 0 6px;
-  border-radius: 2px;
-  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
-  color: color-mix(in srgb, var(--accent) 80%, var(--fg));
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-  font-family: var(--font-mono);
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
+.gyshell-layout-trash-drop {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  width: 60px;
+  height: 60px;
+  border-radius: 10px;
+  border: 1px dashed color-mix(in srgb, var(--danger) 45%, var(--border));
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: color-mix(in srgb, var(--danger) 82%, var(--fg));
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  pointer-events: none;
+  z-index: 52;
+}
+
+.gyshell-layout-trash-drop.is-hot {
+  background: color-mix(in srgb, var(--danger) 22%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 72%, var(--border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--danger) 26%, transparent);
 }

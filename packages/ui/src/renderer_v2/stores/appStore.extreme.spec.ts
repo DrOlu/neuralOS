@@ -21,7 +21,6 @@ const runCase = async (name: string, fn: () => Promise<void> | void): Promise<vo
 
 const buildPersistedTree = (options?: {
   focusedPanelId?: string
-  managerChatPanelId?: string
 }): LayoutTree => ({
   schemaVersion: 2,
   root: {
@@ -36,10 +35,6 @@ const buildPersistedTree = (options?: {
     sizes: [34, 33, 33]
   },
   focusedPanelId: options?.focusedPanelId || 'panel-chat-b',
-  managerPanels: {
-    chat: options?.managerChatPanelId || 'panel-chat-a',
-    terminal: 'panel-terminal'
-  },
   panelTabs: {
     'panel-chat-a': {
       tabIds: ['chat-a'],
@@ -136,8 +131,7 @@ const run = async (): Promise<void> => {
   await runCase('collectPersistedChatInventoryState preserves focused chat active tab', async () => {
     const store = new AppStore()
     const layoutTree = buildPersistedTree({
-      focusedPanelId: 'panel-chat-b',
-      managerChatPanelId: 'panel-chat-a'
+      focusedPanelId: 'panel-chat-b'
     })
 
     const state = (store as any).collectPersistedChatInventoryState({ v2: layoutTree })
@@ -153,18 +147,17 @@ const run = async (): Promise<void> => {
     )
   })
 
-  await runCase('collectPersistedChatInventoryState falls back to chat manager active tab', async () => {
+  await runCase('collectPersistedChatInventoryState falls back to first available active chat tab', async () => {
     const store = new AppStore()
     const layoutTree = buildPersistedTree({
-      focusedPanelId: 'panel-terminal',
-      managerChatPanelId: 'panel-chat-b'
+      focusedPanelId: 'panel-terminal'
     })
 
     const state = (store as any).collectPersistedChatInventoryState({ v2: layoutTree })
     assertEqual(
       state.preferredActiveTabId,
-      'chat-c',
-      'manager chat panel active tab should be used when focused panel is not chat'
+      'chat-a',
+      'first available active chat tab should be used when focused panel is not chat'
     )
   })
 
@@ -176,8 +169,7 @@ const run = async (): Promise<void> => {
 
   await runCase('AppStore bootstrap passes preferred active chat id into hydration', async () => {
     const layoutTree = buildPersistedTree({
-      focusedPanelId: 'panel-chat-b',
-      managerChatPanelId: 'panel-chat-a'
+      focusedPanelId: 'panel-chat-b'
     })
     installBootstrapWindowMock(layoutTree)
 
