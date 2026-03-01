@@ -7,7 +7,7 @@
 [![Shell](https://img.shields.io/badge/Shell-Zsh%20%7C%20Bash%20%7C%20PowerShell-orange)](#key-capabilities)
 
 English README | [中文 README](./README.zh-CN.md)  
-Latest release notes: [`changelogs/v1.0.0.md`](./changelogs/v1.0.0.md)
+Latest release notes: [`changelogs/v1.1.0.md`](./changelogs/v1.1.0.md)
 Usage guides:
 [`docs/mobile-web-usage.md`](./docs/mobile-web-usage.md) ·
 [`docs/tui-usage.md`](./docs/tui-usage.md) ·
@@ -40,9 +40,11 @@ GyShell is built for **persistent execution in your real terminal runtime**:
 - **Persistent execution loop**: observe output -> reason -> continue.
 - **Human-in-the-loop by design**: intervene anytime without breaking flow.
 - **Multi-tab orchestration**: compile, inspect logs, and run fixes in parallel tabs.
+- **Workspace persistence**: terminal tabs and panel layout can survive restarts and restore quickly.
 - **OpenClawd-style remote conversation control**: keep the runtime core on your own computer and steer it from anywhere through chat.
 - **Cross-surface runtime model**: desktop, TUI, and mobile-web share one gateway semantics.
 - **Profile lock safety**: busy sessions pin active model profile for consistency.
+- **Long-horizon context quality**: memory.md + compaction summary pipeline keeps long sessions useful.
 - **Tooling-native workflow**: skills, MCP servers, and built-in tools are runtime primitives.
 
 ### At a Glance
@@ -51,26 +53,28 @@ GyShell is built for **persistent execution in your real terminal runtime**:
 - **For long-running tasks**: preserves session continuity and state across steps.
 - **For real infrastructure**: shell, SSH, forwarding, and multi-tab interactive terminal control.
 - **For multi-device flow**: desktop + TUI + mobile-web with shared gateway semantics.
+- **For multimodal workflows**: text and image inputs can be combined in one execution turn.
 
-## v1.0.0 Key Highlights
+## v1.1.0 Key Highlights
 
-- **Refined chat-first TUI**
-  - cleaner layout and scanability
-  - clearer run-state feedback
-  - smoother input behavior for long sessions
-- **Desktop-bundled `gyll` CLI**
-  - auto-connect local desktop backend when `--url` is omitted
-  - supports interactive, streaming, and hook callback modes
-- **Practical mobile-web upgrade**
-  - session browser + search + run-state indicators
-  - message detail sheet for turn-level deep inspection
-  - tools panel for MCP/built-in tool enablement
-- **Runtime stability improvements**
-  - synchronized lifecycle events (`SESSION_PROFILE_LOCKED`, `SESSION_READY`)
-  - terminal tab operations aligned across transports
-- **MCP stdio startup hardening**
-  - stronger PATH merge strategy
-  - deterministic CWD fallback behavior
+- **Multimodal input for real tasks**
+  - attach images via drag/drop/paste on desktop and mobile-web
+  - send text + images in one prompt to supported models
+- **Global persistent memory (`memory.md`)**
+  - durable project rules and facts across sessions
+  - memory can be toggled/injected from settings
+- **Smarter long-session context handling**
+  - dynamic history compaction with model-generated summaries
+  - explicit compaction activity banners in desktop/mobile-web/TUI
+- **Desktop workspace overhaul**
+  - splitter layout for all chat/terminal panels with persistence
+  - panel rail + drag/drop reorder/split + close-to-trash workflows
+- **Terminal restoration and replay resilience**
+  - terminal tabs persist across backend restarts
+  - offset-based buffer delta sync enables lossless output catch-up when terminal views remount/reconnect within the same backend runtime
+- **Mobile-web UX polish**
+  - swipe-to-delete sessions
+  - cleaner image chip interactions in composer
 
 ---
 
@@ -80,7 +84,9 @@ GyShell is built for **persistent execution in your real terminal runtime**:
 
 - Thinking-oriented execution for complex tasks.
 - Context-aware responses from terminal state and selected resources.
-- Long-session token management with focused context retention.
+- Long-session context quality with dynamic compaction summaries.
+- Persistent global memory injection via `memory.md`.
+- Multimodal user input pipeline (text + images) for compatible models.
 - OpenAI-compatible model endpoint support.
 
 ### Terminal + SSH
@@ -90,6 +96,7 @@ GyShell is built for **persistent execution in your real terminal runtime**:
 - Port forwarding: local, remote, and dynamic SOCKS.
 - Agent can coordinate **multiple SSH/local terminal tabs** in parallel during one task.
 - Control-character operations for interactive terminal apps.
+- Terminal tab restoration after backend restart, plus lossless output catch-up for renderer remount/reconnect within the same backend runtime.
 
 ### Skills + MCP + Tools
 
@@ -103,6 +110,7 @@ GyShell is built for **persistent execution in your real terminal runtime**:
 - Mobile-first remote client for active session tracking and steering.
 - OpenClawd-style conversational control from anywhere while your core runtime stays on your own machine.
 - Session list with search and status hints.
+- Swipe-to-delete session flow for faster mobile cleanup.
 - Detailed turn event inspection from phone browser.
 - Tool/skill/terminal/settings access through gateway RPC.
 
@@ -242,7 +250,7 @@ See:
 
 ## Read More
 
-- Release notes: `changelogs/v1.0.0.md`
+- Release notes: `changelogs/v1.1.0.md`
 - Build matrix and packaging: `docs/build-commands.md`
 - Monorepo boundaries and runtime flow: `docs/monorepo-architecture.md`
 
