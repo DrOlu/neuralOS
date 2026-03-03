@@ -8,6 +8,9 @@
 
 English README | [中文 README](./README.zh-CN.md)  
 Latest release notes: [`changelogs/v1.1.0.md`](./changelogs/v1.1.0.md)
+
+If you have any suggestions or questions, please feel free to submit them in [GitHub Discussions](https://github.com/MrOrangeJJ/GyShell/discussions).
+
 Usage guides:
 [`docs/mobile-web-usage.md`](./docs/mobile-web-usage.md) ·
 [`docs/tui-usage.md`](./docs/tui-usage.md) ·
@@ -17,7 +20,7 @@ Usage guides:
 > **Recommended Models**:
 > - **Cost-Performance**: Thinking-GLM 5 + Action/Global-Minimax2.5
 > - **Best Performance**: Thinking-Gemini 3.1 Pro + Action/Global-Gemini 3 Flash
-> - **Local (Mac Studio)**: All-Qwen3.5 / Minimax2.5
+> - **Local (Mac Studio)**: Qwen3.5 / Minimax2.5
 
 > [!WARNING]
 > **Active Development**: GyShell evolves quickly. If a version introduces history compatibility breaks, it will be called out explicitly in release notes.

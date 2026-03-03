@@ -8,6 +8,9 @@
 
 [English README](./README.md) | 中文 README  
 最新发布说明：[`changelogs/v1.1.0.md`](./changelogs/v1.1.0.md)
+
+如果有任何建议或者问题，欢迎在 [GitHub Discussions](https://github.com/MrOrangeJJ/GyShell/discussions) 中提交。
+
 使用教程:
 [`docs/mobile-web-usage.md`](./docs/mobile-web-usage.md) ·
 [`docs/tui-usage.md`](./docs/tui-usage.md) ·

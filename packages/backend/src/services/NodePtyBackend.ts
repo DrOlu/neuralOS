@@ -5,6 +5,8 @@ import * as path from 'path'
 import { pipeline } from 'node:stream/promises'
 import type { TerminalBackend, TerminalConfig, LocalConnectionConfig, FileSystemEntry, FileStatInfo } from '../types'
 
+const GYSHELL_READY_MARKER = '__GYSHELL_READY__'
+
 interface PtyInstance {
   pty: pty.IPty
   dataCallbacks: Set<(data: string) => void>
@@ -19,6 +21,11 @@ export class NodePtyBackend implements TerminalBackend {
   private tmpPathsByPtyId: Map<string, string> = new Map()
   private cwdByPtyId: Map<string, string> = new Map()
   private homeDirByPtyId: Map<string, string> = new Map()
+
+  private stripReadyMarker(chunk: string): string {
+    if (!chunk.includes(GYSHELL_READY_MARKER)) return chunk
+    return chunk.replace(/__GYSHELL_READY__/g, '')
+  }
 
   private getDefaultShell(): string {
     const platform = os.platform()
@@ -100,11 +107,11 @@ export class NodePtyBackend implements TerminalBackend {
       const chunk = data.toString()
       if (instance.isInitializing) {
         instance.buffer += chunk
-        if (instance.buffer!.includes('__GYSHELL_READY__')) {
+        if (instance.buffer!.includes(GYSHELL_READY_MARKER)) {
           instance.isInitializing = false
-          const parts = instance.buffer!.split('__GYSHELL_READY__')
+          const parts = instance.buffer!.split(GYSHELL_READY_MARKER)
           if (parts.length > 1) {
-            const realContent = parts.slice(1).join('__GYSHELL_READY__').trimStart()
+            const realContent = this.stripReadyMarker(parts.slice(1).join(GYSHELL_READY_MARKER)).trimStart()
             if (realContent) {
               this.consumeOscMarkers(config.id, realContent)
               instance.dataCallbacks.forEach((callback) => callback(realContent))
@@ -113,8 +120,11 @@ export class NodePtyBackend implements TerminalBackend {
           instance.buffer = ''
         }
       } else {
-        this.consumeOscMarkers(config.id, chunk)
-      instance.dataCallbacks.forEach((callback) => callback(data))
+        const sanitizedChunk = this.stripReadyMarker(chunk)
+        this.consumeOscMarkers(config.id, sanitizedChunk)
+        if (sanitizedChunk) {
+          instance.dataCallbacks.forEach((callback) => callback(sanitizedChunk))
+        }
       }
     })
 

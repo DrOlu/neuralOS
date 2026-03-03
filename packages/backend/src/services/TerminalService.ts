@@ -27,9 +27,15 @@ const PERSIST_FLUSH_DELAY_MS = 120
 // that emit invisible OSC markers on command boundaries.
 const OSC_PRECMD_PREFIX = '\x1b]1337;gyshell_precmd'
 const OSC_SUFFIX = '\x07'
+const GYSHELL_READY_MARKER = '__GYSHELL_READY__'
 
 function stripGyShellOscMarkers(s: string): string {
   return s.replace(/\x1b]1337;gyshell_(?:preexec|precmd)[^\x07]*\x07/g, '')
+}
+
+function stripInternalControlMarkers(s: string): string {
+  if (!s.includes(GYSHELL_READY_MARKER)) return s
+  return s.replace(/__GYSHELL_READY__/g, '')
 }
 
 interface RingBuffer {
@@ -328,6 +334,7 @@ export class TerminalService {
   }
 
   private handleData(terminalId: string, data: string): void {
+    const sanitizedData = stripInternalControlMarkers(data)
     const tab = this.terminals.get(terminalId)
     if (tab) {
       // Sync initialization state and remote OS
@@ -377,10 +384,10 @@ export class TerminalService {
     // Write to headless terminal for rendering/normalization
     const headless = this.headlessPtys.get(terminalId)
     let writeSeq = 0
-    if (headless) {
+    if (headless && sanitizedData) {
       writeSeq = (this.headlessWriteSeqByTerminal.get(terminalId) || 0) + 1
       this.headlessWriteSeqByTerminal.set(terminalId, writeSeq)
-      headless.write(data, () => {
+      headless.write(sanitizedData, () => {
         const flushed = Math.max(this.headlessFlushedSeqByTerminal.get(terminalId) || 0, writeSeq)
         this.headlessFlushedSeqByTerminal.set(terminalId, flushed)
         this.tryFlushPendingTaskFinish(terminalId)
@@ -388,7 +395,7 @@ export class TerminalService {
     }
 
     // Process OSC markers and strip markers from visual output
-    const cleanedData = this.processIncomingData(terminalId, data, writeSeq)
+    const cleanedData = this.processIncomingData(terminalId, sanitizedData, writeSeq)
 
     // Update ring buffer
     const buffer = this.buffers.get(terminalId)

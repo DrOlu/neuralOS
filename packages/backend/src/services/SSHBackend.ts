@@ -633,8 +633,11 @@ Write-Output "__GYSHELL_READY__"
                 }
               }
             } else {
-              this.consumeOscMarkers(instance, chunk)
-              emit(chunk)
+              const sanitizedChunk = this.stripReadyMarker(chunk)
+              this.consumeOscMarkers(instance, sanitizedChunk)
+              if (sanitizedChunk) {
+                emit(sanitizedChunk)
+              }
             }
           })
 

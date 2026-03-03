@@ -37,6 +37,12 @@ class FakeTerminalBackend implements TerminalBackend {
     this.spawnFailures.add(terminalId)
   }
 
+  emitDataForTerminalId(terminalId: string, data: string): void {
+    const session = this.sessions.get(`pty-${terminalId}`)
+    if (!session) return
+    session.dataCallbacks.forEach((callback) => callback(data))
+  }
+
   async spawn(config: TerminalConfig): Promise<string> {
     if (this.spawnFailures.has(config.id)) {
       throw new Error(`intentional spawn failure for ${config.id}`)
@@ -297,6 +303,46 @@ const run = async (): Promise<void> => {
       assertCondition(
         !nextSnapshot.some((item) => item.id === 'local-bad'),
         'failed record should be pruned after restore'
+      )
+    })
+
+    await runCase('terminal service must strip internal ready marker from renderer stream and ring buffer', async () => {
+      const backend = new FakeTerminalBackend()
+      const service = createService(stateFilePath, backend)
+      const terminalDataEvents: Array<{ terminalId: string; data: string; offset?: number }> = []
+      service.setRawEventPublisher((channel, payload) => {
+        if (channel !== 'terminal:data') return
+        terminalDataEvents.push(payload as { terminalId: string; data: string; offset?: number })
+      })
+
+      await service.createTerminal({
+        type: 'local',
+        id: 'local-ready-marker-filter',
+        title: 'Marker Filter',
+        cols: 80,
+        rows: 24
+      })
+
+      backend.emitDataForTerminalId('local-ready-marker-filter', 'hello\r\n')
+      backend.emitDataForTerminalId(
+        'local-ready-marker-filter',
+        '__GYSHELL_READY__\r\nPS C:\\Users\\TUOTUO_Server> '
+      )
+
+      await sleep(20)
+
+      const buffered = service.getBufferDelta('local-ready-marker-filter', 0)
+      assertCondition(
+        !buffered.includes('__GYSHELL_READY__'),
+        'ring buffer should never contain internal ready marker'
+      )
+      assertCondition(
+        buffered.includes('PS C:\\Users\\TUOTUO_Server> '),
+        'shell prompt after ready marker should be preserved'
+      )
+      assertCondition(
+        terminalDataEvents.every((item) => !item.data.includes('__GYSHELL_READY__')),
+        'renderer stream should never contain internal ready marker'
       )
     })
 
