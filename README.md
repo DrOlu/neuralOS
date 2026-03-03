@@ -41,6 +41,7 @@ GyShell is built for **persistent execution in your real terminal runtime**:
 - **Human-in-the-loop by design**: intervene anytime without breaking flow.
 - **Multi-tab orchestration**: compile, inspect logs, and run fixes in parallel tabs.
 - **Workspace persistence**: terminal tabs and panel layout can survive restarts and restore quickly.
+- **Integrated file management**: browse, edit, copy, and transfer files across local and SSH sessions without leaving the workspace.
 - **OpenClawd-style remote conversation control**: keep the runtime core on your own computer and steer it from anywhere through chat.
 - **Cross-surface runtime model**: desktop, TUI, and mobile-web share one gateway semantics.
 - **Profile lock safety**: busy sessions pin active model profile for consistency.
@@ -51,12 +52,17 @@ GyShell is built for **persistent execution in your real terminal runtime**:
 
 - **For shipping work**: not just planning, but iterative execution and correction.
 - **For long-running tasks**: preserves session continuity and state across steps.
-- **For real infrastructure**: shell, SSH, forwarding, and multi-tab interactive terminal control.
+- **For real infrastructure**: shell, SSH, forwarding, file management, and multi-tab interactive terminal control.
 - **For multi-device flow**: desktop + TUI + mobile-web with shared gateway semantics.
 - **For multimodal workflows**: text and image inputs can be combined in one execution turn.
 
-## v1.1.0 Key Highlights
+## v1.1.x Key Highlights
 
+- **Desktop file panel + built-in editor** *(new)*
+  - visual file browser as a first-class workspace panel — open, create, rename, delete, copy/move files
+  - cross-terminal file transfers with real-time progress and cancellation (including SSH↔local via SFTP)
+  - inline text preview; double-click to open in the built-in text editor panel
+  - adaptive SFTP transfer tuner auto-optimizes chunk size and concurrency per server
 - **Multimodal input for real tasks**
   - attach images via drag/drop/paste on desktop and mobile-web
   - send text + images in one prompt to supported models
@@ -67,7 +73,7 @@ GyShell is built for **persistent execution in your real terminal runtime**:
   - dynamic history compaction with model-generated summaries
   - explicit compaction activity banners in desktop/mobile-web/TUI
 - **Desktop workspace overhaul**
-  - splitter layout for all chat/terminal panels with persistence
+  - splitter layout for all chat/terminal/file panels with persistence
   - panel rail + drag/drop reorder/split + close-to-trash workflows
 - **Terminal restoration and replay resilience**
   - terminal tabs persist across backend restarts
@@ -89,7 +95,7 @@ GyShell is built for **persistent execution in your real terminal runtime**:
 - Multimodal user input pipeline (text + images) for compatible models.
 - OpenAI-compatible model endpoint support.
 
-### Terminal + SSH
+### Terminal + SSH + File Management
 
 - Shell support: Zsh, Bash, PowerShell.
 - SSH support: password/key auth, proxy chaining, bastion workflows.
@@ -97,6 +103,9 @@ GyShell is built for **persistent execution in your real terminal runtime**:
 - Agent can coordinate **multiple SSH/local terminal tabs** in parallel during one task.
 - Control-character operations for interactive terminal apps.
 - Terminal tab restoration after backend restart, plus lossless output catch-up for renderer remount/reconnect within the same backend runtime.
+- **Integrated file browser panel**: browse, create, rename, delete, and preview files across local and SSH sessions.
+- **Cross-session file transfer** (copy/move) with real-time progress, cancellation, and adaptive SFTP tuning.
+- **Built-in text editor panel** for editing files directly in the workspace.
 
 ### Skills + MCP + Tools
 
