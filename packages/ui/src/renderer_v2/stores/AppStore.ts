@@ -172,6 +172,8 @@ export class AppStore {
       setRuntimeThinkingCorrectionEnabled: action,
       setTaskFinishGuardEnabled: action,
       setFirstTurnThinkingModelEnabled: action,
+      setExecCommandActionModelEnabled: action,
+      setWriteStdinActionModelEnabled: action,
       sendChatMessage: action,
       openFileEditorFromFileSystem: action,
       onPanelRemoved: action,
@@ -832,7 +834,9 @@ export class AppStore {
       runtimeThinkingCorrectionEnabled:
         this.settings?.experimental?.runtimeThinkingCorrectionEnabled !== false,
       taskFinishGuardEnabled: this.settings?.experimental?.taskFinishGuardEnabled !== false,
-      firstTurnThinkingModelEnabled: this.settings?.experimental?.firstTurnThinkingModelEnabled === true
+      firstTurnThinkingModelEnabled: this.settings?.experimental?.firstTurnThinkingModelEnabled === true,
+      execCommandActionModelEnabled: this.settings?.experimental?.execCommandActionModelEnabled !== false,
+      writeStdinActionModelEnabled: this.settings?.experimental?.writeStdinActionModelEnabled !== false
     }
   }
 
@@ -868,6 +872,18 @@ export class AppStore {
   async setFirstTurnThinkingModelEnabled(enabled: boolean): Promise<void> {
     await this.updateExperimentalSettings({
       firstTurnThinkingModelEnabled: enabled
+    })
+  }
+
+  async setExecCommandActionModelEnabled(enabled: boolean): Promise<void> {
+    await this.updateExperimentalSettings({
+      execCommandActionModelEnabled: enabled
+    })
+  }
+
+  async setWriteStdinActionModelEnabled(enabled: boolean): Promise<void> {
+    await this.updateExperimentalSettings({
+      writeStdinActionModelEnabled: enabled
     })
   }
 

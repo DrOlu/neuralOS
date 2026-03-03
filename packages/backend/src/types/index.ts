@@ -45,6 +45,8 @@ export interface ExperimentalFlags {
   runtimeThinkingCorrectionEnabled: boolean
   taskFinishGuardEnabled: boolean
   firstTurnThinkingModelEnabled: boolean
+  execCommandActionModelEnabled: boolean
+  writeStdinActionModelEnabled: boolean
 }
 
 export interface SSHConnectionEntry {

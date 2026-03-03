@@ -7,7 +7,9 @@ function isRunExperimentalFlags(value: any): value is RunExperimentalFlags {
     value &&
     typeof value.runtimeThinkingCorrectionEnabled === 'boolean' &&
     typeof value.taskFinishGuardEnabled === 'boolean' &&
-    typeof value.firstTurnThinkingModelEnabled === 'boolean'
+    typeof value.firstTurnThinkingModelEnabled === 'boolean' &&
+    typeof value.execCommandActionModelEnabled === 'boolean' &&
+    typeof value.writeStdinActionModelEnabled === 'boolean'
   )
 }
 
@@ -15,7 +17,9 @@ export function getRunExperimentalFlagsFromSettings(settings: BackendSettings | 
   return {
     runtimeThinkingCorrectionEnabled: settings?.experimental?.runtimeThinkingCorrectionEnabled !== false,
     taskFinishGuardEnabled: settings?.experimental?.taskFinishGuardEnabled !== false,
-    firstTurnThinkingModelEnabled: settings?.experimental?.firstTurnThinkingModelEnabled === true
+    firstTurnThinkingModelEnabled: settings?.experimental?.firstTurnThinkingModelEnabled === true,
+    execCommandActionModelEnabled: settings?.experimental?.execCommandActionModelEnabled !== false,
+    writeStdinActionModelEnabled: settings?.experimental?.writeStdinActionModelEnabled !== false
   }
 }
 

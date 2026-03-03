@@ -58,6 +58,8 @@ export const zh = {
     runtimeThinkingCorrection: '运行时思考反思纠正',
     taskFinishGuard: '任务结束守卫',
     firstTurnThinkingModel: '首轮使用思考模型',
+    execCommandActionModel: 'Exec Command 二次审计',
+    writeStdinActionModel: 'Write Stdin 二次审计',
     cursorStyles: {
       block: '方块',
       underline: '下划线',
@@ -173,6 +175,8 @@ export const zh = {
       runtimeThinkingCorrection: '每 8 次 model 循环在后台运行一次思考模型审计。若判断路径偏离，会在后续一次模型请求前注入纠正约束。',
       taskFinishGuard: '在结束前执行严格完成度审计，确认任务确实完成。关闭后，当没有工具调用时可直接结束。',
       firstTurnThinkingModel: '开启后，每次 run 的第一次 model_request 会使用 Thinking 模型，后续 model_request 自动回归 Global 模型。',
+      execCommandActionModel: '开启后，执行模型会在 exec_command 运行时并行审计，判断命令是否应从 wait 切换为 nowait 模式。需要在当前 Profile 中配置 Action 模型。',
+      writeStdinActionModel: '开启后，执行模型会在每次 write_stdin 调用前进行检查，若发现意图有误（如按键序列错误），可拦截并阻止该调用。需要在当前 Profile 中配置 Action 模型。',
       themeCustom: '点击打开自定义主题的 JSON 配置文件。你可以按照现有格式添加自己的配色方案。',
       themeReload: '手动重新加载自定义主题文件，使最新的 JSON 修改生效。',
       modelAdd: '配置 AI 模型供应商。目前仅支持【OpenAI API 兼容】的接口格式（如 DeepSeek, Claude, Local LLM 等）。',

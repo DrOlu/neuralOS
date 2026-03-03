@@ -47,7 +47,9 @@ export const DEFAULT_BACKEND_SETTINGS: BackendSettings = {
   experimental: {
     runtimeThinkingCorrectionEnabled: true,
     taskFinishGuardEnabled: true,
-    firstTurnThinkingModelEnabled: false
+    firstTurnThinkingModelEnabled: false,
+    execCommandActionModelEnabled: true,
+    writeStdinActionModelEnabled: true
   }
 }
 
@@ -128,7 +130,9 @@ function normalizeBackendSettings(settings: BackendSettings): BackendSettings {
   next.experimental = {
     runtimeThinkingCorrectionEnabled: next.experimental?.runtimeThinkingCorrectionEnabled !== false,
     taskFinishGuardEnabled: next.experimental?.taskFinishGuardEnabled !== false,
-    firstTurnThinkingModelEnabled: next.experimental?.firstTurnThinkingModelEnabled === true
+    firstTurnThinkingModelEnabled: next.experimental?.firstTurnThinkingModelEnabled === true,
+    execCommandActionModelEnabled: next.experimental?.execCommandActionModelEnabled !== false,
+    writeStdinActionModelEnabled: next.experimental?.writeStdinActionModelEnabled !== false
   }
 
   const access = next.gateway?.ws?.access

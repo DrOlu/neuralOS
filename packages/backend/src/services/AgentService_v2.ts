@@ -143,6 +143,14 @@ const StateAnnotation = Ann.Root({
   firstTurnThinkingModelEnabled: Ann({
     reducer: (x: boolean, y?: boolean) => (typeof y === 'boolean' ? y : x),
     default: () => false
+  }),
+  execCommandActionModelEnabled: Ann({
+    reducer: (x: boolean, y?: boolean) => (typeof y === 'boolean' ? y : x),
+    default: () => true
+  }),
+  writeStdinActionModelEnabled: Ann({
+    reducer: (x: boolean, y?: boolean) => (typeof y === 'boolean' ? y : x),
+    default: () => true
   })
 })
 
@@ -892,7 +900,7 @@ export class AgentService_v2 {
             const validatedArgs = writeStdinSchema.parse(toolCall.args || {})
             // const messageId = toolMessage.additional_kwargs._gyshellMessageId as string
 
-            if (sessionBinding.actionModel) {
+            if (state.writeStdinActionModelEnabled !== false && sessionBinding.actionModel) {
               // Build temporary history for action model
               const finalActionMessages = this.helpers.buildActionModelHistory(state.messages as BaseMessage[])
 
@@ -1030,50 +1038,51 @@ export class AgentService_v2 {
           }
         }
 
-        const actionDecisionTask = (async () => {
-          // Keep action-model judgment independent: do not include global waitMode choice in prompt.
-          const finalActionMessages = this.helpers.buildActionModelHistory(state.messages as BaseMessage[])
-          const user = createCommandPolicyUserPrompt({
-            tabTitle: bestMatch.title,
-            tabId: bestMatch.id,
-            tabType: bestMatch.type,
-            command: validated.command,
-            recentOutput: recent
-          })
-          const finalMessagesForActionModel = [...finalActionMessages, user]
+        const actionDecisionTask = state.execCommandActionModelEnabled !== false
+          ? (async () => {
+              // Keep action-model judgment independent: do not include global waitMode choice in prompt.
+              const finalActionMessages = this.helpers.buildActionModelHistory(state.messages as BaseMessage[])
+              const user = createCommandPolicyUserPrompt({
+                tabTitle: bestMatch.title,
+                tabId: bestMatch.id,
+                tabType: bestMatch.type,
+                command: validated.command,
+                recentOutput: recent
+              })
+              const finalMessagesForActionModel = [...finalActionMessages, user]
 
-          const decision = await this.getActionModelPolicyDecision(
-            sessionId,
-            finalMessagesForActionModel,
-            COMMAND_POLICY_DECISION_SCHEMA,
-            actionDecisionController.signal,
-            'exec_command_parallel_audit'
-          )
+              const decision = await this.getActionModelPolicyDecision(
+                sessionId,
+                finalMessagesForActionModel,
+                COMMAND_POLICY_DECISION_SCHEMA,
+                actionDecisionController.signal,
+                'exec_command_parallel_audit'
+              )
 
-          const decisionReason = this.normalizeLogReason(decision.reason)
-          if (decision.decision === 'nowait') {
-            console.log(
-              `[AgentService_v2][exec_command_guard] Triggered nowait switch. reason=${decisionReason}`
-            )
-          } else {
-            console.log(
-              `[AgentService_v2][exec_command_guard] Decision kept wait mode. reason=${decisionReason}`
-            )
-          }
+              const decisionReason = this.normalizeLogReason(decision.reason)
+              if (decision.decision === 'nowait') {
+                console.log(
+                  `[AgentService_v2][exec_command_guard] Triggered nowait switch. reason=${decisionReason}`
+                )
+              } else {
+                console.log(
+                  `[AgentService_v2][exec_command_guard] Decision kept wait mode. reason=${decisionReason}`
+                )
+              }
 
-          if (waitActive && decision.decision === 'nowait') {
-            autoSwitchToNowait = true
-            autoSwitchReason = String(decision.reason || '').trim()
-          }
-
-        })()
-          .catch((err: any) => {
-            if (this.helpers.isAbortError(err) || actionDecisionController.signal.aborted) {
-              console.log('[AgentService_v2][exec_command_guard] Abort trigger received. keep wait mode.')
-              return
-            }
-            console.log('[AgentService_v2][exec_command_guard] Decision skipped, keep wait mode.')
-          })
+              if (waitActive && decision.decision === 'nowait') {
+                autoSwitchToNowait = true
+                autoSwitchReason = String(decision.reason || '').trim()
+              }
+            })()
+              .catch((err: any) => {
+                if (this.helpers.isAbortError(err) || actionDecisionController.signal.aborted) {
+                  console.log('[AgentService_v2][exec_command_guard] Abort trigger received. keep wait mode.')
+                  return
+                }
+                console.log('[AgentService_v2][exec_command_guard] Decision skipped, keep wait mode.')
+              })
+          : Promise.resolve()
 
         try {
           resultText = await toolImplementations.runCommand(validated, executionContext, {
@@ -1915,7 +1924,9 @@ export class AgentService_v2 {
       startup_mode: startMode,
       runtimeThinkingCorrectionEnabled: runExperimentalFlags.runtimeThinkingCorrectionEnabled,
       taskFinishGuardEnabled: runExperimentalFlags.taskFinishGuardEnabled,
-      firstTurnThinkingModelEnabled: runExperimentalFlags.firstTurnThinkingModelEnabled
+      firstTurnThinkingModelEnabled: runExperimentalFlags.firstTurnThinkingModelEnabled,
+      execCommandActionModelEnabled: runExperimentalFlags.execCommandActionModelEnabled,
+      writeStdinActionModelEnabled: runExperimentalFlags.writeStdinActionModelEnabled
     }
 
     try {

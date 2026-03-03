@@ -58,6 +58,8 @@ export const en = {
     runtimeThinkingCorrection: 'Runtime Thinking Reflection Correction',
     taskFinishGuard: 'Task Finish Guard',
     firstTurnThinkingModel: 'First-Turn Thinking Model',
+    execCommandActionModel: 'Exec Command Double Audit',
+    writeStdinActionModel: 'Write Stdin Double Audit',
     cursorStyles: {
       block: 'Block',
       underline: 'Underline',
@@ -175,6 +177,8 @@ export const en = {
       runtimeThinkingCorrection: 'Run a background thinking-model audit every 8 model loops. If it detects the trajectory is off-track, it injects a correction constraint before a later model request.',
       taskFinishGuard: 'Before ending, run a strict completion audit to verify the task is truly finished. If disabled, the agent can end immediately when no tool call is produced.',
       firstTurnThinkingModel: 'If enabled, the first model_request in each run uses the Thinking model, then all later model_request steps revert to the Global model.',
+      execCommandActionModel: 'If enabled, the action model runs a parallel audit on exec_command to determine whether the command should switch from wait to nowait mode. Requires an Action Model to be configured in the active profile.',
+      writeStdinActionModel: 'If enabled, the action model inspects each write_stdin call before execution and can block it if the intent appears incorrect (e.g., wrong key sequence). Requires an Action Model to be configured in the active profile.',
       themeCustom: 'Open the JSON configuration file for custom themes. You can define your own color schemes here.',
       themeReload: 'Manually reload the custom theme file to apply your latest JSON changes.',
       modelAdd: 'Configure AI model providers. Currently, only [OpenAI API Compatible] interfaces are supported (e.g., DeepSeek, Claude, Local LLMs).',

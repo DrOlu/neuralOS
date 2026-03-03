@@ -675,6 +675,34 @@ export const SettingsView: React.FC<{ store: AppStore }> = observer(({ store }) 
                     <span className="switch-slider" />
                   </label>
                 </div>
+                <div className="settings-row">
+                  <div className="settings-row-label-with-info">
+                    <label>{t.settings.execCommandActionModel}</label>
+                    <InfoTooltip content={t.settings.tooltips.execCommandActionModel} />
+                  </div>
+                  <label className="switch">
+                    <input
+                      type="checkbox"
+                      checked={store.settings?.experimental?.execCommandActionModelEnabled !== false}
+                      onChange={(e) => store.setExecCommandActionModelEnabled(e.target.checked)}
+                    />
+                    <span className="switch-slider" />
+                  </label>
+                </div>
+                <div className="settings-row">
+                  <div className="settings-row-label-with-info">
+                    <label>{t.settings.writeStdinActionModel}</label>
+                    <InfoTooltip content={t.settings.tooltips.writeStdinActionModel} />
+                  </div>
+                  <label className="switch">
+                    <input
+                      type="checkbox"
+                      checked={store.settings?.experimental?.writeStdinActionModelEnabled !== false}
+                      onChange={(e) => store.setWriteStdinActionModelEnabled(e.target.checked)}
+                    />
+                    <span className="switch-slider" />
+                  </label>
+                </div>
               </div>
 
               <div className="settings-section-header" style={{ marginTop: 24 }}>
