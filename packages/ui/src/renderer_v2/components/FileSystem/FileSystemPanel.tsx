@@ -16,8 +16,15 @@ import {
 } from 'lucide-react'
 import { observer } from 'mobx-react-lite'
 import type { FileSystemEntry } from '../../lib/ipcTypes'
-import type { AppStore, TerminalTabModel } from '../../stores/AppStore'
+import type { AppStore, FileSystemClipboardMode, FileSystemClipboardState, TerminalTabModel } from '../../stores/AppStore'
 import { resolveTextPreviewSupport, TEXT_PREVIEW_MAX_BYTES } from './filePreviewSupport'
+import {
+  FILESYSTEM_PANEL_DRAG_MIME,
+  encodeFileSystemPanelDragPayload,
+  hasFileSystemPanelDragPayloadType,
+  hasNativeFileDragType,
+  parseFileSystemPanelDragPayload
+} from '../../lib/filesystemDragDrop'
 import { ConfirmDialog } from '../Common/ConfirmDialog'
 import './filesystem.scss'
 
@@ -63,8 +70,7 @@ const TRANSFER_CONCURRENCY_LIMIT = 2
 const TRANSFER_CANCELLED_ERROR_CODE = 'GYSHELL_FS_TRANSFER_CANCELLED'
 const TERMINAL_TRANSFER_STATUSES = new Set<TransferTaskStatus>(['success', 'error', 'cancelled'])
 
-type ClipboardMode = 'copy' | 'move'
-type TransferTaskKind = ClipboardMode
+type TransferTaskKind = FileSystemClipboardMode
 type TransferTaskStatus = 'queued' | 'running' | 'success' | 'error' | 'cancelled'
 type InlinePathActionType = 'createDirectory' | 'createFile' | 'renamePath'
 
@@ -72,15 +78,6 @@ interface InlinePathActionState {
   type: InlinePathActionType
   sourcePath?: string
   value: string
-}
-
-interface ClipboardPayload {
-  mode: ClipboardMode
-  sourceTerminalId: string
-  sourcePaths: string[]
-  itemNames: string[]
-  sourceBasePath: string
-  createdAt: number
 }
 
 interface TransferTaskState {
@@ -189,6 +186,26 @@ const parentPath = (inputPath: string): string | null => {
   return parent
 }
 
+const basenameFromPath = (inputPath: string): string => {
+  const normalized = String(inputPath || '').trim()
+  if (!normalized) return ''
+  const segments = normalized.replace(/[\\/]+$/, '').split(/[\\/]/).filter(Boolean)
+  return segments[segments.length - 1] || normalized
+}
+
+const getNativeDropFilePaths = (dataTransfer: DataTransfer | null | undefined): string[] => {
+  if (!dataTransfer?.files) return []
+  const seen = new Set<string>()
+  const next: string[] = []
+  Array.from(dataTransfer.files).forEach((file) => {
+    const maybePath = typeof (file as any)?.path === 'string' ? String((file as any).path).trim() : ''
+    if (!maybePath || seen.has(maybePath)) return
+    seen.add(maybePath)
+    next.push(maybePath)
+  })
+  return next
+}
+
 const normalizePathForCompare = (inputPath: string): string => {
   const withForwardSlash = inputPath.replace(/\\/g, '/')
   const trimmed = withForwardSlash.replace(/\/+$/, '')
@@ -214,13 +231,15 @@ export const FileSystemPanel: React.FC<FileSystemPanelProps> = observer(({
   const t = store.i18n.t
   const [stateByTabId, setStateByTabId] = React.useState<Record<string, BrowserTabState>>({})
   const [inlinePathAction, setInlinePathAction] = React.useState<InlinePathActionState | null>(null)
-  const [clipboard, setClipboard] = React.useState<ClipboardPayload | null>(null)
+  const clipboard = store.fileSystemClipboard
   const [deleteConfirmOpen, setDeleteConfirmOpen] = React.useState(false)
   const [isDeleteConfirmLoading, setDeleteConfirmLoading] = React.useState(false)
   const [overwriteConfirmOpen, setOverwriteConfirmOpen] = React.useState(false)
   const [isOverwriteConfirmLoading, setOverwriteConfirmLoading] = React.useState(false)
+  const [isExplorerDropHot, setExplorerDropHot] = React.useState(false)
+  const [isSameMachineGateway, setSameMachineGateway] = React.useState<boolean | null>(null)
   const pendingOverwriteRef = React.useRef<{
-    clipboard: ClipboardPayload
+    clipboard: FileSystemClipboardState
     targetTerminalId: string
     targetPath: string
     conflictNames: string[]
@@ -239,6 +258,22 @@ export const FileSystemPanel: React.FC<FileSystemPanelProps> = observer(({
   React.useEffect(() => {
     transferTasksRef.current = transferTasks
   }, [transferTasks])
+
+  React.useEffect(() => {
+    let cancelled = false
+    void window.gyshell.gateway.isSameMachine()
+      .then((payload) => {
+        if (cancelled) return
+        setSameMachineGateway(payload?.sameMachine === true)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setSameMachineGateway(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   React.useEffect(() => {
     if (tabs.length <= 0) return
@@ -395,6 +430,7 @@ export const FileSystemPanel: React.FC<FileSystemPanelProps> = observer(({
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) || tabs[0] || null
   const activeTerminalId = activeTab?.id || null
+  const activeTerminalType = activeTab?.config?.type || null
   const activeState = activeTerminalId ? (stateByTabId[activeTerminalId] || createInitialTabState()) : createInitialTabState()
   const selectedEntries = React.useMemo(
     () => activeState.entries.filter((entry) => activeState.selectedPaths.includes(entry.path)),
@@ -819,9 +855,9 @@ export const FileSystemPanel: React.FC<FileSystemPanelProps> = observer(({
     updateTabState
   ])
 
-  const setClipboardFromSelection = React.useCallback((mode: ClipboardMode): void => {
+  const setClipboardFromSelection = React.useCallback((mode: FileSystemClipboardMode): void => {
     if (!activeTerminalId || selectedEntries.length <= 0) return
-    const nextClipboard: ClipboardPayload = {
+    const nextClipboard: FileSystemClipboardState = {
       mode,
       sourceTerminalId: activeTerminalId,
       sourcePaths: selectedEntries.map((entry) => entry.path),
@@ -829,7 +865,7 @@ export const FileSystemPanel: React.FC<FileSystemPanelProps> = observer(({
       sourceBasePath: activeState.currentPath || '.',
       createdAt: Date.now()
     }
-    setClipboard(nextClipboard)
+    store.setFileSystemClipboard(nextClipboard)
     updateTabState(activeTerminalId, (current) => ({
       ...current,
       statusMessage: mode === 'copy'
@@ -837,10 +873,10 @@ export const FileSystemPanel: React.FC<FileSystemPanelProps> = observer(({
         : t.filesystem.cutItemsToClipboard(selectedEntries.length),
       errorMessage: null
     }))
-  }, [activeState.currentPath, activeTerminalId, selectedEntries, t.filesystem, updateTabState])
+  }, [activeState.currentPath, activeTerminalId, selectedEntries, store, t.filesystem, updateTabState])
 
   const queueClipboardTransfer = React.useCallback((
-    clipboardPayload: ClipboardPayload,
+    clipboardPayload: FileSystemClipboardState,
     targetTerminalId: string,
     targetPath: string,
     overwrite: boolean
@@ -940,7 +976,7 @@ export const FileSystemPanel: React.FC<FileSystemPanelProps> = observer(({
           scheduleDirectoryReload(targetTerminalId, targetPath)
           if (mode === 'move') {
             scheduleDirectoryReload(clipboardPayload.sourceTerminalId, clipboardPayload.sourceBasePath)
-            setClipboard(null)
+            store.clearFileSystemClipboard()
           }
           scheduleTransferCleanup(taskId)
         } catch (error) {
@@ -981,30 +1017,38 @@ export const FileSystemPanel: React.FC<FileSystemPanelProps> = observer(({
     enqueueTransferTask,
     scheduleDirectoryReload,
     scheduleTransferCleanup,
+    store,
     t.filesystem,
     updateTabState,
     updateTransferTask
   ])
 
-  const handlePasteClipboard = React.useCallback((forceOverwrite = false): void => {
-    if (!clipboard || !activeTerminalId) return
-    const targetPath = activeState.currentPath || '.'
+  const requestClipboardTransfer = React.useCallback((
+    clipboardPayload: FileSystemClipboardState,
+    targetTerminalId: string,
+    targetPath: string,
+    forceOverwrite = false
+  ): void => {
     const existingNameSet = new Set(activeState.entries.map((entry) => entry.name))
-    const conflictNames = clipboard.itemNames.filter((name) => existingNameSet.has(name))
-
+    const conflictNames = clipboardPayload.itemNames.filter((name) => existingNameSet.has(name))
     if (!forceOverwrite && conflictNames.length > 0) {
       pendingOverwriteRef.current = {
-        clipboard,
-        targetTerminalId: activeTerminalId,
+        clipboard: clipboardPayload,
+        targetTerminalId,
         targetPath,
         conflictNames
       }
       setOverwriteConfirmOpen(true)
       return
     }
+    queueClipboardTransfer(clipboardPayload, targetTerminalId, targetPath, forceOverwrite)
+  }, [activeState.entries, queueClipboardTransfer])
 
-    queueClipboardTransfer(clipboard, activeTerminalId, targetPath, forceOverwrite)
-  }, [activeState.currentPath, activeState.entries, activeTerminalId, clipboard, queueClipboardTransfer])
+  const handlePasteClipboard = React.useCallback((forceOverwrite = false): void => {
+    if (!clipboard || !activeTerminalId) return
+    const targetPath = activeState.currentPath || '.'
+    requestClipboardTransfer(clipboard, activeTerminalId, targetPath, forceOverwrite)
+  }, [activeState.currentPath, activeTerminalId, clipboard, requestClipboardTransfer])
 
   const confirmOverwriteAndPaste = React.useCallback(async (): Promise<void> => {
     const pending = pendingOverwriteRef.current
@@ -1022,8 +1066,144 @@ export const FileSystemPanel: React.FC<FileSystemPanelProps> = observer(({
   const clearClipboard = React.useCallback((): void => {
     pendingOverwriteRef.current = null
     setOverwriteConfirmOpen(false)
-    setClipboard(null)
+    store.clearFileSystemClipboard()
+  }, [store])
+
+  const handleNativePathDrop = React.useCallback(async (sourcePaths: string[]): Promise<void> => {
+    if (!activeTerminalId || sourcePaths.length <= 0) return
+    const sameMachine = isSameMachineGateway === true
+      ? true
+      : await window.gyshell.gateway.isSameMachine().then((payload) => payload?.sameMachine === true)
+    setSameMachineGateway(sameMachine)
+    if (!sameMachine) {
+      throw new Error('Local drag-and-drop is not available when frontend and backend are on different machines.')
+    }
+    const localTerminalId = store.getPreferredLocalTerminalId()
+    if (!localTerminalId) {
+      throw new Error('No Local terminal is available for local filesystem drag-and-drop.')
+    }
+    const clipboardPayload: FileSystemClipboardState = {
+      mode: 'copy',
+      sourceTerminalId: localTerminalId,
+      sourcePaths,
+      itemNames: sourcePaths.map((path) => basenameFromPath(path) || path),
+      sourceBasePath: parentPath(sourcePaths[0]) || '.',
+      createdAt: Date.now()
+    }
+    requestClipboardTransfer(clipboardPayload, activeTerminalId, activeState.currentPath || '.', false)
+  }, [activeState.currentPath, activeTerminalId, isSameMachineGateway, requestClipboardTransfer, store])
+
+  const handleExplorerDragEnter = React.useCallback((event: React.DragEvent<HTMLDivElement>): void => {
+    const isFileSystemPanelDrag = hasFileSystemPanelDragPayloadType(event.dataTransfer)
+    const isNativeFileDrag = hasNativeFileDragType(event.dataTransfer)
+    if (!isFileSystemPanelDrag && !isNativeFileDrag) return
+    setExplorerDropHot(true)
   }, [])
+
+  const handleExplorerDragLeave = React.useCallback((event: React.DragEvent<HTMLDivElement>): void => {
+    const currentTarget = event.currentTarget
+    const related = event.relatedTarget as Node | null
+    if (related && currentTarget.contains(related)) return
+    setExplorerDropHot(false)
+  }, [])
+
+  const handleExplorerDragOver = React.useCallback((event: React.DragEvent<HTMLDivElement>): void => {
+    const isFileSystemPanelDrag = hasFileSystemPanelDragPayloadType(event.dataTransfer)
+    const isNativeFileDrag = hasNativeFileDragType(event.dataTransfer)
+    if (!isFileSystemPanelDrag && !isNativeFileDrag) return
+    event.preventDefault()
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = 'copy'
+    }
+    setExplorerDropHot(true)
+  }, [])
+
+  const handleExplorerDrop = React.useCallback((event: React.DragEvent<HTMLDivElement>): void => {
+    const isFileSystemPanelDrag = hasFileSystemPanelDragPayloadType(event.dataTransfer)
+    const isNativeFileDrag = hasNativeFileDragType(event.dataTransfer)
+    if (!isFileSystemPanelDrag && !isNativeFileDrag) {
+      return
+    }
+    event.preventDefault()
+    setExplorerDropHot(false)
+
+    const payload = parseFileSystemPanelDragPayload(event.dataTransfer)
+    const nativePaths = getNativeDropFilePaths(event.dataTransfer)
+    if (!activeTerminalId) return
+
+    if (payload) {
+      const clipboardPayload: FileSystemClipboardState = {
+        mode: 'copy',
+        sourceTerminalId: payload.sourceTerminalId,
+        sourcePaths: payload.entries.map((entry) => entry.path),
+        itemNames: payload.entries.map((entry) => entry.name),
+        sourceBasePath: payload.sourceBasePath,
+        createdAt: Date.now()
+      }
+      requestClipboardTransfer(clipboardPayload, activeTerminalId, activeState.currentPath || '.', false)
+      return
+    }
+
+    if (nativePaths.length > 0) {
+      void handleNativePathDrop(nativePaths).catch((error) => {
+        updateTabState(activeTerminalId, (current) => ({
+          ...current,
+          errorMessage: toErrorMessage(error),
+          statusMessage: null
+        }))
+      })
+      return
+    }
+
+    updateTabState(activeTerminalId, (current) => ({
+      ...current,
+      errorMessage: 'Drop payload was detected but no readable file data was available.',
+      statusMessage: null
+    }))
+  }, [activeState.currentPath, activeTerminalId, handleNativePathDrop, requestClipboardTransfer, updateTabState])
+
+  const handleRowDragStart = React.useCallback((event: React.DragEvent<HTMLDivElement>, entry: FileSystemEntry): void => {
+    if (!activeTerminalId || !event.dataTransfer) return
+    const selectedEntryMap = new Map(selectedEntries.map((item) => [item.path, item]))
+    const includesDraggedEntry = selectedEntryMap.has(entry.path)
+    const dragEntries = includesDraggedEntry
+      ? selectedEntries
+      : [entry]
+    if (dragEntries.length <= 0) return
+    const payload = {
+      version: 1 as const,
+      sourceTerminalId: activeTerminalId,
+      sourceBasePath: activeState.currentPath || '.',
+      entries: dragEntries.map((item) => ({
+        name: item.name,
+        path: item.path,
+        isDirectory: item.isDirectory,
+        ...(Number.isFinite(item.size) ? { size: Math.max(0, Math.floor(item.size)) } : {})
+      }))
+    }
+    event.dataTransfer.setData(FILESYSTEM_PANEL_DRAG_MIME, encodeFileSystemPanelDragPayload(payload))
+    event.dataTransfer.setData('text/plain', dragEntries.map((item) => item.path).join('\n'))
+    event.dataTransfer.effectAllowed = 'copyMove'
+    if (isSameMachineGateway === true && activeTerminalType === 'local') {
+      void window.gyshell.filesystem.startNativeDrag(
+        activeTerminalId,
+        dragEntries.map((item) => item.path)
+      ).catch((error) => {
+        updateTabState(activeTerminalId, (current) => ({
+          ...current,
+          errorMessage: toErrorMessage(error),
+          statusMessage: null
+        }))
+      })
+    }
+  }, [
+    activeState.currentPath,
+    activeTerminalId,
+    activeTerminalType,
+    isSameMachineGateway,
+    selectedEntries,
+    updateTabState
+  ])
 
   const handlePanelKeyDown = React.useCallback((event: React.KeyboardEvent<HTMLElement>): void => {
     const target = event.target as HTMLElement | null
@@ -1316,7 +1496,13 @@ export const FileSystemPanel: React.FC<FileSystemPanelProps> = observer(({
 
       <div className="panel-body filesystem-panel-body">
         <div className="filesystem-explorer">
-          <div className="filesystem-list">
+          <div
+            className={isExplorerDropHot ? 'filesystem-list is-drop-hot' : 'filesystem-list'}
+            onDragEnter={handleExplorerDragEnter}
+            onDragLeave={handleExplorerDragLeave}
+            onDragOver={handleExplorerDragOver}
+            onDrop={handleExplorerDrop}
+          >
             {activeState.entries.length === 0 && !activeState.loading ? (
               <div className="filesystem-empty-state">{t.filesystem.emptyDirectory}</div>
             ) : (
@@ -1328,6 +1514,8 @@ export const FileSystemPanel: React.FC<FileSystemPanelProps> = observer(({
                     key={entry.path}
                     className={isSelected ? 'filesystem-row is-selected' : 'filesystem-row'}
                     onClick={(event) => handleSelectEntry(event, entry)}
+                    draggable
+                    onDragStart={(event) => handleRowDragStart(event, entry)}
                     onDoubleClick={() => {
                       if (entry.isDirectory) {
                         navigateDirectory(entry.path)

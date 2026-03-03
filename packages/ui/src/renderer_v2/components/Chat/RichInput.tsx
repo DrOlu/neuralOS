@@ -11,6 +11,11 @@ import {
   type ComposerImageAttachment,
   type InputImageAttachment
 } from '../../lib/userInput';
+import {
+  encodeTerminalScopedFilePath,
+  getFileMentionDisplayName,
+  parseFileSystemPanelDragPayload
+} from '../../lib/filesystemDragDrop';
 import './richInput.scss';
 
 type DraftInputImageAttachment = InputImageAttachment & {
@@ -224,8 +229,8 @@ export const RichInput = observer(forwardRef<RichInputHandle, RichInputProps>(({
     item: { type: 'skill' | 'terminal' | 'file' | 'paste'; name: string; id?: string; preview?: string },
     uid: string
   ): string => {
-    const fileName = item.name.split(/[/\\]/).pop() || item.name;
-    const displayText = item.type === 'file' ? fileName : (item.type === 'paste' ? (item.preview || '') : `@${item.name}`);
+    const fileName = getFileMentionDisplayName(item.name) || item.name;
+    const displayText = item.type === 'file' ? (item.preview || fileName) : (item.type === 'paste' ? (item.preview || '') : `@${item.name}`);
     return `<span class="mention-tag" contenteditable="false" data-insert-id="${uid}" data-type="${item.type}" data-name="${item.name}" ${item.id ? `data-id="${item.id}"` : ''} ${item.preview ? `data-preview="${item.preview}"` : ''}>${displayText}</span>${cursorMarker}`;
   };
 
@@ -389,7 +394,7 @@ export const RichInput = observer(forwardRef<RichInputHandle, RichInputProps>(({
               span.dataset.type = 'file';
               span.dataset.name = fileMatch[1];
               // Extract only the file/folder name for display
-              const fileName = fileMatch[1].split(/[/\\]/).pop() || fileMatch[1];
+              const fileName = getFileMentionDisplayName(fileMatch[1]) || fileMatch[1];
               span.textContent = fileName;
               editorRef.current?.appendChild(span);
             }
@@ -401,7 +406,7 @@ export const RichInput = observer(forwardRef<RichInputHandle, RichInputProps>(({
               span.contentEditable = 'false';
               span.dataset.type = 'file';
               span.dataset.name = imageMatch[1];
-              const imageName = imageMatch[2] || imageMatch[1].split(/[/\\]/).pop() || imageMatch[1];
+              const imageName = imageMatch[2] || getFileMentionDisplayName(imageMatch[1]) || imageMatch[1];
               span.textContent = imageName;
               editorRef.current?.appendChild(span);
             }
@@ -460,7 +465,7 @@ export const RichInput = observer(forwardRef<RichInputHandle, RichInputProps>(({
               span.contentEditable = 'false';
               span.dataset.type = 'file';
               span.dataset.name = fileMatch[1];
-              const fileName = fileMatch[1].split(/[/\\]/).pop() || fileMatch[1];
+              const fileName = getFileMentionDisplayName(fileMatch[1]) || fileMatch[1];
               span.textContent = fileName;
               editorRef.current?.appendChild(span);
             }
@@ -472,7 +477,7 @@ export const RichInput = observer(forwardRef<RichInputHandle, RichInputProps>(({
               span.contentEditable = 'false';
               span.dataset.type = 'file';
               span.dataset.name = imageMatch[1];
-              const imageName = imageMatch[2] || imageMatch[1].split(/[/\\]/).pop() || imageMatch[1];
+              const imageName = imageMatch[2] || getFileMentionDisplayName(imageMatch[1]) || imageMatch[1];
               span.textContent = imageName;
               editorRef.current?.appendChild(span);
             }
@@ -612,6 +617,55 @@ export const RichInput = observer(forwardRef<RichInputHandle, RichInputProps>(({
     updateImageAttachments((current) => [...current, ...created]);
   };
 
+  const decodeBase64ToFile = (contentBase64: string, fileName: string, mimeType?: string): File => {
+    const cleaned = String(contentBase64 || '').replace(/^data:[^,]+,/, '');
+    const binary = atob(cleaned);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    const resolvedType = String(mimeType || '').trim() || 'application/octet-stream';
+    return new File([bytes], fileName || 'attachment', { type: resolvedType, lastModified: Date.now() });
+  };
+
+  const handleFileSystemPanelDrop = async (
+    payload: ReturnType<typeof parseFileSystemPanelDragPayload>
+  ): Promise<void> => {
+    if (!payload) return;
+    const sourceTerminal = store.terminalTabs.find((tab) => tab.id === payload.sourceTerminalId) || null;
+    const isLocalSourceTerminal = sourceTerminal?.config?.type === 'local';
+    const createdImages: ComposerImageAttachment[] = [];
+    for (const entry of payload.entries) {
+      if (!entry) continue;
+      const isImageEntry = !entry.isDirectory
+        && isRecognizedImageFile({ name: entry.name, type: '' } as Pick<File, 'name' | 'type'>);
+      // Remote filesystem drops (e.g., SFTP) should never fetch image bytes here.
+      // They are represented as regular file mentions to avoid slow remote download on drop.
+      if (isImageEntry && isLocalSourceTerminal) {
+        try {
+          const read = await window.gyshell.filesystem.readFileBase64(payload.sourceTerminalId, entry.path);
+          const file = decodeBase64ToFile(read.contentBase64, entry.name || read.path, read.mimeType);
+          const image = await buildImageFromLocalFile(file);
+          if (image) {
+            createdImages.push(image);
+          }
+        } catch (error) {
+          console.error('[RichInput] Failed to attach dropped filesystem image:', error);
+        }
+        continue;
+      }
+      const mentionPath = encodeTerminalScopedFilePath(payload.sourceTerminalId, entry.path);
+      insertMention({
+        type: 'file',
+        name: mentionPath,
+        preview: entry.name || getFileMentionDisplayName(entry.path)
+      });
+    }
+    if (createdImages.length > 0) {
+      updateImageAttachments((current) => [...current, ...createdImages]);
+    }
+  };
+
   const handlePaste = async (e: React.ClipboardEvent) => {
     const imageFiles = extractClipboardImageFiles(e.clipboardData);
     if (imageFiles.length > 0) {
@@ -645,19 +699,29 @@ export const RichInput = observer(forwardRef<RichInputHandle, RichInputProps>(({
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
+    const filesystemPayload = parseFileSystemPanelDragPayload(e.dataTransfer);
+    if (filesystemPayload) {
+      void handleFileSystemPanelDrop(filesystemPayload);
+      return;
+    }
     const files = Array.from(e.dataTransfer.files);
-    console.log('[RichInput] Files dropped:', files.length);
     if (files.length > 0) {
       const imageCandidates = files.filter((file) => isRecognizedImageFile(file));
       if (imageCandidates.length > 0) {
         void attachLocalImages(imageCandidates);
       }
-
+      const localTerminalId = store.getPreferredLocalTerminalId();
       files.forEach(f => {
         const path = (f as any).path;
-        console.log('[RichInput] Dropped file path:', path);
         if (path && !isRecognizedImageFile(f)) {
-          insertMention({ type: 'file', name: path });
+          const mentionPath = localTerminalId
+            ? encodeTerminalScopedFilePath(localTerminalId, path)
+            : path;
+          insertMention({
+            type: 'file',
+            name: mentionPath,
+            preview: getFileMentionDisplayName(path)
+          });
         }
       });
     }

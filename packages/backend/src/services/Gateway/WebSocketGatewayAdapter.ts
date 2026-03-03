@@ -4,6 +4,7 @@ import { WebSocketServer } from 'ws';
 
 type WebSocketRpcMethod =
   | 'gateway:ping'
+  | 'gateway:isSameMachine'
   | 'gateway:createSession'
   | 'session:list'
   | 'session:get'
@@ -221,6 +222,7 @@ export function createDefaultWebSocketServerFactory(): WebSocketServerFactory {
 export class WebSocketGatewayAdapter {
   private server: IWebSocketServerLike | null = null;
   private transportIdBySocket: Map<IWebSocketConnectionLike, string> = new Map();
+  private isSameMachineBySocket: WeakMap<IWebSocketConnectionLike, boolean> = new WeakMap();
   private readonly serverFactory: WebSocketServerFactory;
   private readonly logger: IWebSocketGatewayAdapterLogger;
 
@@ -312,6 +314,7 @@ export class WebSocketGatewayAdapter {
 
     const transport = new WebSocketClientTransport(socket, this.logger);
     this.transportIdBySocket.set(socket, transport.id);
+    this.isSameMachineBySocket.set(socket, this.isLoopbackAddress(String(remote)));
     this.gateway.registerTransport(transport);
     state.authorized = true;
     this.logger.info(`[WebSocketGatewayAdapter] Client connected: ${remote} (${transport.id})`);
@@ -428,6 +431,7 @@ export class WebSocketGatewayAdapter {
   private cleanupSocket(socket: IWebSocketConnectionLike): void {
     const transportId = this.transportIdBySocket.get(socket);
     if (!transportId) return;
+    this.isSameMachineBySocket.delete(socket);
     this.transportIdBySocket.delete(socket);
     this.gateway.unregisterTransport(transportId);
     this.logger.info(`[WebSocketGatewayAdapter] Client disconnected: ${transportId}`);
@@ -438,7 +442,7 @@ export class WebSocketGatewayAdapter {
     try {
       const parsed = this.parseRequest(raw);
       requestId = parsed.id !== undefined ? String(parsed.id) : undefined;
-      const result = await this.executeRequest(parsed);
+      const result = await this.executeRequest(parsed, socket);
       if (requestId) {
         this.sendRpcSuccess(socket, requestId, result);
       }
@@ -485,11 +489,13 @@ export class WebSocketGatewayAdapter {
     throw new WebSocketRpcError('BAD_REQUEST', 'Unsupported websocket payload type.');
   }
 
-  private async executeRequest(request: WebSocketRpcRequest): Promise<any> {
+  private async executeRequest(request: WebSocketRpcRequest, socket: IWebSocketConnectionLike): Promise<any> {
     const params = request.params ?? {};
     switch (request.method) {
       case 'gateway:ping':
         return { pong: true, ts: Date.now() };
+      case 'gateway:isSameMachine':
+        return { sameMachine: this.isSameMachineBySocket.get(socket) === true };
       case 'gateway:createSession': {
         const sessionId = await this.gateway.createSession();
         return { sessionId };

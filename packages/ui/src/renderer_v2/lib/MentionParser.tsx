@@ -1,4 +1,5 @@
 import React from 'react';
+import { getFileMentionDisplayName } from './filesystemDragDrop';
 
 /**
  * Shared by:
@@ -8,7 +9,7 @@ import React from 'react';
 const MENTION_TOKEN_REGEX = /(\[MENTION_(?:SKILL|TAB|FILE|IMAGE|USER_PASTE):#.+?#(?:#.+?#)?\])/g;
 
 const getFileDisplayName = (path: string): string => {
-  return path.split(/[/\\]/).pop() || path;
+  return getFileMentionDisplayName(path) || path;
 };
 
 const mentionTokenToText = (token: string): string | null => {

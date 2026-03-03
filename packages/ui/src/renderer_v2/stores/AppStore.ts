@@ -55,6 +55,17 @@ export interface TerminalTabModel {
 }
 type TerminalListPayload = Awaited<ReturnType<Window['gyshell']['terminal']['list']>>
 
+export type FileSystemClipboardMode = 'copy' | 'move'
+
+export interface FileSystemClipboardState {
+  mode: FileSystemClipboardMode
+  sourceTerminalId: string
+  sourcePaths: string[]
+  itemNames: string[]
+  sourceBasePath: string
+  createdAt: number
+}
+
 export class AppStore {
   view: AppView = 'main'
   settings: AppSettings | null = null
@@ -65,6 +76,7 @@ export class AppStore {
   terminalTabsHydrated = false
   activeTerminalId: string | null = null
   terminalSelections: Record<string, string> = {}
+  fileSystemClipboard: FileSystemClipboardState | null = null
 
   xtermTheme: ITheme = {}
   customThemes: TerminalColorScheme[] = []
@@ -93,6 +105,7 @@ export class AppStore {
       terminalTabsHydrated: observable,
       activeTerminalId: observable,
       terminalSelections: observable,
+      fileSystemClipboard: observable,
       xtermTheme: observable,
       customThemes: observable,
       i18n: observable,
@@ -126,6 +139,8 @@ export class AppStore {
       closeTab: action,
       setActiveTerminal: action,
       setTerminalSelection: action,
+      setFileSystemClipboard: action,
+      clearFileSystemClipboard: action,
       setSettingsSection: action,
       setThemeId: action,
       setLanguage: action,
@@ -1474,6 +1489,23 @@ export class AppStore {
 
   setActiveTerminal(id: string): void {
     this.activeTerminalId = id
+  }
+
+  getPreferredLocalTerminalId(): string | null {
+    const active = this.activeTerminal
+    if (active?.config?.type === 'local') {
+      return active.id
+    }
+    const fallback = this.terminalTabs.find((tab) => tab.config?.type === 'local')
+    return fallback?.id || null
+  }
+
+  setFileSystemClipboard(payload: FileSystemClipboardState | null): void {
+    this.fileSystemClipboard = payload
+  }
+
+  clearFileSystemClipboard(): void {
+    this.fileSystemClipboard = null
   }
 
   setTerminalSelection(terminalId: string, selectionText: string): void {

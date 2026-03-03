@@ -3,6 +3,7 @@ import { createTwoFilesPatch } from 'diff'
 import type { TerminalService } from '../../TerminalService'
 import type { TerminalTab } from '../../../types'
 import type { ToolExecutionContext } from '../types'
+import { parseTerminalScopedFilePath } from '../terminalScopedFilePath'
 
 export const editFileSchema = z.object({
   tabIdOrName: z.string().describe('The ID or Name of the terminal tab'),
@@ -672,7 +673,9 @@ export function replace(content: string, oldString: string, newString: string, r
 }
 
 export async function writeAndEdit(args: any, context: ToolExecutionContext): Promise<string> {
-  const { tabIdOrName } = args
+  const scopedReference = parseTerminalScopedFilePath(String(args.filePath || ''))
+  const tabIdOrName = scopedReference?.terminalId || args.tabIdOrName
+  const filePathInput = scopedReference?.filePath || args.filePath
   const { terminalService, sessionId, messageId, sendEvent } = context
   
   // Check for abort before doing anything
@@ -699,11 +702,11 @@ export async function writeAndEdit(args: any, context: ToolExecutionContext): Pr
   let outputText = ''
   let diffText = ''
   let action: 'created' | 'edited' | 'error' = 'edited'
-  let filePath = args.filePath
+  let filePath = filePathInput
   try {
     if (typeof args.content === 'string') {
       const result = await runWriteTool(
-        { tabIdOrName: args.tabIdOrName, filePath: args.filePath, content: args.content },
+        { tabIdOrName, filePath: filePathInput, content: args.content },
         { terminalService, terminal: bestMatch, signal: context.signal }
       )
       const actionLine =
@@ -715,8 +718,8 @@ export async function writeAndEdit(args: any, context: ToolExecutionContext): Pr
     } else {
       const result = await runEditTool(
         {
-          tabIdOrName: args.tabIdOrName,
-          filePath: args.filePath,
+          tabIdOrName,
+          filePath: filePathInput,
           oldString: args.oldString ?? '',
           newString: args.newString ?? '',
           replaceAll: args.replaceAll

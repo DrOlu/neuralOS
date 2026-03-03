@@ -2,6 +2,7 @@ import { z } from 'zod'
 import path from 'path'
 import { HumanMessage, AIMessage } from '@langchain/core/messages'
 import type { ToolExecutionContext, ReadFileSupport } from '../types'
+import { parseTerminalScopedFilePath } from '../terminalScopedFilePath'
 
 export const DEFAULT_READ_LIMIT = 2000
 export const MAX_LINE_LENGTH = 2000
@@ -222,21 +223,23 @@ export async function runReadFile(
   meaningLessAIMessage?: AIMessage;
 }> {
   const { terminalService, sessionId, messageId, sendEvent, signal } = context
-  const { found, bestMatch } = terminalService.resolveTerminal(args.tabIdOrName)
+  const rawFilePath = String(args.filePath || 'unknown file')
+  const scopedReference = parseTerminalScopedFilePath(rawFilePath)
+  const filePath = scopedReference?.filePath || rawFilePath
+  const tabIdOrName = scopedReference?.terminalId || args.tabIdOrName
+  const { found, bestMatch } = terminalService.resolveTerminal(tabIdOrName)
   
   let resultText = ''
   let imageMessage: HumanMessage | undefined
   let meaningLessAIMessage: AIMessage | undefined
   let level: 'info' | 'warning' | 'error' = 'info'
 
-  const filePath = String(args.filePath || 'unknown file')
-
   try {
     if (!bestMatch) {
       resultText =
         found.length > 1
-          ? `Error: Multiple terminal tabs found with name "${args.tabIdOrName}".`
-          : `Error: Terminal tab "${args.tabIdOrName}" not found.`
+          ? `Error: Multiple terminal tabs found with name "${tabIdOrName}".`
+          : `Error: Terminal tab "${tabIdOrName}" not found.`
       level = 'warning'
       return { resultText }
     }

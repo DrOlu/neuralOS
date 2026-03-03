@@ -5,6 +5,7 @@ import { USEFUL_SKILL_TAG, USER_INPUT_TAGS, FILE_CONTENT_TAG, TERMINAL_CONTENT_T
 import { detectFileKind, readImageFile } from './tools/read_tools';
 import type { InputImageAttachment, UserInputPayload } from '../../types';
 import { ImageAttachmentService } from '../ImageAttachmentService';
+import { parseTerminalScopedFilePath } from './terminalScopedFilePath';
 
 /**
  * Helper to parse user input for special labels like skills, terminal tabs, and pastes.
@@ -106,27 +107,44 @@ ${recentOutput}
     // 3. Fetch Large Paste & Mentioned File Details
     let fileDetails = '';
     if (includeContextDetails) {
+      const referencedFiles: Array<{ terminalId: string | null; filePath: string }> = [];
+      const pushUniqueReference = (terminalId: string | null, filePath: string): void => {
+        const normalizedTerminalId = terminalId ? terminalId.trim() : null;
+        const normalizedPath = String(filePath || '').trim();
+        if (!normalizedPath) return;
+        const key = normalizedTerminalId ? `${normalizedTerminalId}::${normalizedPath}` : normalizedPath;
+        if (seenReferences.has(key)) return;
+        seenReferences.add(key);
+        referencedFiles.push({
+          terminalId: normalizedTerminalId,
+          filePath: normalizedPath
+        });
+      };
+      const seenReferences = new Set<string>();
+
       const pasteMatches = Array.from(normalized.text.matchAll(this.PASTE_REGEX));
+      pasteMatches.forEach((match) => {
+        pushUniqueReference(null, match[1]);
+      });
+
       const fileMatches = Array.from(normalized.text.matchAll(this.FILE_REGEX));
-      const allFileMatches = [
-        ...pasteMatches.map(m => ({ filePath: m[1] })),
-        ...fileMatches.map(m => ({ filePath: m[1] }))
-      ];
-      const uniqueFilePaths = Array.from(new Set(allFileMatches.map(m => m.filePath)));
-      for (const filePath of uniqueFilePaths) {
-        try {
-          const stats = await fs.stat(filePath);
-          if (stats.size < 4000) {
-            const buffer = await fs.readFile(filePath);
-            const kind = detectFileKind(filePath, new Uint8Array(buffer));
-            if (kind === 'text') {
-              const content = buffer.toString('utf-8');
-              fileDetails += `${FILE_CONTENT_TAG}<${filePath}>\n${content}\n\n`;
-            }
-          }
-        } catch (err) {
-          console.warn(`[InputParseHelper] Failed to read file: ${filePath}`, err);
+      fileMatches.forEach((match) => {
+        const resolved = parseTerminalScopedFilePath(match[1]);
+        if (resolved) {
+          pushUniqueReference(resolved.terminalId, resolved.filePath);
+          return;
         }
+        pushUniqueReference(null, match[1]);
+      });
+
+      for (const reference of referencedFiles) {
+        const fileContent = reference.terminalId
+          ? await this.readSmallTextFileViaTerminal(terminalService, reference.terminalId, reference.filePath)
+          : await this.readSmallTextFileViaLocalPath(reference.filePath);
+        if (typeof fileContent !== 'string') {
+          continue;
+        }
+        fileDetails += `${FILE_CONTENT_TAG}<${reference.filePath}>\n${fileContent}\n\n`;
       }
     }
     this.PASTE_REGEX.lastIndex = 0; // Reset regex state
@@ -172,6 +190,52 @@ ${recentOutput}
       inputImages: preparedImages.inputImages,
       modelImages: preparedImages.modelImages
     };
+  }
+
+  private static async readSmallTextFileViaLocalPath(filePath: string): Promise<string | null> {
+    try {
+      const stats = await fs.stat(filePath);
+      if (!stats.isFile() || stats.size >= 4000) {
+        return null;
+      }
+      const buffer = await fs.readFile(filePath);
+      const kind = detectFileKind(filePath, new Uint8Array(buffer));
+      if (kind !== 'text') {
+        return null;
+      }
+      return buffer.toString('utf-8');
+    } catch (err) {
+      console.warn(`[InputParseHelper] Failed to read local file: ${filePath}`, err);
+      return null;
+    }
+  }
+
+  private static async readSmallTextFileViaTerminal(
+    terminalService: TerminalService,
+    terminalId: string,
+    filePath: string
+  ): Promise<string | null> {
+    try {
+      const stat = await terminalService.statFile(terminalId, filePath);
+      if (!stat.exists || stat.isDirectory || (typeof stat.size === 'number' && stat.size >= 4000)) {
+        return null;
+      }
+      const buffer = await terminalService.readFile(terminalId, filePath);
+      if (buffer.length >= 4000) {
+        return null;
+      }
+      const kind = detectFileKind(filePath, new Uint8Array(buffer));
+      if (kind !== 'text') {
+        return null;
+      }
+      return buffer.toString('utf-8');
+    } catch (err) {
+      console.warn(
+        `[InputParseHelper] Failed to read terminal-scoped file: terminal=${terminalId} path=${filePath}`,
+        err
+      );
+      return null;
+    }
   }
 
   private static normalizeInputPayload(input: string | UserInputPayload): {
