@@ -148,6 +148,39 @@ const run = async (): Promise<void> => {
     assertEqual(counters.readFile, 0, 'readFileBase64 should not load whole file when probe already exceeds maxBytes')
   })
 
+  await runCase('readTextFile decodes UTF-16LE desktop.ini content as text', async () => {
+    const desktopIniUtf16 = Buffer.from('\uFEFF[.ShellClassInfo]\r\nLocalizedResourceName=@%SystemRoot%\\system32\\shell32.dll,-21787\r\n', 'utf16le')
+    const terminalService = {
+      statFile: async () => ({ exists: true, isDirectory: false, size: desktopIniUtf16.length }),
+      readFile: async () => desktopIniUtf16
+    }
+    const service = new FileSystemService(terminalService as unknown as TerminalService)
+
+    const result = await service.readTextFile('terminal-a', 'C:\\Users\\tester\\Desktop\\desktop.ini')
+    if (!result.content.includes('[.ShellClassInfo]')) {
+      throw new Error(`expected decoded desktop.ini content, got: ${JSON.stringify(result.content)}`)
+    }
+    if (!result.content.includes('LocalizedResourceName=')) {
+      throw new Error(`expected LocalizedResourceName line, got: ${JSON.stringify(result.content)}`)
+    }
+  })
+
+  await runCase('readTextFile still rejects binary payloads with null bytes', async () => {
+    const binaryBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0x00, 0x10])
+    const terminalService = {
+      statFile: async () => ({ exists: true, isDirectory: false, size: binaryBytes.length }),
+      readFile: async () => binaryBytes
+    }
+    const service = new FileSystemService(terminalService as unknown as TerminalService)
+    await assertRejects(
+      async () => {
+        await service.readTextFile('terminal-a', '/tmp/blob.bin')
+      },
+      /File appears to be binary/,
+      'readTextFile binary guard remains active'
+    )
+  })
+
   // --- Move mode: source deleted after successful copy ---
   await runCase('transferEntries with mode=move deletes source paths after successful copy', async () => {
     const calls = {

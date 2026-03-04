@@ -134,10 +134,11 @@ export class FileSystemService {
     if (this.isLikelyBinary(filePath, bytes)) {
       throw new Error(`File appears to be binary and cannot be opened as text: ${filePath}`)
     }
+    const content = this.decodeTextBytes(bytes)
 
     return {
       path: filePath,
-      content: bytes.toString('utf8'),
+      content,
       size: bytes.length,
       encoding: 'utf8'
     }
@@ -781,8 +782,11 @@ export class FileSystemService {
 
   private isLikelyBinary(filePath: string, bytes: Uint8Array): boolean {
     const ext = extname(filePath).toLowerCase()
-    if (['.png', '.jpg', '.jpeg', '.gif', '.webp', '.pdf', '.zip', '.tar', '.gz', '.7z', '.exe'].includes(ext)) {
+    if (['.png', '.jpg', '.jpeg', '.gif', '.webp', '.pdf', '.zip', '.tar', '.gz', '.7z', '.exe', '.bin'].includes(ext)) {
       return true
+    }
+    if (this.detectUtf16Encoding(bytes)) {
+      return false
     }
     if (bytes.length === 0) return false
     const sampleSize = Math.min(4096, bytes.length)
@@ -795,5 +799,83 @@ export class FileSystemService {
       }
     }
     return nonPrintableCount / sampleSize > 0.3
+  }
+
+  private decodeTextBytes(bytes: Uint8Array): string {
+    const utf16Encoding = this.detectUtf16Encoding(bytes)
+    if (utf16Encoding === 'utf16le') {
+      const hasBom = bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe
+      const payload = hasBom ? bytes.subarray(2) : bytes
+      const evenLength = payload.length - (payload.length % 2)
+      return Buffer.from(payload.subarray(0, evenLength)).toString('utf16le')
+    }
+    if (utf16Encoding === 'utf16be') {
+      const hasBom = bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff
+      const payload = hasBom ? bytes.subarray(2) : bytes
+      const evenLength = payload.length - (payload.length % 2)
+      const swapped = Buffer.allocUnsafe(evenLength)
+      for (let i = 0; i < evenLength; i += 2) {
+        swapped[i] = payload[i + 1]
+        swapped[i + 1] = payload[i]
+      }
+      return swapped.toString('utf16le')
+    }
+    if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
+      return Buffer.from(bytes.subarray(3)).toString('utf8')
+    }
+    return Buffer.from(bytes).toString('utf8')
+  }
+
+  private detectUtf16Encoding(bytes: Uint8Array): 'utf16le' | 'utf16be' | null {
+    if (bytes.length >= 2) {
+      if (bytes[0] === 0xff && bytes[1] === 0xfe) {
+        return 'utf16le'
+      }
+      if (bytes[0] === 0xfe && bytes[1] === 0xff) {
+        return 'utf16be'
+      }
+    }
+
+    // Heuristic for BOM-less UTF-16 text (common for Windows-generated files).
+    const sampleSize = Math.min(512, bytes.length - (bytes.length % 2))
+    if (sampleSize < 4) {
+      return null
+    }
+    const pairCount = sampleSize / 2
+    let evenZero = 0
+    let oddZero = 0
+    let evenTextLike = 0
+    let oddTextLike = 0
+    for (let i = 0; i < sampleSize; i += 2) {
+      const even = bytes[i]
+      const odd = bytes[i + 1]
+      if (even === 0) {
+        evenZero += 1
+      }
+      if (odd === 0) {
+        oddZero += 1
+      }
+      if (this.isAsciiTextLikeByte(even)) {
+        evenTextLike += 1
+      }
+      if (this.isAsciiTextLikeByte(odd)) {
+        oddTextLike += 1
+      }
+    }
+    const evenZeroRatio = evenZero / pairCount
+    const oddZeroRatio = oddZero / pairCount
+    const evenTextLikeRatio = evenTextLike / pairCount
+    const oddTextLikeRatio = oddTextLike / pairCount
+    if (oddZeroRatio > 0.3 && evenZeroRatio < 0.1 && evenTextLikeRatio > 0.6) {
+      return 'utf16le'
+    }
+    if (evenZeroRatio > 0.3 && oddZeroRatio < 0.1 && oddTextLikeRatio > 0.6) {
+      return 'utf16be'
+    }
+    return null
+  }
+
+  private isAsciiTextLikeByte(value: number): boolean {
+    return value === 9 || value === 10 || value === 13 || (value >= 32 && value <= 126)
   }
 }
