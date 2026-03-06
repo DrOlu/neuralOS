@@ -32,9 +32,6 @@ const DEFAULT_VIEWPORT: LayoutViewport = {
 }
 
 const PREVIEW_PANEL_ID = '__layout-preview-panel__'
-const MIN_PANEL_COUNT_BY_KIND: Partial<Record<PanelKind, number>> = {}
-
-const getMinPanelCountForKind = (kind: PanelKind): number => MIN_PANEL_COUNT_BY_KIND[kind] ?? 0
 
 const toSplitPlacement = (
   direction: DropDirection
@@ -74,6 +71,7 @@ export class LayoutStore {
   isDragging = false
   dragType: DragType = null
   draggingPanelId: string | null = null
+  draggingExternalPanelKind: PanelKind | null = null
   draggingTab: TabDragPayload | null = null
   dragX = 0
   dragY = 0
@@ -95,6 +93,7 @@ export class LayoutStore {
       isDragging: observable,
       dragType: observable,
       draggingPanelId: observable,
+      draggingExternalPanelKind: observable,
       draggingTab: observable,
       dragX: observable,
       dragY: observable,
@@ -127,6 +126,7 @@ export class LayoutStore {
       setFocusedPanel: action,
       setPanelActiveTab: action,
       startPanelDragging: action,
+      startExternalPanelDragging: action,
       startTabDragging: action,
       setDragPointer: action,
       setDropTarget: action,
@@ -297,15 +297,13 @@ export class LayoutStore {
   }
 
   canRemovePanel(panelId: string): boolean {
+    // Moving a panel to another window and closing a panel both remove that panel
+    // from the current layout tree. The window must never be left without any panel.
+    // Keep this rule window-scoped rather than kind-scoped: a panel may still be
+    // moved out even when it is the only panel of its kind, as long as some
+    // other panel remains in the same window.
     if (this.panelCount <= 1) return false
-    const panelNode = this.panelNodes.find((node) => node.panel.id === panelId)
-    if (!panelNode) return false
-
-    const minCount = getMinPanelCountForKind(panelNode.panel.kind)
-    if (minCount <= 0) return true
-
-    const sameKindPanelCount = this.panelNodes.filter((node) => node.panel.kind === panelNode.panel.kind).length
-    return sameKindPanelCount > minCount
+    return this.panelNodes.some((node) => node.panel.id === panelId)
   }
 
   setFocusedPanel(panelId: string) {
@@ -487,6 +485,9 @@ export class LayoutStore {
     tabBinding?: LayoutPanelTabBinding,
     dropTarget?: { panelId: string; direction: DropDirection }
   ): string | null {
+    // The workspace resolves drag hover semantics before calling into the store.
+    // This method owns only the tree mutation: choose an anchor, split in the
+    // imported panel, and rebind any transferred tabs to the new panel node.
     if (this.panelCount >= MAX_LAYOUT_PANELS) {
       return null
     }
@@ -602,6 +603,21 @@ export class LayoutStore {
     this.isDragging = true
     this.dragType = 'panel'
     this.draggingPanelId = panelId
+    this.draggingExternalPanelKind = null
+    this.draggingTab = null
+    this.dragX = x
+    this.dragY = y
+    this.dropTargetPanelId = null
+    this.dropDirection = null
+    this.dropPreviewRect = null
+    this.tabReorderTarget = null
+  }
+
+  startExternalPanelDragging(kind: PanelKind, x: number, y: number) {
+    this.isDragging = true
+    this.dragType = 'panel'
+    this.draggingPanelId = null
+    this.draggingExternalPanelKind = kind
     this.draggingTab = null
     this.dragX = x
     this.dragY = y
@@ -615,6 +631,7 @@ export class LayoutStore {
     this.isDragging = true
     this.dragType = 'tab'
     this.draggingPanelId = null
+    this.draggingExternalPanelKind = null
     this.draggingTab = payload
     this.dragX = x
     this.dragY = y
@@ -642,6 +659,7 @@ export class LayoutStore {
     this.isDragging = false
     this.dragType = null
     this.draggingPanelId = null
+    this.draggingExternalPanelKind = null
     this.draggingTab = null
     this.dropTargetPanelId = null
     this.dropDirection = null
@@ -659,6 +677,11 @@ export class LayoutStore {
       const nextTree = movePanel(this.tree, this.draggingPanelId, this.dropTargetPanelId, this.dropDirection)
       this.clearDragging()
       this.applyTree(nextTree)
+      return
+    }
+
+    if (this.dragType === 'panel' && this.draggingExternalPanelKind) {
+      this.clearDragging()
       return
     }
 
@@ -745,6 +768,27 @@ export class LayoutStore {
       return projectedGeometry.panelRects[this.draggingPanelId] || null
     }
 
+    if (this.dragType === 'panel' && this.draggingExternalPanelKind) {
+      if (!this.canAcceptExternalPanelDrop(this.draggingExternalPanelKind, this.dropTargetPanelId, this.dropDirection)) {
+        return null
+      }
+      const splitPlacement = toSplitPlacement(this.dropDirection)
+      if (!splitPlacement) return null
+      const projectedTree = splitPanelWithPanelId(
+        this.tree,
+        this.dropTargetPanelId,
+        {
+          kind: this.draggingExternalPanelKind,
+          panelId: PREVIEW_PANEL_ID
+        },
+        splitPlacement.direction,
+        splitPlacement.position
+      )
+      if (!validateLayoutTree(projectedTree, this.viewport).valid) return null
+      const projectedGeometry = computeLayoutGeometry(projectedTree, this.viewport)
+      return projectedGeometry.panelRects[PREVIEW_PANEL_ID] || null
+    }
+
     if (this.dragType === 'tab' && this.draggingTab) {
       if (!this.canAcceptTabDrop(this.draggingTab, this.dropTargetPanelId, this.dropDirection)) {
         return null
@@ -803,6 +847,39 @@ export class LayoutStore {
       targetPanelId,
       {
         kind: payload.kind,
+        panelId: PREVIEW_PANEL_ID
+      },
+      splitPlacement.direction,
+      splitPlacement.position
+    )
+    return validateLayoutTree(projectedTree, this.viewport).valid
+  }
+
+  private canAcceptExternalPanelDrop(kind: PanelKind, targetPanelId: string, direction: DropDirection): boolean {
+    if (direction === 'center') {
+      return false
+    }
+
+    if (this.panelCount >= MAX_LAYOUT_PANELS) {
+      return false
+    }
+
+    const adapter = getPanelKindAdapter(kind)
+    const maxPanels = adapter.maxPanels
+    if (Number.isFinite(maxPanels) && (this.getPanelIdsByKind(kind).length >= maxPanels!)) {
+      return false
+    }
+
+    const splitPlacement = toSplitPlacement(direction)
+    if (!splitPlacement) {
+      return false
+    }
+
+    const projectedTree = splitPanelWithPanelId(
+      this.tree,
+      targetPanelId,
+      {
+        kind,
         panelId: PREVIEW_PANEL_ID
       },
       splitPlacement.direction,
@@ -902,11 +979,6 @@ export class LayoutStore {
     panelTabs: Record<string, LayoutPanelTabBinding>
   ): string | null {
     const panels = listPanels(tree)
-    const panelCountByKind = new Map<PanelKind, number>()
-    panels.forEach((panel) => {
-      const kind = panel.panel.kind
-      panelCountByKind.set(kind, (panelCountByKind.get(kind) || 0) + 1)
-    })
     const eligible = panels.filter((panel) => {
       const adapter = getPanelKindAdapter(panel.panel.kind)
       if (!adapter.supportsTabs) {
@@ -915,15 +987,12 @@ export class LayoutStore {
       if (!adapter.isOwnerInventoryHydrated(this.appStore)) {
         return false
       }
-      const kindCount = panelCountByKind.get(panel.panel.kind) || 0
-      if (kindCount <= getMinPanelCountForKind(panel.panel.kind)) {
-        return false
-      }
       if (this.pinnedEmptyPanelIds.has(panel.panel.id)) {
         return false
       }
       const tabIds = panelTabs[panel.panel.id]?.tabIds || []
       if (tabIds.length > 0) return false
+      // Auto-pruning is allowed only when another panel still exists in the window.
       return panels.length > 1
     })
     if (eligible.length === 0) return null

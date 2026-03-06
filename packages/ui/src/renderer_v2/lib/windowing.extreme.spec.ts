@@ -2,10 +2,14 @@ import type {
   WindowingMessage,
   WindowingDragStartMessage,
   WindowingDragEndMessage,
+  WindowingPanelMovedMessage,
   WindowingTabMovedMessage
 } from './windowing'
 import {
+  clearPanelDragState,
   createWindowingChannel,
+  readPanelDragState,
+  stashPanelDragState,
   WINDOWING_STORAGE_CHANNEL_KEY
 } from './windowing'
 import type { PanelKind } from '../layout'
@@ -41,6 +45,7 @@ runCase('drag-start message with tab payload is valid WindowingMessage', () => {
   const msg: WindowingDragStartMessage = {
     type: 'drag-start',
     sourceClientId: 'win-abc',
+    dragKind: 'tab',
     tabPayload: {
       sourceClientId: 'win-abc',
       tabId: 'tab-1',
@@ -55,6 +60,28 @@ runCase('drag-start message with tab payload is valid WindowingMessage', () => {
   assertEqual(msg.tabPayload!.kind, 'terminal', 'tabPayload.kind should match')
 })
 
+runCase('drag-start message with panel payload is valid WindowingMessage', () => {
+  const msg: WindowingDragStartMessage = {
+    type: 'drag-start',
+    sourceClientId: 'win-abc',
+    dragKind: 'panel',
+    panelPayload: {
+      sourceClientId: 'win-abc',
+      sourcePanelId: 'panel-chat-1',
+      kind: 'chat',
+      tabBinding: {
+        tabIds: ['chat-1', 'chat-2'],
+        activeTabId: 'chat-2'
+      }
+    }
+  }
+  const asMessage: WindowingMessage = msg
+  assertEqual(asMessage.type, 'drag-start', 'panel drag-start should be a valid WindowingMessage type')
+  assertCondition(msg.panelPayload, 'panelPayload should be present')
+  assertEqual(msg.panelPayload!.sourcePanelId, 'panel-chat-1', 'panelPayload.sourcePanelId should match')
+  assertEqual(msg.panelPayload!.kind, 'chat', 'panelPayload.kind should match')
+})
+
 runCase('drag-end message is valid WindowingMessage', () => {
   const msg: WindowingDragEndMessage = {
     type: 'drag-end',
@@ -63,6 +90,45 @@ runCase('drag-end message is valid WindowingMessage', () => {
   const asMessage: WindowingMessage = msg
   assertEqual(asMessage.type, 'drag-end', 'drag-end should be a valid WindowingMessage type')
   assertEqual(msg.sourceClientId, 'win-123', 'sourceClientId should match')
+})
+
+runCase('stashed panel drag state round-trips through localStorage by token', () => {
+  const originalWindow = (globalThis as any).window
+  const storage = new Map<string, string>()
+
+  ;(globalThis as any).window = {
+    localStorage: {
+      getItem(key: string) {
+        return storage.has(key) ? storage.get(key)! : null
+      },
+      setItem(key: string, value: string) {
+        storage.set(key, value)
+      },
+      removeItem(key: string) {
+        storage.delete(key)
+      }
+    }
+  }
+
+  try {
+    const token = 'panel-drag-token'
+    const payload = {
+      sourceClientId: 'win-abc',
+      sourcePanelId: 'panel-chat-1',
+      kind: 'chat' as const,
+      tabBinding: {
+        tabIds: ['chat-1', 'chat-2'],
+        activeTabId: 'chat-2'
+      }
+    }
+
+    assertEqual(stashPanelDragState(token, payload), true, 'panel drag state should be stashed')
+    assertDeepEqual(readPanelDragState(token), payload, 'panel drag state should be restored intact')
+    clearPanelDragState(token)
+    assertEqual(readPanelDragState(token), null, 'cleared panel drag state should not be readable')
+  } finally {
+    ;(globalThis as any).window = originalWindow
+  }
 })
 
 runCase('file protocol falls back to storage-backed windowing channel', () => {
@@ -152,6 +218,7 @@ runCase('drag-start and drag-end form a valid lifecycle', () => {
   const startMsg: WindowingDragStartMessage = {
     type: 'drag-start',
     sourceClientId: clientId,
+    dragKind: 'tab',
     tabPayload: {
       sourceClientId: clientId,
       tabId: 'term-1',
@@ -184,6 +251,7 @@ runCase('drag-start from same window should be ignored by receiver', () => {
   const msg: WindowingDragStartMessage = {
     type: 'drag-start',
     sourceClientId: localClientId,
+    dragKind: 'tab',
     tabPayload: {
       sourceClientId: localClientId,
       tabId: 'tab-1',
@@ -202,6 +270,7 @@ runCase('drag-start from different window should be accepted by receiver', () =>
   const msg: WindowingDragStartMessage = {
     type: 'drag-start',
     sourceClientId: 'win-remote',
+    dragKind: 'tab',
     tabPayload: {
       sourceClientId: 'win-remote',
       tabId: 'tab-1',
@@ -224,6 +293,7 @@ runCase('all panel kinds are valid in tab drag payload', () => {
     const msg: WindowingDragStartMessage = {
       type: 'drag-start',
       sourceClientId: 'win-1',
+      dragKind: 'tab',
       tabPayload: {
         sourceClientId: 'win-1',
         tabId: `tab-${kind}`,
@@ -247,6 +317,7 @@ runCase('tab-moved message completes cross-window tab drag lifecycle', () => {
   const dragStart: WindowingDragStartMessage = {
     type: 'drag-start',
     sourceClientId,
+    dragKind: 'tab',
     tabPayload: {
       sourceClientId,
       tabId: 'term-1',
@@ -270,6 +341,21 @@ runCase('tab-moved message completes cross-window tab drag lifecycle', () => {
   assertEqual(tabMoved.kind, dragStart.tabPayload!.kind, 'tab-moved kind should match dragged tab kind')
 })
 
+runCase('panel-moved message is valid WindowingMessage', () => {
+  const msg: WindowingPanelMovedMessage = {
+    type: 'panel-moved',
+    sourceClientId: 'win-source',
+    targetClientId: 'win-target',
+    sourcePanelId: 'panel-terminal-1',
+    kind: 'terminal',
+    tabIds: ['term-1', 'term-2']
+  }
+  const asMessage: WindowingMessage = msg
+  assertEqual(asMessage.type, 'panel-moved', 'panel-moved should be a valid WindowingMessage type')
+  assertEqual(msg.sourcePanelId, 'panel-terminal-1', 'panel-moved sourcePanelId should match')
+  assertEqual(msg.tabIds.length, 2, 'panel-moved tabIds should be preserved')
+})
+
 // ---------------------------------------------------------------------------
 // Drag-end clears only matching source
 // ---------------------------------------------------------------------------
@@ -278,6 +364,7 @@ runCase('drag-end only clears matching source client', () => {
   let crossWindowDrag: WindowingDragStartMessage | null = {
     type: 'drag-start',
     sourceClientId: 'win-A',
+    dragKind: 'tab',
     tabPayload: { sourceClientId: 'win-A', tabId: 't1', kind: 'terminal', sourcePanelId: 'p1' }
   }
 

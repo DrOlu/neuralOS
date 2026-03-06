@@ -34,7 +34,6 @@ interface FileSystemPanelProps {
   tabs: TerminalTabModel[]
   activeTabId: string | null
   onSelectTab: (tabId: string) => void
-  onLayoutHeaderMouseDown?: (event: React.MouseEvent<HTMLElement>) => void
   onLayoutHeaderContextMenu?: (event: React.MouseEvent<HTMLElement>) => void
 }
 
@@ -225,7 +224,6 @@ export const FileSystemPanel: React.FC<FileSystemPanelProps> = observer(({
   tabs,
   activeTabId,
   onSelectTab,
-  onLayoutHeaderMouseDown,
   onLayoutHeaderContextMenu
 }) => {
   const t = store.i18n.t
@@ -1256,7 +1254,10 @@ export const FileSystemPanel: React.FC<FileSystemPanelProps> = observer(({
       <div className={`panel panel-filesystem${isLayoutDragSource ? ' is-dragging-source' : ''}`} style={filesystemPanelStyle}>
         <div
           className="filesystem-tabs-container is-draggable"
-          onMouseDown={onLayoutHeaderMouseDown}
+          draggable
+          data-layout-panel-draggable="true"
+          data-layout-panel-id={panelId}
+          data-layout-panel-kind="filesystem"
           onContextMenu={onLayoutHeaderContextMenu}
         >
         <div
@@ -1321,7 +1322,10 @@ export const FileSystemPanel: React.FC<FileSystemPanelProps> = observer(({
       />
       <div
         className="filesystem-tabs-container is-draggable"
-        onMouseDown={onLayoutHeaderMouseDown}
+        draggable
+        data-layout-panel-draggable="true"
+        data-layout-panel-id={panelId}
+        data-layout-panel-kind="filesystem"
         onContextMenu={onLayoutHeaderContextMenu}
       >
         <div

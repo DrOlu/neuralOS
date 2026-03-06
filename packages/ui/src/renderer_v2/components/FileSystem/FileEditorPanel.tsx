@@ -7,7 +7,6 @@ import './fileEditor.scss'
 interface FileEditorPanelProps {
   store: AppStore
   panelId: string
-  onLayoutHeaderMouseDown?: (event: React.MouseEvent<HTMLElement>) => void
   onLayoutHeaderContextMenu?: (event: React.MouseEvent<HTMLElement>) => void
 }
 
@@ -32,7 +31,6 @@ const replaceSelectionInTextarea = (
 export const FileEditorPanel: React.FC<FileEditorPanelProps> = observer(({
   store,
   panelId,
-  onLayoutHeaderMouseDown,
   onLayoutHeaderContextMenu
 }) => {
   const t = store.i18n.t
@@ -80,7 +78,10 @@ export const FileEditorPanel: React.FC<FileEditorPanelProps> = observer(({
     <div className={`panel panel-file-editor${isLayoutDragSource ? ' is-dragging-source' : ''}`}>
       <div
         className="file-editor-header is-draggable"
-        onMouseDown={onLayoutHeaderMouseDown}
+        draggable
+        data-layout-panel-draggable="true"
+        data-layout-panel-id={panelId}
+        data-layout-panel-kind="fileEditor"
         onContextMenu={onLayoutHeaderContextMenu}
       >
         <div

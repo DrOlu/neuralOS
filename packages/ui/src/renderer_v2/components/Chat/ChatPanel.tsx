@@ -92,7 +92,6 @@ interface ChatPanelProps {
   activeSessionId: string | null
   onSelectSession: (sessionId: string) => void
   onRequestCloseTabs?: (tabIds: string[]) => void
-  onLayoutHeaderMouseDown?: (event: React.MouseEvent<HTMLElement>) => void
   onLayoutHeaderContextMenu?: (event: React.MouseEvent<HTMLElement>) => void
 }
 
@@ -103,7 +102,6 @@ export const ChatPanel: React.FC<ChatPanelProps> = observer(({
   activeSessionId,
   onSelectSession,
   onRequestCloseTabs,
-  onLayoutHeaderMouseDown,
   onLayoutHeaderContextMenu
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -493,7 +491,10 @@ export const ChatPanel: React.FC<ChatPanelProps> = observer(({
     >
       <div
         className="panel-header-minimal is-draggable"
-        onMouseDown={onLayoutHeaderMouseDown}
+        draggable
+        data-layout-panel-draggable="true"
+        data-layout-panel-id={panelId}
+        data-layout-panel-kind="chat"
         onContextMenu={onLayoutHeaderContextMenu}
         title={t.chat.dragHint}
         aria-label={t.chat.dragHint}

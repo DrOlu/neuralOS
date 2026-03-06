@@ -501,6 +501,24 @@ const run = async (): Promise<void> => {
     assertEqual(panelKinds[1], 'chat', 'center drop should swap second panel kind')
   })
 
+  await runCase('external panel drag to edge computes a preview rect', async () => {
+    const store = createStore({
+      terminalIds: ['term-a'],
+      chatIds: ['chat-a']
+    })
+    store.bootstrap()
+    store.setViewport(1200, 700)
+
+    const terminalPanelId = store.getPrimaryPanelId('terminal')
+    assertCondition(Boolean(terminalPanelId), 'terminal panel should exist')
+
+    store.startExternalPanelDragging('filesystem', 120, 120)
+    store.setDropTarget(terminalPanelId!, 'right')
+
+    assertCondition(store.dropPreviewRect !== null, 'external panel edge drag should compute a preview rect')
+    assertEqual(store.draggingExternalPanelKind, 'filesystem', 'external panel kind should be tracked')
+  })
+
   await runCase('tab drag to edge splits a new panel and moves only that tab', async () => {
     const store = createStore({
       terminalIds: ['term-a', 'term-b'],

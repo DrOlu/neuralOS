@@ -13,7 +13,6 @@ export interface LayoutPanelRenderProps {
   activeTabId: string | null
   onSelectTab: (tabId: string) => void
   onRequestCloseTabs?: (tabIds: string[]) => void
-  onLayoutHeaderMouseDown?: (event: React.MouseEvent<HTMLElement>) => void
   onLayoutHeaderContextMenu?: (event: React.MouseEvent<HTMLElement>) => void
 }
 
@@ -26,7 +25,6 @@ const TerminalPanelRenderer: LayoutPanelRenderer = ({
   activeTabId,
   onSelectTab,
   onRequestCloseTabs,
-  onLayoutHeaderMouseDown,
   onLayoutHeaderContextMenu
 }) => (
   <TerminalPanel
@@ -38,7 +36,6 @@ const TerminalPanelRenderer: LayoutPanelRenderer = ({
     activeTabId={activeTabId}
     onSelectTab={onSelectTab}
     onRequestCloseTabs={onRequestCloseTabs}
-    onLayoutHeaderMouseDown={onLayoutHeaderMouseDown}
     onLayoutHeaderContextMenu={onLayoutHeaderContextMenu}
   />
 )
@@ -50,7 +47,6 @@ const ChatPanelRenderer: LayoutPanelRenderer = ({
   activeTabId,
   onSelectTab,
   onRequestCloseTabs,
-  onLayoutHeaderMouseDown,
   onLayoutHeaderContextMenu
 }) => (
   <ChatPanel
@@ -60,7 +56,6 @@ const ChatPanelRenderer: LayoutPanelRenderer = ({
     activeSessionId={activeTabId}
     onSelectSession={onSelectTab}
     onRequestCloseTabs={onRequestCloseTabs}
-    onLayoutHeaderMouseDown={onLayoutHeaderMouseDown}
     onLayoutHeaderContextMenu={onLayoutHeaderContextMenu}
   />
 )
@@ -71,7 +66,6 @@ const FileSystemPanelRenderer: LayoutPanelRenderer = ({
   tabIds,
   activeTabId,
   onSelectTab,
-  onLayoutHeaderMouseDown,
   onLayoutHeaderContextMenu
 }) => (
   <FileSystemPanel
@@ -82,7 +76,6 @@ const FileSystemPanelRenderer: LayoutPanelRenderer = ({
       .filter((tab): tab is NonNullable<typeof tab> => !!tab)}
     activeTabId={activeTabId}
     onSelectTab={onSelectTab}
-    onLayoutHeaderMouseDown={onLayoutHeaderMouseDown}
     onLayoutHeaderContextMenu={onLayoutHeaderContextMenu}
   />
 )
@@ -90,13 +83,11 @@ const FileSystemPanelRenderer: LayoutPanelRenderer = ({
 const FileEditorPanelRenderer: LayoutPanelRenderer = ({
   store,
   panelId,
-  onLayoutHeaderMouseDown,
   onLayoutHeaderContextMenu
 }) => (
   <FileEditorPanel
     store={store}
     panelId={panelId}
-    onLayoutHeaderMouseDown={onLayoutHeaderMouseDown}
     onLayoutHeaderContextMenu={onLayoutHeaderContextMenu}
   />
 )

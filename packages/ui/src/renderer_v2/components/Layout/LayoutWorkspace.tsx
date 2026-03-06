@@ -23,14 +23,18 @@ import { renderPanelByKind } from './panelRenderRegistry'
 import { PanelTypeRail } from './PanelTypeRail'
 import { getPanelKindAdapter } from '../../stores/panelKindAdapters'
 import {
+  clearPanelDragState,
   createWindowingChannel,
+  readPanelDragState,
   stashDetachedWindowState,
+  stashPanelDragState,
   type DetachedWindowState,
   type WindowingChannel,
   type WindowingDragStartMessage,
+  type WindowingPanelDragPayload,
   type WindowingMessage
 } from '../../lib/windowing'
-import type { FileEditorSnapshot } from '../../lib/fileEditorSnapshot'
+import { normalizeFileEditorSnapshot, type FileEditorSnapshot } from '../../lib/fileEditorSnapshot'
 
 interface LayoutWorkspaceProps {
   store: AppStore
@@ -75,10 +79,20 @@ interface CrossWindowTabDragPayload extends TabDragPayload {
   sourceClientId: string
 }
 
+interface LocalPanelDragPayload {
+  panelId: string
+  kind: PanelKind
+}
+
 const LAYOUT_TAB_DRAG_MIME = 'application/x-gyshell-layout-tab'
 const LAYOUT_TAB_DRAG_TEXT_PREFIX = 'gyshell-tab:'
+const LAYOUT_PANEL_DRAG_MIME = 'application/x-gyshell-layout-panel'
+const LAYOUT_PANEL_DRAG_TEXT_PREFIX = 'gyshell-panel:'
 
 const encodeCrossWindowTabDragPayload = (payload: CrossWindowTabDragPayload): string =>
+  JSON.stringify(payload)
+
+const encodeCrossWindowPanelDragPayload = (payload: WindowingPanelDragPayload): string =>
   JSON.stringify(payload)
 
 const getDragDataByMimeOrTextPrefix = (
@@ -131,6 +145,76 @@ const parseCrossWindowTabDragPayload = (
   }
 }
 
+const parseCrossWindowPanelDragPayload = (
+  dataTransfer: Pick<DataTransfer, 'types' | 'getData'> | null | undefined
+): WindowingPanelDragPayload | null => {
+  if (!dataTransfer) return null
+  const raw = getDragDataByMimeOrTextPrefix(
+    dataTransfer,
+    LAYOUT_PANEL_DRAG_MIME,
+    LAYOUT_PANEL_DRAG_TEXT_PREFIX
+  )
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as Partial<WindowingPanelDragPayload>
+    const sourceClientId = typeof parsed.sourceClientId === 'string' ? parsed.sourceClientId.trim() : ''
+    const sourcePanelId = typeof parsed.sourcePanelId === 'string' ? parsed.sourcePanelId.trim() : ''
+    const stateToken = typeof parsed.stateToken === 'string' ? parsed.stateToken.trim() : ''
+    const kind = parsed.kind
+    if (!sourceClientId || !sourcePanelId) return null
+    if (kind !== 'chat' && kind !== 'terminal' && kind !== 'filesystem' && kind !== 'fileEditor') {
+      return null
+    }
+    const tabBinding = (() => {
+      if (!parsed.tabBinding || typeof parsed.tabBinding !== 'object') {
+        return undefined
+      }
+      const rawBinding = parsed.tabBinding as Partial<LayoutPanelTabBinding>
+      const tabIds = Array.isArray(rawBinding.tabIds)
+        ? rawBinding.tabIds.filter((tabId): tabId is string => typeof tabId === 'string' && tabId.trim().length > 0)
+        : []
+      const activeTabId =
+        typeof rawBinding.activeTabId === 'string' && tabIds.includes(rawBinding.activeTabId)
+          ? rawBinding.activeTabId
+          : tabIds[0]
+      return {
+        tabIds,
+        ...(activeTabId ? { activeTabId } : {})
+      }
+    })()
+    const fileEditorSnapshot = normalizeFileEditorSnapshot(parsed.fileEditorSnapshot)
+    return {
+      sourceClientId,
+      sourcePanelId,
+      kind,
+      ...(stateToken ? { stateToken } : {}),
+      ...(tabBinding ? { tabBinding } : {}),
+      ...(fileEditorSnapshot ? { fileEditorSnapshot } : {})
+    }
+  } catch {
+    return null
+  }
+}
+
+const resolveExternalPanelDropDirection = (
+  rect: LayoutRect,
+  clientX: number,
+  clientY: number
+): Exclude<ReturnType<typeof determineDropDirection>, null | 'center'> => {
+  const direction = determineDropDirection(rect, clientX, clientY)
+  if (direction && direction !== 'center') {
+    return direction
+  }
+  const distances = [
+    { direction: 'left' as const, distance: Math.abs(clientX - rect.left) },
+    { direction: 'right' as const, distance: Math.abs(rect.left + rect.width - clientX) },
+    { direction: 'top' as const, distance: Math.abs(clientY - rect.top) },
+    { direction: 'bottom' as const, distance: Math.abs(rect.top + rect.height - clientY) }
+  ]
+  distances.sort((a, b) => a.distance - b.distance)
+  return distances[0]?.direction || 'right'
+}
+
 const DragOverlay: React.FC<{
   targetRect: LayoutRect | null
   previewRect: LayoutRect | null
@@ -167,13 +251,11 @@ const DragOverlay: React.FC<{
 const PanelLeaf: React.FC<{
   node: Extract<LayoutNode, { type: 'panel' }>
   store: AppStore
-  onHeaderMouseDown: (panelId: string, event: React.MouseEvent<HTMLElement>) => void
   onHeaderContextMenu: (panelId: string, event: React.MouseEvent<HTMLElement>) => void
   onRequestCloseTabsByKind: (kind: PanelKind, tabIds: string[]) => void
 }> = observer(({
   node,
   store,
-  onHeaderMouseDown,
   onHeaderContextMenu,
   onRequestCloseTabsByKind
 }) => {
@@ -198,7 +280,6 @@ const PanelLeaf: React.FC<{
         activeTabId: store.layout.getPanelActiveTabId(panelId),
         onSelectTab: (tabId) => store.layout.setPanelActiveTab(panelId, tabId),
         onRequestCloseTabs: (tabIds) => onRequestCloseTabsByKind(node.panel.kind, tabIds),
-        onLayoutHeaderMouseDown: (event) => onHeaderMouseDown(panelId, event),
         onLayoutHeaderContextMenu: (event) => onHeaderContextMenu(panelId, event)
       })}
     </div>
@@ -208,13 +289,11 @@ const PanelLeaf: React.FC<{
 const SplitNodeView: React.FC<{
   node: LayoutSplitNode
   store: AppStore
-  onHeaderMouseDown: (panelId: string, event: React.MouseEvent<HTMLElement>) => void
   onHeaderContextMenu: (panelId: string, event: React.MouseEvent<HTMLElement>) => void
   onRequestCloseTabsByKind: (kind: PanelKind, tabIds: string[]) => void
 }> = observer(({
   node,
   store,
-  onHeaderMouseDown,
   onHeaderContextMenu,
   onRequestCloseTabsByKind
 }) => {
@@ -268,7 +347,6 @@ const SplitNodeView: React.FC<{
               <LayoutNodeView
                 node={child}
                 store={store}
-                onHeaderMouseDown={onHeaderMouseDown}
                 onHeaderContextMenu={onHeaderContextMenu}
                 onRequestCloseTabsByKind={onRequestCloseTabsByKind}
               />
@@ -284,16 +362,14 @@ const SplitNodeView: React.FC<{
 const LayoutNodeView: React.FC<{
   node: LayoutNode
   store: AppStore
-  onHeaderMouseDown: (panelId: string, event: React.MouseEvent<HTMLElement>) => void
   onHeaderContextMenu: (panelId: string, event: React.MouseEvent<HTMLElement>) => void
   onRequestCloseTabsByKind: (kind: PanelKind, tabIds: string[]) => void
-}> = ({ node, store, onHeaderMouseDown, onHeaderContextMenu, onRequestCloseTabsByKind }) => {
+}> = ({ node, store, onHeaderContextMenu, onRequestCloseTabsByKind }) => {
   if (node.type === 'panel') {
     return (
       <PanelLeaf
         node={node}
         store={store}
-        onHeaderMouseDown={onHeaderMouseDown}
         onHeaderContextMenu={onHeaderContextMenu}
         onRequestCloseTabsByKind={onRequestCloseTabsByKind}
       />
@@ -304,7 +380,6 @@ const LayoutNodeView: React.FC<{
     <SplitNodeView
       node={node}
       store={store}
-      onHeaderMouseDown={onHeaderMouseDown}
       onHeaderContextMenu={onHeaderContextMenu}
       onRequestCloseTabsByKind={onRequestCloseTabsByKind}
     />
@@ -352,12 +427,15 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
   const isTrashHoverRef = React.useRef(false)
   const isDetachHoverRef = React.useRef(false)
   const externalSourceClientIdRef = React.useRef<string | null>(null)
+  const externalPanelDragPayloadRef = React.useRef<WindowingPanelDragPayload | null>(null)
+  const localPanelDragStateTokenRef = React.useRef<string | null>(null)
+  const pendingLocalPanelDragRef = React.useRef<LocalPanelDragPayload | null>(null)
+  const skipDetachedClosingRef = React.useRef(false)
   const windowingChannelRef = React.useRef<WindowingChannel | null>(null)
-  /** Stores cross-window tab drag payload received from the windowing channel
+  /** Stores cross-window drag payload received from the windowing channel
    *  for when DataTransfer.getData() is restricted during dragover. */
   const crossWindowDragRef = React.useRef<WindowingDragStartMessage | null>(null)
   const t = store.i18n.t
-  const dragTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const [layoutMenu, setLayoutMenu] = React.useState<LayoutMenuState | null>(null)
   const [isTrashHover, setIsTrashHover] = React.useState(false)
@@ -443,12 +521,25 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
     store.layout.setDropTarget(null, null)
   }, [clearTabInsertIndicator, store.layout])
 
+  const clearLocalPanelDragState = React.useCallback(() => {
+    // The source window owns the storage-backed panel drag snapshot. Release it
+    // on drag-end and after the target confirms panel-moved to avoid stale state.
+    const token = localPanelDragStateTokenRef.current
+    if (!token) {
+      return
+    }
+    clearPanelDragState(token)
+    localPanelDragStateTokenRef.current = null
+  }, [])
+
   const resetDragUi = React.useCallback((options?: { preserveCrossWindowDrag?: boolean }) => {
     setSelectionSuppressed(false)
     setTrashHover(false)
     setDetachHover(false)
     clearTabInsertIndicator()
     externalSourceClientIdRef.current = null
+    externalPanelDragPayloadRef.current = null
+    pendingLocalPanelDragRef.current = null
     if (!options?.preserveCrossWindowDrag) {
       crossWindowDragRef.current = null
     }
@@ -485,6 +576,18 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
     [clearDropPreview, resetDragUi, rollbackExternalTabDrag, store.layout, store.windowClientId]
   )
 
+  const cancelExternalPanelAdoption = React.useCallback(
+    (options?: { preserveCrossWindowDrag?: boolean }) => {
+      if (store.layout.isDragging && store.layout.dragType === 'panel' && store.layout.draggingExternalPanelKind) {
+        store.layout.clearDragging()
+      } else {
+        clearDropPreview()
+      }
+      resetDragUi({ preserveCrossWindowDrag: options?.preserveCrossWindowDrag })
+    },
+    [clearDropPreview, resetDragUi, store.layout]
+  )
+
   const postWindowingMessage = React.useCallback((message: WindowingMessage) => {
     const channel = windowingChannelRef.current
     if (!channel) return
@@ -513,6 +616,37 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
         if (payload.targetClientId === store.windowClientId) return
         store.suppressTabs(payload.kind, [payload.tabId], { syncLayout: false })
         store.layout.detachTabFromLayout(payload.kind, payload.tabId)
+        return
+      }
+
+      if (payload.type === 'panel-moved') {
+        if (payload.sourceClientId !== store.windowClientId) return
+        if (payload.targetClientId === store.windowClientId) return
+        const sourcePanelKind = store.layout.getPanelKindById(payload.sourcePanelId)
+        if (sourcePanelKind !== payload.kind) return
+
+        // The source window can finally release its storage-backed drag snapshot
+        // once another window confirms it imported the panel successfully.
+        clearLocalPanelDragState()
+
+        if (payload.tabIds.length > 0) {
+          store.suppressTabs(payload.kind, payload.tabIds, { syncLayout: false })
+        }
+
+        if (store.layout.canRemovePanel(payload.sourcePanelId)) {
+          store.layout.removePanel(payload.sourcePanelId)
+          store.onPanelRemoved(payload.kind)
+          return
+        }
+
+        if (store.isDetachedWindow && store.layout.panelCount === 1) {
+          // A detached single-panel window is allowed to hand off that last panel
+          // to another window. Close the source window after the target confirms
+          // the move, and suppress the generic detached-closing rollback broadcast.
+          skipDetachedClosingRef.current = true
+          store.onPanelRemoved(payload.kind)
+          window.close()
+        }
         return
       }
 
@@ -559,7 +693,11 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
 
       if (payload.type === 'drag-end') {
         if (externalSourceClientIdRef.current === payload.sourceClientId) {
-          cancelExternalTabAdoption()
+          if (store.layout.dragType === 'panel' && store.layout.draggingExternalPanelKind) {
+            cancelExternalPanelAdoption()
+          } else {
+            cancelExternalTabAdoption()
+          }
           return
         }
         if (crossWindowDragRef.current?.sourceClientId === payload.sourceClientId) {
@@ -576,7 +714,7 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
         windowingChannelRef.current = null
       }
     }
-  }, [cancelExternalTabAdoption, store])
+  }, [cancelExternalPanelAdoption, cancelExternalTabAdoption, clearLocalPanelDragState, store])
 
   React.useEffect(() => {
     if (!store.isDetachedWindow) return
@@ -584,6 +722,9 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
     if (!sourceClientId) return
 
     const notifyDetachedClosing = () => {
+      if (skipDetachedClosingRef.current) {
+        return
+      }
       postWindowingMessage({
         type: 'detached-closing',
         sourceClientId,
@@ -995,117 +1136,60 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
 
       store.layout.clearTabReorderTarget()
       const rect = panelHost.getBoundingClientRect()
-      const direction = determineDropDirection(
-        {
-          left: rect.left,
-          top: rect.top,
-          width: rect.width,
-          height: rect.height
-        },
-        clientX,
-        clientY
-      )
+      const panelRect = {
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height
+      }
+      const direction =
+        store.layout.dragType === 'panel' && store.layout.draggingExternalPanelKind
+          ? resolveExternalPanelDropDirection(panelRect, clientX, clientY)
+          : determineDropDirection(panelRect, clientX, clientY)
       store.layout.setDropTarget(targetPanelId, direction)
     },
     [clearTabInsertIndicator, resolveTabBarReorderHint, store.layout]
   )
 
-  const handleHeaderMouseDown = React.useCallback(
-    (panelId: string, event: React.MouseEvent<HTMLElement>) => {
-      if (event.button !== 0) return
-      if ((event.target as HTMLElement).closest('button')) return
-      if ((event.target as HTMLElement).closest('[data-layout-tab-draggable="true"]')) return
-
-      const startX = event.clientX
-      const startY = event.clientY
-      setSelectionSuppressed(true)
-
-      dragTimerRef.current = setTimeout(() => {
-        store.layout.startPanelDragging(panelId, startX, startY)
-      }, 260)
-
-      const handleMouseMove = (moveEvent: MouseEvent) => {
-        store.layout.setDragPointer(moveEvent.clientX, moveEvent.clientY)
-        if (!store.layout.isDragging) return
-
-        const trashHover = isPointerOnTrash(moveEvent.target as HTMLElement | null, moveEvent.clientX, moveEvent.clientY)
-        const detachHover = store.isDetachedWindow
-          ? false
-          : isPointerOnDetach(moveEvent.target as HTMLElement | null, moveEvent.clientX, moveEvent.clientY)
-        setTrashHover(trashHover)
-        setDetachHover(detachHover)
-        if (trashHover || detachHover) {
-          clearTabInsertIndicator()
-          store.layout.clearTabReorderTarget()
-          store.layout.setDropTarget(null, null)
-          return
-        }
-        updateDropTarget(moveEvent.target as HTMLElement | null, moveEvent.clientX, moveEvent.clientY)
-      }
-
-      const cleanupAllListeners = () => {
-        window.removeEventListener('mousemove', handleMouseMove)
-        window.removeEventListener('mouseup', handleMouseUp)
-      }
-
-      const handleMouseUp = () => {
-        if (dragTimerRef.current) {
-          clearTimeout(dragTimerRef.current)
-          dragTimerRef.current = null
-        }
-
-        setSelectionSuppressed(false)
-        if (
-          store.layout.isDragging &&
-          store.layout.dragType === 'panel' &&
-          isTrashHoverRef.current &&
-          store.layout.draggingPanelId
-        ) {
-          const draggedPanelId = store.layout.draggingPanelId
-          store.layout.clearDragging()
-          requestClosePanel(draggedPanelId)
-        } else if (
-          store.layout.isDragging &&
-          store.layout.dragType === 'panel' &&
-          isDetachHoverRef.current &&
-          store.layout.draggingPanelId
-        ) {
-          const draggedPanelId = store.layout.draggingPanelId
-          store.layout.clearDragging()
-          requestDetachOrMergePanel(draggedPanelId)
-        } else if (store.layout.isDragging) {
-          store.layout.commitDragging()
-        } else {
-          store.layout.clearDragging()
-        }
-
-        setTrashHover(false)
-        setDetachHover(false)
-        clearTabInsertIndicator()
-        cleanupAllListeners()
-      }
-
-      window.addEventListener('mousemove', handleMouseMove)
-      window.addEventListener('mouseup', handleMouseUp)
-    },
-    [
-      clearTabInsertIndicator,
-      isPointerOnDetach,
-      isPointerOnTrash,
-      requestClosePanel,
-      requestDetachOrMergePanel,
-      setDetachHover,
-      setSelectionSuppressed,
-      setTrashHover,
-      store.isDetachedWindow,
-      store.layout,
-      updateDropTarget
-    ]
-  )
-
   React.useEffect(() => {
     const host = rootRef.current
     if (!host) return
+
+    const isPointInsideHost = (clientX: number, clientY: number): boolean => {
+      const rect = host.getBoundingClientRect()
+      return (
+        clientX >= rect.left &&
+        clientX <= rect.right &&
+        clientY >= rect.top &&
+        clientY <= rect.bottom
+      )
+    }
+
+    const resolvePanelDragPayload = (
+      payload: WindowingPanelDragPayload | null
+    ): WindowingPanelDragPayload | null => {
+      if (!payload) {
+        return null
+      }
+      // Cross-window panel drags only ship a lightweight transport payload
+      // through native drag data. Rehydrate the full tab/file-editor state
+      // from storage before the target window decides whether it can import.
+      const token = String(payload.stateToken || '').trim()
+      if (!token) {
+        return payload
+      }
+      const stashedPayload = readPanelDragState(token)
+      if (!stashedPayload) {
+        return payload
+      }
+      return {
+        ...stashedPayload,
+        sourceClientId: payload.sourceClientId,
+        sourcePanelId: payload.sourcePanelId,
+        kind: payload.kind,
+        stateToken: token
+      }
+    }
 
     const readTabPayload = (target: EventTarget | null): TabDragPayload | null => {
       const tabElement = (target as HTMLElement | null)?.closest?.('[data-layout-tab-id]') as HTMLElement | null
@@ -1124,6 +1208,154 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
         kind,
         sourcePanelId
       }
+    }
+
+    const readPanelDragSourceElement = (target: EventTarget | null): HTMLElement | null => {
+      const targetElement = target as HTMLElement | null
+      if (!targetElement || typeof targetElement.closest !== 'function') {
+        return null
+      }
+      if (targetElement.closest('button')) {
+        return null
+      }
+      if (targetElement.closest('[data-layout-tab-draggable="true"]')) {
+        return null
+      }
+      return targetElement.closest('[data-layout-panel-draggable="true"]') as HTMLElement | null
+    }
+
+    const readPanelPayload = (target: EventTarget | null): LocalPanelDragPayload | null => {
+      const panelDragSource = readPanelDragSourceElement(target)
+      if (!panelDragSource) return null
+      const panelId = panelDragSource.getAttribute('data-layout-panel-id')
+      const kind = panelDragSource.getAttribute('data-layout-panel-kind') as PanelKind | null
+      if (!panelId || (kind !== 'chat' && kind !== 'terminal' && kind !== 'filesystem' && kind !== 'fileEditor')) {
+        return null
+      }
+      // A cross-window panel move removes the source panel from this window after
+      // the target confirms the drop. Keep the last panel in a window non-movable.
+      // Do not add kind-scoped guards here. The only hard block is leaving the
+      // current window with zero panels; being the last panel of a kind is fine.
+      if (!store.layout.canRemovePanel(panelId) && !store.isDetachedWindow) {
+        return null
+      }
+      if (!store.canClosePanel(kind)) {
+        return null
+      }
+      return {
+        panelId,
+        kind
+      }
+    }
+
+    const toCrossWindowPanelDragPayload = (
+      payload: LocalPanelDragPayload
+    ): WindowingPanelDragPayload => ({
+      sourceClientId: store.windowClientId,
+      sourcePanelId: payload.panelId,
+      kind: payload.kind,
+      ...(getPanelKindAdapter(payload.kind).supportsTabs
+        ? { tabBinding: toPanelTabBinding(payload.panelId, payload.kind) }
+        : {}),
+      ...(payload.kind === 'fileEditor'
+        ? { fileEditorSnapshot: toPanelFileEditorSnapshot(payload.kind) }
+        : {})
+    })
+
+    const createPanelTransportPayload = (
+      payload: LocalPanelDragPayload
+    ): WindowingPanelDragPayload => {
+      clearLocalPanelDragState()
+      const fullPayload = toCrossWindowPanelDragPayload(payload)
+      const stateToken = `panel-drag-${makeLayoutId('state')}`
+      const hasStashedState = stashPanelDragState(stateToken, fullPayload)
+      if (!hasStashedState) {
+        return fullPayload
+      }
+      // Keep the native drag payload small. Electron can drop large/custom
+      // DataTransfer bodies between BrowserWindows, especially when a panel
+      // owns many tabs, so the transferable panel state lives in storage.
+      localPanelDragStateTokenRef.current = stateToken
+      return {
+        sourceClientId: fullPayload.sourceClientId,
+        sourcePanelId: fullPayload.sourcePanelId,
+        kind: fullPayload.kind,
+        stateToken
+      }
+    }
+
+    const canImportResolvedExternalPanelPayload = (
+      payload: WindowingPanelDragPayload | null
+    ): payload is WindowingPanelDragPayload => {
+      if (!payload) {
+        return false
+      }
+      // Tabbed panels must be rehydrated before import. A transport payload that
+      // still has only the state token is not safe to commit into the layout.
+      if (getPanelKindAdapter(payload.kind).supportsTabs && !payload.tabBinding) {
+        return false
+      }
+      return true
+    }
+
+    const ensurePanelDraggingFromEvent = (
+      event: DragEvent
+    ): { externalPayload: WindowingPanelDragPayload | null; externalSourceClientId: string | null } | null => {
+      if (
+        store.layout.isDragging &&
+        store.layout.dragType === 'panel' &&
+        (store.layout.draggingPanelId || store.layout.draggingExternalPanelKind)
+      ) {
+        return {
+          externalPayload: externalPanelDragPayloadRef.current,
+          externalSourceClientId: externalSourceClientIdRef.current
+        }
+      }
+
+      const pendingLocalPanelDrag = pendingLocalPanelDragRef.current
+      if (pendingLocalPanelDrag) {
+        // Do not enter layout dragging during native dragstart. Chromium/Electron
+        // may cancel the drag session if the source panel is visually mutated in
+        // that same frame. The first dragover is the safe point to attach store state.
+        store.layout.startPanelDragging(pendingLocalPanelDrag.panelId, event.clientX, event.clientY)
+        pendingLocalPanelDragRef.current = null
+        return {
+          externalPayload: null,
+          externalSourceClientId: null
+        }
+      }
+
+      const crossWindowPayload = parseCrossWindowPanelDragPayload(event.dataTransfer)
+      if (crossWindowPayload && crossWindowPayload.sourceClientId !== store.windowClientId) {
+        // Prefer DataTransfer when available so the target can recover even if it
+        // missed the drag-start broadcast while the pointer crossed windows.
+        store.layout.startExternalPanelDragging(crossWindowPayload.kind, event.clientX, event.clientY)
+        externalSourceClientIdRef.current = crossWindowPayload.sourceClientId
+        externalPanelDragPayloadRef.current = resolvePanelDragPayload(crossWindowPayload)
+        return {
+          externalPayload: externalPanelDragPayloadRef.current,
+          externalSourceClientId: crossWindowPayload.sourceClientId
+        }
+      }
+
+      const broadcastDrag = crossWindowDragRef.current
+      if (
+        broadcastDrag?.dragKind === 'panel' &&
+        broadcastDrag.panelPayload &&
+        broadcastDrag.sourceClientId !== store.windowClientId
+      ) {
+        // Broadcast is the fallback when Electron hides custom/native drag data
+        // during dragover. The target still resolves the full payload from storage.
+        store.layout.startExternalPanelDragging(broadcastDrag.panelPayload.kind, event.clientX, event.clientY)
+        externalSourceClientIdRef.current = broadcastDrag.sourceClientId
+        externalPanelDragPayloadRef.current = resolvePanelDragPayload(broadcastDrag.panelPayload)
+        return {
+          externalPayload: externalPanelDragPayloadRef.current,
+          externalSourceClientId: broadcastDrag.sourceClientId
+        }
+      }
+
+      return null
     }
 
     const ensureTabDraggingFromEvent = (
@@ -1156,7 +1388,11 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
       // Fallback: use windowing channel payload (for cross-window drags where
       // DataTransfer.getData() returns empty during dragover)
       const broadcastDrag = crossWindowDragRef.current
-      if (broadcastDrag?.tabPayload && broadcastDrag.sourceClientId !== store.windowClientId) {
+      if (
+        broadcastDrag?.dragKind === 'tab' &&
+        broadcastDrag.tabPayload &&
+        broadcastDrag.sourceClientId !== store.windowClientId
+      ) {
         const payload: TabDragPayload = {
           tabId: broadcastDrag.tabPayload.tabId,
           kind: broadcastDrag.tabPayload.kind,
@@ -1195,20 +1431,58 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
         postWindowingMessage({
           type: 'drag-start',
           sourceClientId: store.windowClientId,
+          dragKind: 'tab',
           tabPayload: crossPayload
         })
         return
       }
+
+      const panelPayload = readPanelPayload(event.target)
+      if (panelPayload) {
+        const crossPayload = createPanelTransportPayload(panelPayload)
+        if (event.dataTransfer) {
+          event.dataTransfer.effectAllowed = 'move'
+          const dragSource = readPanelDragSourceElement(event.target)
+          if (dragSource) {
+            event.dataTransfer.setDragImage(
+              dragSource,
+              Math.min(24, Math.max(8, Math.round(dragSource.clientWidth / 4))),
+              Math.min(18, Math.max(8, Math.round(dragSource.clientHeight / 2)))
+            )
+          }
+          const encoded = encodeCrossWindowPanelDragPayload(crossPayload)
+          event.dataTransfer.setData(LAYOUT_PANEL_DRAG_MIME, encoded)
+          // Keep the plain-text fallback aligned with tab dragging. Electron can
+          // hide custom MIME payloads across BrowserWindows, while text/plain is
+          // still exposed to the target drag session.
+          event.dataTransfer.setData('text/plain', `${LAYOUT_PANEL_DRAG_TEXT_PREFIX}${encoded}`)
+        }
+        setSelectionSuppressed(true)
+        clearTabInsertIndicator()
+        pendingLocalPanelDragRef.current = panelPayload
+        externalSourceClientIdRef.current = null
+        externalPanelDragPayloadRef.current = null
+        postWindowingMessage({
+          type: 'drag-start',
+          sourceClientId: store.windowClientId,
+          dragKind: 'panel',
+          panelPayload: crossPayload
+        })
+      }
     }
 
-    const handleDragOver = (event: DragEvent) => {
-      if (store.layout.isDragging && store.layout.dragType === 'panel' && store.layout.draggingPanelId) {
+    const handleDragMove = (event: DragEvent) => {
+      const panelDragging = ensurePanelDraggingFromEvent(event)
+      if (panelDragging) {
         event.preventDefault()
         store.layout.setDragPointer(event.clientX, event.clientY)
-        const trashHover = isPointerOnTrash(event.target as HTMLElement | null, event.clientX, event.clientY)
-        const detachHover = store.isDetachedWindow
-          ? false
-          : isPointerOnDetach(event.target as HTMLElement | null, event.clientX, event.clientY)
+        const allowDropActions = !store.layout.draggingExternalPanelKind
+        const trashHover =
+          allowDropActions && isPointerOnTrash(event.target as HTMLElement | null, event.clientX, event.clientY)
+        const detachHover =
+          allowDropActions &&
+          !store.isDetachedWindow &&
+          isPointerOnDetach(event.target as HTMLElement | null, event.clientX, event.clientY)
         setTrashHover(trashHover)
         setDetachHover(detachHover)
         if (trashHover || detachHover) {
@@ -1220,7 +1494,10 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
         }
         updateDropTarget(event.target as HTMLElement | null, event.clientX, event.clientY)
         if (event.dataTransfer) {
-          event.dataTransfer.dropEffect = store.layout.dropTargetPanelId ? 'move' : 'none'
+          const canDrop = store.layout.draggingExternalPanelKind
+            ? !!store.layout.dropPreviewRect
+            : !!store.layout.dropTargetPanelId
+          event.dataTransfer.dropEffect = canDrop ? 'move' : 'none'
         }
         return
       }
@@ -1250,6 +1527,14 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
       }
     }
 
+    const handleDragEnter = (event: DragEvent) => {
+      handleDragMove(event)
+    }
+
+    const handleDragOver = (event: DragEvent) => {
+      handleDragMove(event)
+    }
+
     const handleDragLeave = (event: DragEvent) => {
       if (!store.layout.isDragging || (store.layout.dragType !== 'tab' && store.layout.dragType !== 'panel')) return
       const rect = host.getBoundingClientRect()
@@ -1259,6 +1544,10 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
         event.clientY < rect.top ||
         event.clientY > rect.bottom
       if (!outside) return
+      if (store.layout.dragType === 'panel' && externalSourceClientIdRef.current && store.layout.draggingExternalPanelKind) {
+        cancelExternalPanelAdoption({ preserveCrossWindowDrag: true })
+        return
+      }
       if (store.layout.dragType === 'tab' && externalSourceClientIdRef.current) {
         cancelExternalTabAdoption({ preserveCrossWindowDrag: true })
         return
@@ -1269,28 +1558,102 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
     }
 
     const handleDrop = (event: DragEvent) => {
-      if (store.layout.isDragging && store.layout.dragType === 'panel' && store.layout.draggingPanelId) {
+      if (
+        store.layout.isDragging &&
+        store.layout.dragType === 'panel' &&
+        (store.layout.draggingPanelId || store.layout.draggingExternalPanelKind)
+      ) {
         event.preventDefault()
         store.layout.setDragPointer(event.clientX, event.clientY)
         const draggedPanelId = store.layout.draggingPanelId
-        const trashHover = isPointerOnTrash(event.target as HTMLElement | null, event.clientX, event.clientY)
-        const detachHover = store.isDetachedWindow
-          ? false
-          : isPointerOnDetach(event.target as HTMLElement | null, event.clientX, event.clientY)
+        const isExternalPanelDrag = !!store.layout.draggingExternalPanelKind && !draggedPanelId
+        const trashHover =
+          !isExternalPanelDrag &&
+          isPointerOnTrash(event.target as HTMLElement | null, event.clientX, event.clientY)
+        const detachHover =
+          !isExternalPanelDrag &&
+          !store.isDetachedWindow &&
+          isPointerOnDetach(event.target as HTMLElement | null, event.clientX, event.clientY)
         if (trashHover) {
+          if (!draggedPanelId) {
+            store.layout.clearDragging()
+            resetDragUi()
+            return
+          }
           store.layout.clearDragging()
           resetDragUi()
           requestClosePanel(draggedPanelId)
           return
         }
         if (detachHover) {
+          if (!draggedPanelId) {
+            store.layout.clearDragging()
+            resetDragUi()
+            return
+          }
           store.layout.clearDragging()
           resetDragUi()
           requestDetachOrMergePanel(draggedPanelId)
           return
         }
         updateDropTarget(event.target as HTMLElement | null, event.clientX, event.clientY)
-        store.layout.commitDragging()
+        if (draggedPanelId) {
+          store.layout.commitDragging()
+          resetDragUi()
+          return
+        }
+
+        const externalPayload = resolvePanelDragPayload(externalPanelDragPayloadRef.current)
+        const targetPanelId = store.layout.dropTargetPanelId
+        const dropDirection = store.layout.dropDirection
+        // By the time an external panel drop commits, the target must hold the
+        // fully resolved panel state rather than the lightweight transport token.
+        if (
+          !canImportResolvedExternalPanelPayload(externalPayload) ||
+          !targetPanelId ||
+          !dropDirection ||
+          !store.layout.dropPreviewRect
+        ) {
+          store.layout.clearDragging()
+          resetDragUi()
+          return
+        }
+
+        const movedTabIds = externalPayload.tabBinding?.tabIds || []
+        if (movedTabIds.length > 0) {
+          store.unsuppressTabs(externalPayload.kind, movedTabIds, { syncLayout: false })
+        }
+        const importedPanelId = store.layout.importPanelFromExternal(
+          externalPayload.kind,
+          externalPayload.tabBinding,
+          {
+            panelId: targetPanelId,
+            direction: dropDirection
+          }
+        )
+        if (!importedPanelId) {
+          if (movedTabIds.length > 0) {
+            store.suppressTabs(externalPayload.kind, movedTabIds, { syncLayout: false })
+          }
+          store.layout.clearDragging()
+          resetDragUi()
+          return
+        }
+        if (externalPayload.tabBinding?.activeTabId) {
+          store.layout.setPanelActiveTab(importedPanelId, externalPayload.tabBinding.activeTabId)
+        }
+        if (externalPayload.kind === 'fileEditor' && externalPayload.fileEditorSnapshot) {
+          store.fileEditor.restoreSnapshot(externalPayload.fileEditorSnapshot)
+        }
+        postWindowingMessage({
+          type: 'panel-moved',
+          sourceClientId: externalPayload.sourceClientId,
+          targetClientId: store.windowClientId,
+          sourcePanelId: externalPayload.sourcePanelId,
+          kind: externalPayload.kind,
+          tabIds: movedTabIds
+        })
+        store.layout.clearDragging()
         resetDragUi()
         return
       }
@@ -1357,6 +1720,13 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
     }
 
     const handleDragEnd = () => {
+      const hasActiveLayoutDrag =
+        (store.layout.isDragging && (store.layout.dragType === 'tab' || store.layout.dragType === 'panel'))
+        || !!pendingLocalPanelDragRef.current
+      if (!hasActiveLayoutDrag) {
+        clearLocalPanelDragState()
+        return
+      }
       const externalSourceClientId = externalSourceClientIdRef.current
       const draggingTab = store.layout.draggingTab
       rollbackExternalTabDrag(draggingTab, externalSourceClientId)
@@ -1370,17 +1740,17 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
         sourceClientId: store.windowClientId
       })
       crossWindowDragRef.current = null
+      clearLocalPanelDragState()
     }
 
     const handleWindowDragOver = (event: DragEvent) => {
       if (!store.layout.isDragging || (store.layout.dragType !== 'tab' && store.layout.dragType !== 'panel')) return
-      const rect = host.getBoundingClientRect()
-      const inside =
-        event.clientX >= rect.left &&
-        event.clientX <= rect.right &&
-        event.clientY >= rect.top &&
-        event.clientY <= rect.bottom
+      const inside = isPointInsideHost(event.clientX, event.clientY)
       if (inside) return
+      if (store.layout.dragType === 'panel' && externalSourceClientIdRef.current && store.layout.draggingExternalPanelKind) {
+        cancelExternalPanelAdoption({ preserveCrossWindowDrag: true })
+        return
+      }
       if (store.layout.dragType === 'tab' && externalSourceClientIdRef.current) {
         cancelExternalTabAdoption({ preserveCrossWindowDrag: true })
         return
@@ -1390,7 +1760,18 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
       setDetachHover(false)
     }
 
-    const handleWindowDrop = () => {
+    const handleWindowDrop = (event: DragEvent) => {
+      const inside = isPointInsideHost(event.clientX, event.clientY)
+      if (inside) {
+        // window capture runs before the host drop handler. Never clear drag state
+        // for an in-workspace drop here, or the actual commit handler will see
+        // an empty drag session and the move will be lost.
+        return
+      }
+      if (store.layout.dragType === 'panel' && externalSourceClientIdRef.current && store.layout.draggingExternalPanelKind) {
+        cancelExternalPanelAdoption()
+        return
+      }
       if (store.layout.dragType === 'tab' && externalSourceClientIdRef.current) {
         cancelExternalTabAdoption()
         return
@@ -1403,25 +1784,31 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
       resetDragUi()
     }
 
-    host.addEventListener('dragstart', handleDragStart)
-    host.addEventListener('dragover', handleDragOver)
-    host.addEventListener('dragleave', handleDragLeave)
-    host.addEventListener('drop', handleDrop)
-    host.addEventListener('dragend', handleDragEnd)
-    window.addEventListener('dragover', handleWindowDragOver)
-    window.addEventListener('drop', handleWindowDrop)
+    // Use capture so the workspace sees cross-window drags before nested
+    // editors, terminals, or inputs claim the native drag session.
+    host.addEventListener('dragstart', handleDragStart, true)
+    host.addEventListener('dragenter', handleDragEnter, true)
+    host.addEventListener('dragover', handleDragOver, true)
+    host.addEventListener('dragleave', handleDragLeave, true)
+    host.addEventListener('drop', handleDrop, true)
+    host.addEventListener('dragend', handleDragEnd, true)
+    window.addEventListener('dragover', handleWindowDragOver, true)
+    window.addEventListener('drop', handleWindowDrop, true)
 
     return () => {
-      host.removeEventListener('dragstart', handleDragStart)
-      host.removeEventListener('dragover', handleDragOver)
-      host.removeEventListener('dragleave', handleDragLeave)
-      host.removeEventListener('drop', handleDrop)
-      host.removeEventListener('dragend', handleDragEnd)
-      window.removeEventListener('dragover', handleWindowDragOver)
-      window.removeEventListener('drop', handleWindowDrop)
+      host.removeEventListener('dragstart', handleDragStart, true)
+      host.removeEventListener('dragenter', handleDragEnter, true)
+      host.removeEventListener('dragover', handleDragOver, true)
+      host.removeEventListener('dragleave', handleDragLeave, true)
+      host.removeEventListener('drop', handleDrop, true)
+      host.removeEventListener('dragend', handleDragEnd, true)
+      window.removeEventListener('dragover', handleWindowDragOver, true)
+      window.removeEventListener('drop', handleWindowDrop, true)
+      clearLocalPanelDragState()
     }
   }, [
     cancelExternalTabAdoption,
+    clearLocalPanelDragState,
     clearDropPreview,
     clearTabInsertIndicator,
     isPointerOnDetach,
@@ -1461,10 +1848,6 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
 
   React.useEffect(() => {
     return () => {
-      if (dragTimerRef.current) {
-        clearTimeout(dragTimerRef.current)
-        dragTimerRef.current = null
-      }
       setSelectionSuppressed(false)
       setTrashHover(false)
       setDetachHover(false)
@@ -1649,7 +2032,6 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
         <LayoutNodeView
           node={store.layout.tree.root}
           store={store}
-          onHeaderMouseDown={handleHeaderMouseDown}
           onHeaderContextMenu={handleHeaderContextMenu}
           onRequestCloseTabsByKind={requestCloseTabsByKind}
         />

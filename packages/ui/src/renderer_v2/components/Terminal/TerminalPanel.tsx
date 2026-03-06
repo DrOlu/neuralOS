@@ -12,7 +12,6 @@ interface TerminalPanelProps {
   activeTabId: string | null
   onSelectTab: (tabId: string) => void
   onRequestCloseTabs?: (tabIds: string[]) => void
-  onLayoutHeaderMouseDown?: (event: React.MouseEvent<HTMLElement>) => void
   onLayoutHeaderContextMenu?: (event: React.MouseEvent<HTMLElement>) => void
 }
 
@@ -23,7 +22,6 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = observer(({
   activeTabId,
   onSelectTab,
   onRequestCloseTabs,
-  onLayoutHeaderMouseDown,
   onLayoutHeaderContextMenu
 }) => {
   const [menuOpen, setMenuOpen] = React.useState(false)
@@ -62,7 +60,10 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = observer(({
     <div className={`panel panel-terminal${isLayoutDragSource ? ' is-dragging-source' : ''}`} ref={rootRef}>
       <div
         className="terminal-tabs-container is-draggable"
-        onMouseDown={onLayoutHeaderMouseDown}
+        draggable
+        data-layout-panel-draggable="true"
+        data-layout-panel-id={panelId}
+        data-layout-panel-kind="terminal"
         onContextMenu={onLayoutHeaderContextMenu}
       >
         <div

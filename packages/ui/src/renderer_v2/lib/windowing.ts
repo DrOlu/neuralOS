@@ -7,6 +7,7 @@ import {
 export type RendererWindowRole = 'main' | 'detached'
 
 const DETACHED_STATE_KEY_PREFIX = 'gyshell.detachedState.'
+const PANEL_DRAG_STATE_KEY_PREFIX = 'gyshell.panelDragState.'
 const WINDOW_CLIENT_ID_KEY = 'gyshell.windowClientId'
 export const WINDOWING_BROADCAST_CHANNEL = 'gyshell-windowing-v1'
 const WINDOWING_STORAGE_CHANNEL_KEY_PREFIX = 'gyshell.windowingChannel.'
@@ -39,6 +40,15 @@ export interface WindowingTabMovedMessage {
   tabId: string
 }
 
+export interface WindowingPanelMovedMessage {
+  type: 'panel-moved'
+  sourceClientId: string
+  targetClientId: string
+  sourcePanelId: string
+  kind: PanelKind
+  tabIds: string[]
+}
+
 export interface WindowingMergeToMainMessage {
   type: 'merge-to-main'
   sourceClientId: string
@@ -58,15 +68,32 @@ export interface WindowingDetachedClosingMessage {
  * Broadcast when a drag starts in any window, so other windows can accept
  * the drop even when DataTransfer.getData() is restricted during dragover.
  */
+export interface WindowingTabDragPayload {
+  sourceClientId: string
+  tabId: string
+  kind: PanelKind
+  sourcePanelId: string
+}
+
+export interface WindowingPanelDragPayload {
+  sourceClientId: string
+  sourcePanelId: string
+  kind: PanelKind
+  /**
+   * When present, the native drag payload only carries this token. The full
+   * transferable panel state must be rehydrated from storage before import.
+   */
+  stateToken?: string
+  tabBinding?: LayoutPanelTabBinding
+  fileEditorSnapshot?: FileEditorSnapshot
+}
+
 export interface WindowingDragStartMessage {
   type: 'drag-start'
   sourceClientId: string
-  tabPayload: {
-    sourceClientId: string
-    tabId: string
-    kind: PanelKind
-    sourcePanelId: string
-  }
+  dragKind: 'tab' | 'panel'
+  tabPayload?: WindowingTabDragPayload
+  panelPayload?: WindowingPanelDragPayload
 }
 
 /**
@@ -78,6 +105,7 @@ export interface WindowingDragEndMessage {
 }
 
 export type WindowingMessage =
+  | WindowingPanelMovedMessage
   | WindowingTabMovedMessage
   | WindowingMergeToMainMessage
   | WindowingDetachedClosingMessage
@@ -165,6 +193,122 @@ export const consumeDetachedWindowState = (token: string): DetachedWindowState |
   }
 }
 
+const readLocalStorage = (): Storage | null => {
+  try {
+    return window.localStorage ?? null
+  } catch {
+    return null
+  }
+}
+
+const normalizePanelTabBinding = (value: unknown): LayoutPanelTabBinding | undefined => {
+  if (!value || typeof value !== 'object') {
+    return undefined
+  }
+  const rawBinding = value as Partial<LayoutPanelTabBinding>
+  const tabIds = Array.isArray(rawBinding.tabIds)
+    ? rawBinding.tabIds.filter((tabId): tabId is string => typeof tabId === 'string' && tabId.trim().length > 0)
+    : []
+  const activeTabId =
+    typeof rawBinding.activeTabId === 'string' && tabIds.includes(rawBinding.activeTabId)
+      ? rawBinding.activeTabId
+      : tabIds[0]
+  return {
+    tabIds,
+    ...(activeTabId ? { activeTabId } : {})
+  }
+}
+
+const normalizePanelDragState = (value: unknown): WindowingPanelDragPayload | null => {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+  const parsed = value as Partial<WindowingPanelDragPayload>
+  const sourceClientId = typeof parsed.sourceClientId === 'string' ? parsed.sourceClientId.trim() : ''
+  const sourcePanelId = typeof parsed.sourcePanelId === 'string' ? parsed.sourcePanelId.trim() : ''
+  const kind = parsed.kind
+  const stateToken = typeof parsed.stateToken === 'string' ? parsed.stateToken.trim() : ''
+  if (!sourceClientId || !sourcePanelId) {
+    return null
+  }
+  if (kind !== 'chat' && kind !== 'terminal' && kind !== 'filesystem' && kind !== 'fileEditor') {
+    return null
+  }
+  const tabBinding = normalizePanelTabBinding(parsed.tabBinding)
+  const fileEditorSnapshot = normalizeFileEditorSnapshot(parsed.fileEditorSnapshot)
+  return {
+    sourceClientId,
+    sourcePanelId,
+    kind,
+    ...(stateToken ? { stateToken } : {}),
+    ...(tabBinding ? { tabBinding } : {}),
+    ...(fileEditorSnapshot ? { fileEditorSnapshot } : {})
+  }
+}
+
+const getPanelDragStateStorageKey = (token: string): string | null => {
+  const normalizedToken = String(token || '').trim()
+  if (!normalizedToken) {
+    return null
+  }
+  return `${PANEL_DRAG_STATE_KEY_PREFIX}${normalizedToken}`
+}
+
+/**
+ * Electron cross-window native drag sessions are far more reliable when the
+ * drag payload stays small. For panels, stash the full transferable state in
+ * localStorage and only put a lightweight token into DataTransfer/windowing.
+ */
+export const stashPanelDragState = (token: string, payload: WindowingPanelDragPayload): boolean => {
+  const key = getPanelDragStateStorageKey(token)
+  const storage = readLocalStorage()
+  const normalizedPayload = normalizePanelDragState(payload)
+  if (!key || !storage || !normalizedPayload) {
+    return false
+  }
+  try {
+    storage.setItem(key, JSON.stringify(normalizedPayload))
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Resolve the full stashed panel drag state for a transport token. This keeps
+ * cross-window drag payloads small while preserving the complete panel state.
+ */
+export const readPanelDragState = (token: string): WindowingPanelDragPayload | null => {
+  const key = getPanelDragStateStorageKey(token)
+  const storage = readLocalStorage()
+  if (!key || !storage) {
+    return null
+  }
+  try {
+    const raw = storage.getItem(key)
+    return normalizePanelDragState(raw ? JSON.parse(raw) : null)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The source window owns the stashed drag state and is responsible for removing
+ * it after drag-end or once the target confirms the move.
+ */
+export const clearPanelDragState = (token: string): void => {
+  const key = getPanelDragStateStorageKey(token)
+  const storage = readLocalStorage()
+  if (!key || !storage) {
+    return
+  }
+  try {
+    storage.removeItem(key)
+  } catch {
+    // ignore cleanup failures
+  }
+}
+
 /**
  * A channel interface compatible with BroadcastChannel for cross-window messaging.
  * For file:// renderer windows, BroadcastChannel is not reliable because those
@@ -182,12 +326,7 @@ const createStorageWindowingChannel = (): WindowingChannel | null => {
     return null
   }
 
-  let storage: Storage | null = null
-  try {
-    storage = window.localStorage ?? null
-  } catch {
-    storage = null
-  }
+  const storage = readLocalStorage()
   if (!storage) {
     return null
   }
