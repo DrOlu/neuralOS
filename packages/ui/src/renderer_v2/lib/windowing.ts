@@ -4,6 +4,7 @@ import {
   normalizeFileEditorSnapshot,
   type FileEditorSnapshot
 } from './fileEditorSnapshot'
+import type { TerminalConnectionRef } from './terminalConnectionModel'
 
 export type RendererWindowRole = 'main' | 'detached'
 
@@ -50,7 +51,7 @@ export interface WindowingTerminalTabSnapshot {
   id: string
   title: string
   config: TerminalConfig
-  connectionRef?: { type: 'local' } | { type: 'ssh'; entryId: string }
+  connectionRef?: TerminalConnectionRef
   runtimeState?: 'initializing' | 'ready' | 'exited'
   lastExitCode?: number
 }
@@ -308,11 +309,24 @@ export const normalizeWindowingTerminalTabSnapshot = (value: unknown): Windowing
   }
   const connectionRef =
     raw.connectionRef && typeof raw.connectionRef === 'object'
-      ? raw.connectionRef.type === 'local'
-        ? { type: 'local' as const }
-        : raw.connectionRef.type === 'ssh' && typeof raw.connectionRef.entryId === 'string'
-          ? { type: 'ssh' as const, entryId: raw.connectionRef.entryId.trim() }
-          : undefined
+      ? (() => {
+          const refType =
+            typeof raw.connectionRef.type === 'string'
+              ? raw.connectionRef.type.trim()
+              : ''
+          if (!refType) {
+            return undefined
+          }
+          const entryId =
+            typeof raw.connectionRef.entryId === 'string' &&
+            raw.connectionRef.entryId.trim().length > 0
+              ? raw.connectionRef.entryId.trim()
+              : undefined
+          return {
+            type: refType,
+            ...(entryId ? { entryId } : {}),
+          }
+        })()
       : undefined
   const runtimeState =
     raw.runtimeState === 'initializing' || raw.runtimeState === 'ready' || raw.runtimeState === 'exited'

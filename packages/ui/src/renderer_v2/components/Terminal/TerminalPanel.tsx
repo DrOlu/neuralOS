@@ -1,9 +1,13 @@
 import React from 'react'
-import { GripVertical, Laptop, Plus, Server, X } from 'lucide-react'
+import { GripVertical, Laptop, Plus, Server, SquareTerminal, X } from 'lucide-react'
 import { observer } from 'mobx-react-lite'
 import type { AppStore, TerminalTabModel } from '../../stores/AppStore'
 import './terminal.scss'
 import { XTermView } from './XTermView'
+import {
+  getTerminalConnectionIconKind,
+  resolveTerminalRuntimeIndicatorState,
+} from '../../lib/terminalConnectionModel'
 
 interface TerminalPanelProps {
   store: AppStore
@@ -80,14 +84,18 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = observer(({
         >
           {tabs.map((tab, index) => {
             const isActive = tab.id === activeTabId
-            const Icon = tab.config.type === 'ssh' ? Server : Laptop
             const runtimeState = tab.runtimeState || 'initializing'
-            const runtimeIndicatorState =
-              tab.config.type === 'ssh'
-                ? runtimeState === 'ready'
-                  ? 'ready'
-                  : 'inactive'
-                : runtimeState
+            const iconKind = getTerminalConnectionIconKind(tab.config.type)
+            const Icon =
+              iconKind === 'remote'
+                ? Server
+                : iconKind === 'local'
+                  ? Laptop
+                  : SquareTerminal
+            const runtimeIndicatorState = resolveTerminalRuntimeIndicatorState(
+              tab.config.type,
+              runtimeState,
+            )
 
             return (
               <div

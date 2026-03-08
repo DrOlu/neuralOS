@@ -3,7 +3,13 @@ import * as os from 'os'
 import * as fs from 'fs'
 import * as path from 'path'
 import { pipeline } from 'node:stream/promises'
-import type { TerminalBackend, TerminalConfig, LocalConnectionConfig, FileSystemEntry, FileStatInfo } from '../types'
+import {
+  isLocalConnectionConfig,
+  type TerminalBackend,
+  type TerminalConfig,
+  type FileSystemEntry,
+  type FileStatInfo,
+} from '../types'
 
 const GYSHELL_READY_MARKER = '__GYSHELL_READY__'
 
@@ -64,10 +70,10 @@ export class NodePtyBackend implements TerminalBackend {
   }
 
   async spawn(config: TerminalConfig): Promise<string> {
-    if (config.type !== 'local') {
+    if (!isLocalConnectionConfig(config)) {
       throw new Error('NodePtyBackend only supports local connections')
     }
-    const localConfig = config as LocalConnectionConfig
+    const localConfig = config
 
     const shell = this.pickShell(localConfig.shell)
     const cwdCandidate = localConfig.cwd || os.homedir()

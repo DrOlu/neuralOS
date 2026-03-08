@@ -17,6 +17,7 @@ export interface GyBackendConnectionConfig {
   token?: string
 }
 
+export * from './terminalConnections'
 export * from './theme/terminalColorSchemes'
 export * from './theme/builtInSchemes'
 export * from './theme/themes'

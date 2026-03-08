@@ -1,6 +1,7 @@
 import { AppStore } from "./AppStore";
 import { ChatStore } from "./ChatStore";
 import type { LayoutTree } from "../layout";
+import { WINDOW_CONTEXT, stashDetachedWindowState } from "../lib/windowing";
 
 const assertCondition = (condition: unknown, message: string): void => {
   if (!condition) {
@@ -23,6 +24,18 @@ const runCase = async (
   await fn();
   console.log(`PASS ${name}`);
 };
+
+const createStorage = (state: Map<string, string>) => ({
+  getItem(key: string) {
+    return state.has(key) ? state.get(key)! : null;
+  },
+  setItem(key: string, value: string) {
+    state.set(key, value);
+  },
+  removeItem(key: string) {
+    state.delete(key);
+  },
+});
 
 const buildPersistedTree = (options?: {
   focusedPanelId?: string;
@@ -654,6 +667,78 @@ const run = async (): Promise<void> => {
   );
 
   await runCase(
+    "detached bootstrap restores filesystem visibility after terminal hydration",
+    async () => {
+      const originalWindow = (globalThis as any).window;
+      const originalContext = {
+        role: WINDOW_CONTEXT.role,
+        detachedStateToken: WINDOW_CONTEXT.detachedStateToken,
+        sourceClientId: WINDOW_CONTEXT.sourceClientId,
+      };
+      const localStorageState = new Map<string, string>();
+      const sessionStorageState = new Map<string, string>();
+      const token = "detached-fs-bootstrap";
+      const detachedLayoutTree: LayoutTree = {
+        schemaVersion: 2,
+        root: {
+          type: "panel",
+          id: "node-fs",
+          panel: { id: "panel-fs", kind: "filesystem" },
+        },
+        focusedPanelId: "panel-fs",
+        panelTabs: {
+          "panel-fs": {
+            tabIds: ["term-a"],
+            activeTabId: "term-a",
+          },
+        },
+      };
+
+      try {
+        installBootstrapWindowMock(buildPersistedTree());
+        (globalThis as any).window.localStorage = createStorage(localStorageState);
+        (globalThis as any).window.sessionStorage =
+          createStorage(sessionStorageState);
+        stashDetachedWindowState(token, {
+          sourceClientId: "win-main",
+          layoutTree: detachedLayoutTree,
+          createdAt: 123,
+        });
+        (WINDOW_CONTEXT as any).role = "detached";
+        (WINDOW_CONTEXT as any).detachedStateToken = token;
+        (WINDOW_CONTEXT as any).sourceClientId = "win-main";
+
+        const store = new AppStore();
+        (store.layout as any).bootstrap = () => {};
+        (store.layout as any).syncPanelBindings = () => {};
+        (store as any).loadTools = async () => {};
+        (store as any).loadSkills = async () => {};
+        (store as any).loadMemory = async () => {};
+        (store as any).loadCommandPolicyLists = async () => {};
+        (store as any).loadAccessTokens = async () => {};
+        (store as any).loadVersionState = async () => {};
+        (store as any).loadMobileWebStatus = async () => {};
+        (store as any).checkVersion = async () => {};
+
+        await store.bootstrap();
+
+        assertEqual(
+          JSON.stringify(store.getOwnedTabIds("filesystem")),
+          JSON.stringify(["term-a"]),
+          "detached bootstrap should restore file-capable terminal visibility for filesystem panels",
+        );
+      } finally {
+        (WINDOW_CONTEXT as any).role = originalContext.role;
+        (WINDOW_CONTEXT as any).detachedStateToken =
+          originalContext.detachedStateToken;
+        (WINDOW_CONTEXT as any).sourceClientId =
+          originalContext.sourceClientId;
+        (globalThis as any).window = originalWindow;
+      }
+    },
+  );
+
+  await runCase(
     "canClosePanel blocks dirty file editor when user cancels discard",
     async () => {
       const originalWindow = (globalThis as any).window;
@@ -760,6 +845,45 @@ const run = async (): Promise<void> => {
   );
 
   await runCase(
+    "fileSystemTabs inventory excludes terminal-only connection types",
+    async () => {
+      const store = new AppStore();
+      (store.layout as any).syncPanelBindings = () => {};
+      store.reconcileTerminalTabs({
+        terminals: [
+          {
+            id: "local-1",
+            title: "Local",
+            type: "local",
+            cols: 80,
+            rows: 24,
+            runtimeState: "ready",
+          },
+          {
+            id: "serial-1",
+            title: "Serial",
+            type: "serial",
+            cols: 80,
+            rows: 24,
+            runtimeState: "ready",
+          },
+        ],
+      } as any);
+
+      assertEqual(
+        JSON.stringify(store.fileSystemTabs.map((tab) => tab.id)),
+        JSON.stringify(["local-1"]),
+        "filesystem inventory should include only file-capable terminal tabs",
+      );
+      assertEqual(
+        JSON.stringify(store.getOwnedTabIds("filesystem")),
+        JSON.stringify(["local-1"]),
+        "filesystem owner ids should exclude terminal-only connection types",
+      );
+    },
+  );
+
+  await runCase(
     "detached getOwnedTabIds filters terminal/filesystem to detached-visible tab set",
     async () => {
       const store = new AppStore();
@@ -785,6 +909,7 @@ const run = async (): Promise<void> => {
             cols: 80,
             rows: 24,
           },
+          capabilities: { supportsFilesystem: true },
           connectionRef: { type: "local" },
           runtimeState: "ready",
         },
@@ -798,6 +923,7 @@ const run = async (): Promise<void> => {
             cols: 80,
             rows: 24,
           },
+          capabilities: { supportsFilesystem: true },
           connectionRef: { type: "local" },
           runtimeState: "ready",
         },
@@ -813,6 +939,107 @@ const run = async (): Promise<void> => {
         JSON.stringify(store.getOwnedTabIds("filesystem")),
         JSON.stringify(["term-b"]),
         "detached filesystem owner tabs should be constrained to detached-visible set",
+      );
+    },
+  );
+
+  await runCase(
+    "detached terminal-only tabs do not mirror into filesystem visibility",
+    async () => {
+      const store = new AppStore();
+      (store as any).windowRole = "detached";
+      (store as any).detachedVisibleTabIdsByKind = {
+        chat: new Set<string>(),
+        terminal: new Set<string>(["term-a"]),
+        filesystem: new Set<string>(["term-a"]),
+      };
+      store.terminalTabs = [
+        {
+          id: "term-a",
+          title: "Local A",
+          config: {
+            type: "local",
+            id: "term-a",
+            title: "Local A",
+            cols: 80,
+            rows: 24,
+          },
+          capabilities: { supportsFilesystem: true },
+          connectionRef: { type: "local" },
+          runtimeState: "ready",
+        },
+        {
+          id: "term-b",
+          title: "Local B",
+          config: {
+            type: "serial",
+            id: "term-b",
+            title: "Local B",
+            cols: 80,
+            rows: 24,
+          },
+          capabilities: { supportsFilesystem: false },
+          connectionRef: { type: "serial", entryId: "serial-entry" },
+          runtimeState: "ready",
+        },
+      ] as any;
+      store.terminalTabsHydrated = true;
+      let syncCallCount = 0;
+      (store.layout as any).syncPanelBindings = () => {
+        syncCallCount += 1;
+      };
+
+      store.unsuppressTabs("terminal", ["term-b"]);
+      assertEqual(
+        JSON.stringify(
+          Array.from(
+            ((store as any).detachedVisibleTabIdsByKind.filesystem as Set<string>).values(),
+          ),
+        ),
+        JSON.stringify(["term-a"]),
+        "terminal-only tabs should not be mirrored into detached filesystem visibility",
+      );
+      assertEqual(syncCallCount, 1, "unsuppress should still trigger a single layout sync");
+    },
+  );
+
+  await runCase(
+    "detached filesystem visibility still restores known file-capable tabs from persisted layout",
+    async () => {
+      const store = new AppStore();
+      (store as any).windowRole = "detached";
+      store.terminalTabs = [
+        {
+          id: "term-a",
+          title: "Local A",
+          config: {
+            type: "local",
+            id: "term-a",
+            title: "Local A",
+            cols: 80,
+            rows: 24,
+          },
+          capabilities: { supportsFilesystem: true },
+          connectionRef: { type: "local" },
+          runtimeState: "ready",
+        },
+      ];
+      const visible = (store as any).collectDetachedVisibleTabIdsByKind({
+        schemaVersion: 2,
+        root: {
+          type: "panel",
+          id: "node-fs",
+          panel: { id: "panel-fs", kind: "filesystem" },
+        },
+        panelTabs: {
+          "panel-fs": { tabIds: ["term-a"], activeTabId: "term-a" },
+        },
+      });
+
+      assertEqual(
+        JSON.stringify(Array.from(visible.filesystem.values())),
+        JSON.stringify(["term-a"]),
+        "filesystem panels in detached layouts should preserve file-capable tab visibility",
       );
     },
   );
@@ -838,6 +1065,7 @@ const run = async (): Promise<void> => {
             cols: 80,
             rows: 24,
           },
+          capabilities: { supportsFilesystem: true },
           connectionRef: { type: "local" },
           runtimeState: "ready",
         },
@@ -851,6 +1079,7 @@ const run = async (): Promise<void> => {
             cols: 80,
             rows: 24,
           },
+          capabilities: { supportsFilesystem: true },
           connectionRef: { type: "local" },
           runtimeState: "ready",
         },
@@ -1132,6 +1361,7 @@ const run = async (): Promise<void> => {
             cols: 80,
             rows: 24,
           },
+          capabilities: { supportsFilesystem: true },
           connectionRef: { type: "local" },
           runtimeState: "ready",
         },

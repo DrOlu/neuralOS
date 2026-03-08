@@ -1,3 +1,5 @@
+import type { TerminalConnectionCapabilities } from '@gyshell/shared'
+
 // ============ Settings Types ============
 export interface ModelDefinition {
   /** Stable id used by profiles */
@@ -183,7 +185,7 @@ export interface BackendSettings {
 }
 
 // ============ Terminal Types ============
-export type ConnectionType = 'local' | 'ssh'
+export type ConnectionType = string
 
 export interface BaseConnectionConfig {
   type: ConnectionType
@@ -218,7 +220,22 @@ export interface SSHConnectionConfig extends BaseConnectionConfig {
   jumpHost?: SSHConnectionConfig
 }
 
-export type TerminalConfig = LocalConnectionConfig | SSHConnectionConfig
+export interface GenericConnectionConfig extends BaseConnectionConfig {
+  [key: string]: unknown
+}
+
+export type TerminalConfig =
+  | LocalConnectionConfig
+  | SSHConnectionConfig
+  | GenericConnectionConfig
+
+export const isLocalConnectionConfig = (
+  config: { type: string },
+): config is LocalConnectionConfig => config.type === 'local'
+
+export const isSshConnectionConfig = (
+  config: { type: string },
+): config is SSHConnectionConfig => config.type === 'ssh'
 
 export interface TerminalTab {
   id: string
@@ -227,6 +244,7 @@ export interface TerminalTab {
   cols: number
   rows: number
   type: ConnectionType
+  capabilities: TerminalConnectionCapabilities
   isInitializing?: boolean // Silence mode flag
   runtimeState?: 'initializing' | 'ready' | 'exited'
   lastExitCode?: number
@@ -380,37 +398,60 @@ export interface AgentEvent {
 }
 
 // ============ Terminal Backend Interface ============
-export interface TerminalBackend {
+export interface TerminalSessionBackend {
   /**
    * Spawns a connection.
    * @returns The ptyId or session identifier
    */
   spawn(config: TerminalConfig): Promise<string>
-  
+
   /**
    * Write data to the backend (pty/ssh channel).
    */
   write(ptyId: string, data: string): void
-  
+
   /**
    * Resize the terminal session.
    */
   resize(ptyId: string, cols: number, rows: number): void
-  
+
   /**
    * Kill/Disconnect the session.
    */
   kill(ptyId: string): void
-  
+
   /**
    * Subscribe to data events from the backend.
    */
   onData(ptyId: string, callback: (data: string) => void): void
-  
+
   /**
    * Subscribe to exit events.
    */
   onExit(ptyId: string, callback: (code: number) => void): void
+
+  /**
+   * Get current working directory for the session.
+   */
+  getCwd(ptyId: string): string | undefined
+
+  /**
+   * Get the home directory for the session.
+   */
+  getHomeDir(ptyId: string): Promise<string | undefined>
+
+  /**
+   * Get the remote OS type if known.
+   */
+  getRemoteOs(ptyId: string): 'unix' | 'windows' | undefined
+
+  /**
+   * Get detailed system information.
+   */
+  getSystemInfo(ptyId: string): Promise<TerminalSystemInfo | undefined>
+}
+
+export interface TerminalFileSystemBackend {
 
   /**
    * Read a file from the backend connection.
@@ -471,26 +512,6 @@ export interface TerminalBackend {
   ): Promise<{ totalBytes: number }>
 
   /**
-   * Get current working directory for the session.
-   */
-  getCwd(ptyId: string): string | undefined
-
-  /**
-   * Get the home directory for the session.
-   */
-  getHomeDir(ptyId: string): Promise<string | undefined>
-
-  /**
-   * Get the remote OS type if known.
-   */
-  getRemoteOs(ptyId: string): 'unix' | 'windows' | undefined
-
-  /**
-   * Get detailed system information.
-   */
-  getSystemInfo(ptyId: string): Promise<TerminalSystemInfo | undefined>
-
-  /**
    * Stat a file through the backend connection.
    */
   statFile(ptyId: string, filePath: string): Promise<FileStatInfo>
@@ -530,3 +551,21 @@ export interface TerminalBackend {
    * This might be internal to the implementation but good to have in mind.
    */
 }
+
+export type TerminalBackend = TerminalSessionBackend &
+  Partial<TerminalFileSystemBackend>
+
+export const isTerminalFileSystemBackend = (
+  backend: TerminalBackend,
+): backend is TerminalSessionBackend & TerminalFileSystemBackend =>
+  typeof backend.readFile === 'function' &&
+  typeof backend.writeFile === 'function' &&
+  typeof backend.readFileChunk === 'function' &&
+  typeof backend.writeFileChunk === 'function' &&
+  typeof backend.statFile === 'function' &&
+  typeof backend.listDirectory === 'function' &&
+  typeof backend.createDirectory === 'function' &&
+  typeof backend.createFile === 'function' &&
+  typeof backend.deletePath === 'function' &&
+  typeof backend.renamePath === 'function' &&
+  typeof backend.writeFileBytes === 'function'

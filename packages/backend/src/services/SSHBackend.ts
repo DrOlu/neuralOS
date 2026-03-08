@@ -4,7 +4,14 @@ import * as net from 'net'
 import { dirname } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { SocksClient } from 'socks'
-import type { TerminalBackend, TerminalConfig, SSHConnectionConfig, FileSystemEntry, FileStatInfo } from '../types'
+import {
+  isSshConnectionConfig,
+  type TerminalBackend,
+  type TerminalConfig,
+  type SSHConnectionConfig,
+  type FileSystemEntry,
+  type FileStatInfo,
+} from '../types'
 import {
   DEFAULT_SFTP_TRANSFER_PROFILES,
   SftpAdaptiveTransferTuner,
@@ -459,10 +466,10 @@ Write-Output "__GYSHELL_READY__"
   }
 
   async spawn(config: TerminalConfig): Promise<string> {
-    if (config.type !== 'ssh') {
+    if (!isSshConnectionConfig(config)) {
       throw new Error('SSHBackend only supports ssh connections')
     }
-    const sshConfig = config as SSHConnectionConfig
+    const sshConfig: SSHConnectionConfig = config
 
     const client = new ssh2.Client()
     

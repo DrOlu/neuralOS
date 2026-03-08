@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import type { TerminalConfig } from '../../types'
+import { normalizePersistedTerminalConfig } from './terminalConnectionSupport'
 
 export interface PersistedTerminalRecord {
   id: string
@@ -18,66 +19,9 @@ const CURRENT_SCHEMA_VERSION = 1 as const
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null
 
-const asPositiveInt = (value: unknown, fallback: number): number => {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
-    return fallback
-  }
-  return Math.max(1, Math.floor(value))
-}
-
-const normalizeTerminalConfig = (raw: unknown): TerminalConfig | null => {
-  if (!isObject(raw)) return null
-  const type = raw.type === 'ssh' ? 'ssh' : raw.type === 'local' ? 'local' : null
-  if (!type) return null
-
-  const id = typeof raw.id === 'string' ? raw.id.trim() : ''
-  const title = typeof raw.title === 'string' ? raw.title.trim() : ''
-  if (!id || !title) return null
-
-  const cols = asPositiveInt(raw.cols, 80)
-  const rows = asPositiveInt(raw.rows, 24)
-
-  if (type === 'local') {
-    return {
-      type: 'local',
-      id,
-      title,
-      cols,
-      rows,
-      ...(typeof raw.cwd === 'string' && raw.cwd.trim() ? { cwd: raw.cwd } : {}),
-      ...(typeof raw.shell === 'string' && raw.shell.trim() ? { shell: raw.shell } : {})
-    }
-  }
-
-  if (typeof raw.host !== 'string' || !raw.host.trim()) return null
-  const port = asPositiveInt(raw.port, 22)
-  if (typeof raw.username !== 'string' || !raw.username.trim()) return null
-  const authMethod = raw.authMethod === 'privateKey' ? 'privateKey' : raw.authMethod === 'password' ? 'password' : null
-  if (!authMethod) return null
-
-  return {
-    type: 'ssh',
-    id,
-    title,
-    cols,
-    rows,
-    host: raw.host,
-    port,
-    username: raw.username,
-    authMethod,
-    ...(typeof raw.password === 'string' ? { password: raw.password } : {}),
-    ...(typeof raw.privateKey === 'string' ? { privateKey: raw.privateKey } : {}),
-    ...(typeof raw.privateKeyPath === 'string' ? { privateKeyPath: raw.privateKeyPath } : {}),
-    ...(typeof raw.passphrase === 'string' ? { passphrase: raw.passphrase } : {}),
-    ...(isObject(raw.proxy) ? { proxy: raw.proxy as any } : {}),
-    ...(Array.isArray(raw.tunnels) ? { tunnels: raw.tunnels as any } : {}),
-    ...(isObject(raw.jumpHost) ? { jumpHost: raw.jumpHost as any } : {})
-  }
-}
-
 const normalizeRecord = (raw: unknown): PersistedTerminalRecord | null => {
   if (!isObject(raw)) return null
-  const config = normalizeTerminalConfig(raw.config)
+  const config = normalizePersistedTerminalConfig(raw.config)
   if (!config) return null
   const id = typeof raw.id === 'string' ? raw.id.trim() : config.id
   if (!id) return null

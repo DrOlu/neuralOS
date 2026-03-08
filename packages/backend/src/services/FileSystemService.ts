@@ -385,8 +385,8 @@ export class FileSystemService {
   private async copyTransferNode(params: {
     sourceTerminalId: string
     targetTerminalId: string
-    sourceType: 'local' | 'ssh'
-    targetType: 'local' | 'ssh'
+    sourceType: string
+    targetType: string
     targetOs: 'unix' | 'windows' | undefined
     chunkSize: number
     node: TransferNode
@@ -484,10 +484,10 @@ export class FileSystemService {
 
   private async copyFileBetweenTerminals(params: {
     sourceTerminalId: string
-    sourceType: 'local' | 'ssh'
+    sourceType: string
     sourcePath: string
     targetTerminalId: string
-    targetType: 'local' | 'ssh'
+    targetType: string
     targetPath: string
     chunkSize: number
     fileSize: number

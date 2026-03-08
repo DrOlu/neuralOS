@@ -4,6 +4,7 @@ import path from 'node:path'
 import type { FileStatInfo, FileSystemEntry, TerminalBackend, TerminalConfig, TerminalSystemInfo } from '../../types'
 import { TerminalService } from '../TerminalService'
 import { TerminalStateStore } from './TerminalStateStore'
+import { createAutoTerminalConfig } from './terminalConnectionSupport'
 
 const assertCondition = (condition: unknown, message: string): void => {
   if (!condition) {
@@ -14,6 +15,25 @@ const assertCondition = (condition: unknown, message: string): void => {
 const assertEqual = <T>(actual: T, expected: T, message: string): void => {
   if (actual !== expected) {
     throw new Error(`${message}. expected=${String(expected)} actual=${String(actual)}`)
+  }
+}
+
+const assertRejects = async (
+  action: Promise<unknown>,
+  expectedMessage: RegExp,
+  message: string,
+): Promise<void> => {
+  try {
+    await action
+    throw new Error(`${message}. expected promise rejection`)
+  } catch (error) {
+    const actualMessage =
+      error instanceof Error ? error.message : String(error)
+    if (!expectedMessage.test(actualMessage)) {
+      throw new Error(
+        `${message}. expected=${String(expectedMessage)} actual=${actualMessage}`
+      )
+    }
   }
 }
 
@@ -156,6 +176,67 @@ class FakeTerminalBackend implements TerminalBackend {
 
   async statFile(_ptyId: string, _filePath: string): Promise<FileStatInfo> {
     return { exists: false, isDirectory: false }
+  }
+}
+
+class FakeTerminalOnlyBackend implements TerminalBackend {
+  private readonly sessions = new Map<string, FakeSession>()
+
+  async spawn(config: TerminalConfig): Promise<string> {
+    const id = `pty-${config.id}`
+    this.sessions.set(id, {
+      id,
+      cwd: '/tmp',
+      dataCallbacks: [],
+      exitCallbacks: []
+    })
+    return id
+  }
+
+  write(_ptyId: string, _data: string): void {}
+
+  resize(_ptyId: string, _cols: number, _rows: number): void {}
+
+  kill(ptyId: string): void {
+    const session = this.sessions.get(ptyId)
+    if (!session) return
+    session.exitCallbacks.forEach((callback) => callback(0))
+    this.sessions.delete(ptyId)
+  }
+
+  onData(ptyId: string, callback: (data: string) => void): void {
+    const session = this.sessions.get(ptyId)
+    if (!session) return
+    session.dataCallbacks.push(callback)
+  }
+
+  onExit(ptyId: string, callback: (code: number) => void): void {
+    const session = this.sessions.get(ptyId)
+    if (!session) return
+    session.exitCallbacks.push(callback)
+  }
+
+  getCwd(_ptyId: string): string | undefined {
+    return '/tmp'
+  }
+
+  async getHomeDir(_ptyId: string): Promise<string | undefined> {
+    return '/tmp'
+  }
+
+  getRemoteOs(_ptyId: string): 'unix' | 'windows' | undefined {
+    return 'unix'
+  }
+
+  async getSystemInfo(_ptyId: string): Promise<TerminalSystemInfo | undefined> {
+    return {
+      os: 'unix',
+      platform: 'linux',
+      release: 'test',
+      arch: 'x64',
+      hostname: 'test',
+      isRemote: true
+    }
   }
 }
 
@@ -382,6 +463,142 @@ const run = async (): Promise<void> => {
         (sshRecord?.config as any).authMethod,
         'password',
         'ssh auth method should not be lost on idempotent updates'
+      )
+    })
+
+    await runCase('terminal service rejects filesystem APIs for terminal-only connection types', async () => {
+      const backend = new FakeTerminalBackend()
+      const service = createService(stateFilePath, backend)
+      ;(service as any).backends.set('serial', new FakeTerminalOnlyBackend())
+
+      await service.createTerminal({
+        type: 'serial',
+        id: 'serial-a',
+        title: 'Serial A',
+        cols: 80,
+        rows: 24
+      } as any)
+
+      const created = service
+        .getDisplayTerminals()
+        .find((terminal) => terminal.id === 'serial-a')
+      assertCondition(!!created, 'serial terminal should be created successfully')
+      assertEqual(
+        created?.capabilities.supportsFilesystem,
+        false,
+        'terminal-only connection types should be marked as not file-capable'
+      )
+      assertEqual(
+        service.getFileSystemIdentity('serial-a'),
+        null,
+        'terminal-only connection types should not expose filesystem identity'
+      )
+      await assertRejects(
+        service.listDirectory('serial-a'),
+        /does not support filesystem operations/i,
+        'filesystem requests should fail with explicit capability error'
+      )
+    })
+
+    await runCase('createAutoTerminalConfig preserves explicit id and type for terminal remounts', async () => {
+      const backend = new FakeTerminalBackend()
+      const service = createService(stateFilePath, backend)
+      ;(service as any).backends.set('serial', new FakeTerminalOnlyBackend())
+
+      await service.createTerminal({
+        type: 'serial',
+        id: 'serial-remount-a',
+        title: 'Serial Remount A',
+        cols: 80,
+        rows: 24
+      } as any)
+
+      const snapshot = service.getDisplayTerminals().map((terminal) => ({
+        id: terminal.id,
+        title: terminal.title,
+        type: terminal.type
+      }))
+      const normalized = createAutoTerminalConfig(snapshot, {
+        type: 'serial',
+        id: 'serial-remount-a',
+        title: 'Serial Remount A',
+        cols: 120,
+        rows: 40
+      })
+
+      assertEqual(
+        normalized.type,
+        'serial',
+        'explicit terminal-only type should survive auto-config normalization'
+      )
+      assertEqual(
+        normalized.id,
+        'serial-remount-a',
+        'explicit terminal id should be preserved for idempotent remounts'
+      )
+
+      await service.createTerminal(normalized as any)
+
+      const terminals = service.getDisplayTerminals()
+      const remounted = terminals.find((terminal) => terminal.id === 'serial-remount-a')
+      assertEqual(
+        terminals.length,
+        1,
+        'idempotent remount should not create a duplicate terminal session'
+      )
+      assertEqual(
+        remounted?.cols,
+        120,
+        'idempotent remount should still update terminal dimensions'
+      )
+    })
+
+    await runCase('terminal-only configs survive persistence and restore', async () => {
+      const backend1 = new FakeTerminalBackend()
+      const service1 = createService(stateFilePath, backend1)
+      ;(service1 as any).backends.set('serial', new FakeTerminalOnlyBackend())
+
+      await service1.createTerminal({
+        type: 'serial',
+        id: 'serial-restore-a',
+        title: 'Serial Restore A',
+        cols: 96,
+        rows: 28,
+        devicePath: '/dev/tty.usbserial-A',
+        baudRate: 115200
+      } as any)
+      service1.flushPersistedState()
+
+      const store = new TerminalStateStore(stateFilePath)
+      const snapshot = store.load()
+      const serialRecord = snapshot.find((item) => item.id === 'serial-restore-a')
+      assertCondition(
+        !!serialRecord,
+        'terminal-only config should remain in persisted terminal state'
+      )
+      assertEqual(
+        serialRecord?.config.type,
+        'serial',
+        'persisted terminal-only config should keep its original type'
+      )
+      assertEqual(
+        (serialRecord?.config as any).devicePath,
+        '/dev/tty.usbserial-A',
+        'persisted terminal-only config should preserve backend-specific fields'
+      )
+
+      const backend2 = new FakeTerminalBackend()
+      const service2 = createService(stateFilePath, backend2)
+      ;(service2 as any).backends.set('serial', new FakeTerminalOnlyBackend())
+
+      const restore = await service2.restorePersistedTerminals()
+      assertCondition(
+        restore.restored.includes('serial-restore-a'),
+        'terminal-only config should restore when its backend is registered'
+      )
+      assertCondition(
+        service2.getDisplayTerminals().some((terminal) => terminal.id === 'serial-restore-a'),
+        'restored terminal-only tab should exist in display inventory after restart'
       )
     })
   } finally {

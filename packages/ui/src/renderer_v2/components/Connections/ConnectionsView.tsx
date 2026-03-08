@@ -7,12 +7,19 @@ import './connections.scss'
 import { ConfirmDialog } from '../Common/ConfirmDialog'
 
 import { Select } from '../../platform/Select'
-
-export type ConnectionsSection = 'ssh' | 'proxies' | 'tunnels'
+import {
+  CONNECTION_MANAGER_SECTIONS,
+  getConnectionManagerSectionDefinition,
+  type ConnectionsSection,
+} from './connectionManagerRegistry'
 
 export const ConnectionsView: React.FC<{ store: AppStore }> = observer(({ store }) => {
   const t = store.i18n.t
   const [section, setSection] = React.useState<ConnectionsSection>('ssh')
+  const sectionDefinition = React.useMemo(
+    () => getConnectionManagerSectionDefinition(section),
+    [section],
+  )
   const ssh = store.settings?.connections?.ssh ?? []
 
   const proxies = store.settings?.connections?.proxies ?? []
@@ -29,49 +36,10 @@ export const ConnectionsView: React.FC<{ store: AppStore }> = observer(({ store 
     setDraft(null)
   }, [section])
 
-  function startNewSsh() {
-    const id = `ssh-${crypto.randomUUID?.() ?? Math.random().toString(16).slice(2)}`
-    setEditingId(id)
-    setDraft({
-      id,
-      name: '',
-      host: '',
-      port: 22,
-      username: '',
-      authMethod: 'password',
-      password: '',
-      privateKey: '',
-      privateKeyPath: '',
-      passphrase: ''
-    })
-  }
-
-  function startNewProxy() {
-    const id = `proxy-${crypto.randomUUID?.() ?? Date.now()}`
-    setEditingId(id)
-    setDraft({
-      id,
-      name: '',
-      type: 'socks5',
-      host: '',
-      port: 1080,
-      username: '',
-      password: ''
-    })
-  }
-
-  function startNewTunnel() {
-    const id = `tunnel-${crypto.randomUUID?.() ?? Date.now()}`
-    setEditingId(id)
-    setDraft({
-      id,
-      name: '',
-      type: PortForwardType.Local,
-      host: '127.0.0.1',
-      port: 8080,
-      targetAddress: '127.0.0.1',
-      targetPort: 80
-    })
+  function startNewEntry() {
+    const nextDraft = sectionDefinition.createDraft()
+    setEditingId(nextDraft.id)
+    setDraft(nextDraft)
   }
 
   function startEdit(entry: any) {
@@ -81,31 +49,7 @@ export const ConnectionsView: React.FC<{ store: AppStore }> = observer(({ store 
 
   async function saveDraft() {
     if (!draft) return
-    if (section === 'ssh') {
-      const next = {
-        ...draft,
-        port: Number(draft.port) || 22,
-        authMethod: draft.authMethod === 'privateKey' ? 'privateKey' : 'password',
-        jumpHost: draft.jumpHost ? {
-          ...draft.jumpHost,
-          port: Number(draft.jumpHost.port) || 22
-        } : undefined
-      }
-      await store.saveSshConnection(next)
-    } else if (section === 'proxies') {
-      const next = {
-        ...draft,
-        port: Number(draft.port) || 1080
-      }
-      await store.saveProxy(next)
-    } else if (section === 'tunnels') {
-      const next = {
-        ...draft,
-        port: Number(draft.port) || 8080,
-        targetPort: draft.type !== PortForwardType.Dynamic ? Number(draft.targetPort) || 80 : undefined
-      }
-      await store.saveTunnel(next)
-    }
+    await sectionDefinition.saveDraft(store, draft)
   }
 
   async function deleteCurrent() {
@@ -126,9 +70,7 @@ export const ConnectionsView: React.FC<{ store: AppStore }> = observer(({ store 
         onConfirm={async () => {
           if (!deleteConfirm) return
           const { section: sec, id } = deleteConfirm
-          if (sec === 'ssh') await store.deleteSshConnection(id)
-          else if (sec === 'proxies') await store.deleteProxy(id)
-          else if (sec === 'tunnels') await store.deleteTunnel(id)
+          await getConnectionManagerSectionDefinition(sec).deleteEntry(store, id)
           setDeleteConfirm(null)
           setEditingId(null)
           setDraft(null)
@@ -140,39 +82,29 @@ export const ConnectionsView: React.FC<{ store: AppStore }> = observer(({ store 
         </button>
 
         <div className="connections-nav">
-          <div
-            className={section === 'ssh' ? 'connections-nav-item is-active' : 'connections-nav-item'}
-            onClick={() => setSection('ssh')}
-            role="button"
-            tabIndex={0}
-          >
-            <span className="icon">
-              <Server size={16} strokeWidth={2} />
-            </span>
-            <span>{t.connections.ssh}</span>
-          </div>
-          <div
-            className={section === 'proxies' ? 'connections-nav-item is-active' : 'connections-nav-item'}
-            onClick={() => setSection('proxies')}
-            role="button"
-            tabIndex={0}
-          >
-            <span className="icon">
-              <Shield size={16} strokeWidth={2} />
-            </span>
-            <span>{t.connections.proxy}</span>
-          </div>
-          <div
-            className={section === 'tunnels' ? 'connections-nav-item is-active' : 'connections-nav-item'}
-            onClick={() => setSection('tunnels')}
-            role="button"
-            tabIndex={0}
-          >
-            <span className="icon">
-              <Waypoints size={16} strokeWidth={2} />
-            </span>
-            <span>{t.connections.tunnels}</span>
-          </div>
+          {CONNECTION_MANAGER_SECTIONS.map((item) => {
+            const Icon = item.icon
+            const label =
+              item.labelKey === 'ssh'
+                ? t.connections.ssh
+                : item.labelKey === 'proxy'
+                  ? t.connections.proxy
+                  : t.connections.tunnels
+            return (
+              <div
+                key={item.id}
+                className={section === item.id ? 'connections-nav-item is-active' : 'connections-nav-item'}
+                onClick={() => setSection(item.id)}
+                role="button"
+                tabIndex={0}
+              >
+                <span className="icon">
+                  <Icon size={16} strokeWidth={2} />
+                </span>
+                <span>{label}</span>
+              </div>
+            )
+          })}
         </div>
       </div>
 
@@ -183,7 +115,7 @@ export const ConnectionsView: React.FC<{ store: AppStore }> = observer(({ store 
               <div className="connections-title">{t.connections.ssh}</div>
               <div className="connections-actions">
                 {/* Add new remote connection (as requested: + placed inside SSH panel) */}
-                <button className="icon-btn-sm" title={t.common.add} onClick={startNewSsh}>
+                <button className="icon-btn-sm" title={t.common.add} onClick={startNewEntry}>
                   <Plus size={16} strokeWidth={2} />
                 </button>
               </div>
@@ -429,7 +361,7 @@ export const ConnectionsView: React.FC<{ store: AppStore }> = observer(({ store 
             <div className="connections-header">
               <div className="connections-title">{t.connections.proxy}</div>
               <div className="connections-actions">
-                <button className="icon-btn-sm" title={t.common.add} onClick={startNewProxy}>
+                <button className="icon-btn-sm" title={t.common.add} onClick={startNewEntry}>
                   <Plus size={16} strokeWidth={2} />
                 </button>
               </div>
@@ -540,7 +472,7 @@ export const ConnectionsView: React.FC<{ store: AppStore }> = observer(({ store 
             <div className="connections-header">
               <div className="connections-title">{t.connections.tunnels}</div>
               <div className="connections-actions">
-                <button className="icon-btn-sm" title={t.common.add} onClick={startNewTunnel}>
+                <button className="icon-btn-sm" title={t.common.add} onClick={startNewEntry}>
                   <Plus size={16} strokeWidth={2} />
                 </button>
               </div>
@@ -665,5 +597,4 @@ export const ConnectionsView: React.FC<{ store: AppStore }> = observer(({ store 
     </div>
   )
 })
-
 

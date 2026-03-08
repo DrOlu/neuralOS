@@ -20,6 +20,7 @@ import { applyAppThemeFromTerminalScheme } from '../theme/appTheme'
 import { resolveTheme } from '../theme/themes'
 import { toXtermTheme } from '../theme/xtermTheme'
 import type { TerminalColorScheme } from '../theme/terminalColorSchemes'
+import type { TerminalConnectionCapabilities } from '@gyshell/shared'
 import {
   createImagePreviewDataUrl,
   readFileAsDataUrl,
@@ -42,6 +43,10 @@ import {
   type DetachedWindowState,
   type WindowingTerminalTabSnapshot,
 } from '../lib/windowing'
+import {
+  resolveTerminalConnectionCapabilities,
+  type TerminalConnectionRef,
+} from '../lib/terminalConnectionModel'
 
 const upsertById = <T extends { id: string }>(list: T[], entry: T): T[] => {
   const idx = list.findIndex((x) => x.id === entry.id)
@@ -55,15 +60,6 @@ const removeById = <T extends { id: string }>(list: T[], id: string): T[] =>
   list.filter((x) => x.id !== id)
 
 type WindowScopedTabKind = 'chat' | 'terminal' | 'filesystem';
-
-const resolveVisibilityLinkedTabKinds = (
-  kind: PanelKind,
-): WindowScopedTabKind[] =>
-  kind === 'chat'
-    ? ['chat']
-    : kind === 'terminal' || kind === 'filesystem'
-      ? ['terminal', 'filesystem']
-      : []
 
 const resolveSuppressionKinds = (kind: PanelKind): WindowScopedTabKind[] =>
   kind === 'chat'
@@ -115,7 +111,8 @@ export interface TerminalTabModel {
   id: string;
   title: string;
   config: TerminalConfig;
-  connectionRef?: { type: 'local' } | { type: 'ssh'; entryId: string };
+  capabilities: TerminalConnectionCapabilities;
+  connectionRef?: TerminalConnectionRef;
   runtimeState?: 'initializing' | 'ready' | 'exited';
   lastExitCode?: number;
 }
@@ -339,6 +336,38 @@ export class AppStore {
     return !this.isDetachedWindow
   }
 
+  private getTerminalTabById(tabId: string): TerminalTabModel | null {
+    return this.terminalTabs.find((tab) => tab.id === tabId) ?? null
+  }
+
+  private supportsFilesystemForTabId(tabId: string): boolean {
+    const terminalTab = this.getTerminalTabById(tabId)
+    if (!terminalTab) {
+      return false
+    }
+    return terminalTab.capabilities.supportsFilesystem
+  }
+
+  private getVisibilityLinkedKindsForTab(
+    kind: PanelKind,
+    tabId: string,
+  ): WindowScopedTabKind[] {
+    if (kind === 'chat') {
+      return ['chat']
+    }
+    if (kind === 'filesystem') {
+      return ['terminal', 'filesystem']
+    }
+    if (kind !== 'terminal') {
+      return []
+    }
+    const linkedKinds: WindowScopedTabKind[] = ['terminal']
+    if (this.supportsFilesystemForTabId(tabId)) {
+      linkedKinds.push('filesystem')
+    }
+    return linkedKinds
+  }
+
   getOwnedTabIds(kind: PanelKind): string[] {
     const filterByDetachedVisibility = (
       tabIds: string[],
@@ -405,17 +434,15 @@ export class AppStore {
       if (!panelKind) {
         return
       }
-      const targetKinds = resolveVisibilityLinkedTabKinds(panelKind)
-      if (targetKinds.length === 0) {
-        return
-      }
       const tabIds = Array.isArray(binding?.tabIds) ? binding.tabIds : []
       tabIds.forEach((tabId) => {
         const normalized = typeof tabId === 'string' ? tabId.trim() : ''
         if (!normalized) return
-        targetKinds.forEach((targetKind) => {
+        this.getVisibilityLinkedKindsForTab(panelKind, normalized).forEach(
+          (targetKind) => {
           sets[targetKind].add(normalized)
-        })
+          },
+        )
       })
     })
 
@@ -430,10 +457,6 @@ export class AppStore {
     if (!this.isDetachedWindow || !this.detachedVisibleTabIdsByKind) {
       return false
     }
-    const targetKinds = resolveVisibilityLinkedTabKinds(kind)
-    if (targetKinds.length === 0) {
-      return false
-    }
 
     const normalizedIds = tabIds
       .map((tabId) => String(tabId || '').trim())
@@ -443,10 +466,10 @@ export class AppStore {
     }
 
     let changed = false
-    targetKinds.forEach((targetKind) => {
-      const setRef = this.detachedVisibleTabIdsByKind?.[targetKind]
-      if (!setRef) return
-      normalizedIds.forEach((tabId) => {
+    normalizedIds.forEach((tabId) => {
+      this.getVisibilityLinkedKindsForTab(kind, tabId).forEach((targetKind) => {
+        const setRef = this.detachedVisibleTabIdsByKind?.[targetKind]
+        if (!setRef) return
         if (mode === 'add') {
           if (setRef.has(tabId)) return
           setRef.add(tabId)
@@ -497,6 +520,7 @@ export class AppStore {
       id: normalizedId,
       title: String(snapshot.title || '').trim() || normalizedId,
       config: snapshot.config,
+      capabilities: resolveTerminalConnectionCapabilities(snapshot.config),
       ...(snapshot.connectionRef
         ? { connectionRef: snapshot.connectionRef }
         : {}),
@@ -716,7 +740,9 @@ export class AppStore {
   }
 
   get fileSystemTabs(): TerminalTabModel[] {
-    return this.terminalTabs
+    return this.terminalTabs.filter(
+      (tab) => tab.capabilities.supportsFilesystem,
+    )
   }
 
   private collectPersistedChatInventoryState(
@@ -852,6 +878,9 @@ export class AppStore {
           title: item.title,
           runtimeState: item.runtimeState,
           lastExitCode: item.lastExitCode,
+          capabilities: resolveTerminalConnectionCapabilities({
+            type: item.type,
+          }),
           config: {
             ...existing.config,
             title: item.title,
@@ -864,6 +893,9 @@ export class AppStore {
         id: item.id,
         title: item.title,
         config: this.toTerminalConfig(item),
+        capabilities: resolveTerminalConnectionCapabilities({
+          type: item.type,
+        }),
         connectionRef: item.type === 'local' ? { type: 'local' } : undefined,
         runtimeState: item.runtimeState,
         lastExitCode: item.lastExitCode,
@@ -1748,6 +1780,13 @@ export class AppStore {
       if (terminalSnapshot.terminals.length > 0) {
         runInAction(() => {
           this.reconcileTerminalTabs(terminalSnapshot)
+          if (this.isDetachedWindow && detachedWindowState?.layoutTree) {
+            this.detachedVisibleTabIdsByKind =
+              this.collectDetachedVisibleTabIdsByKind(
+                detachedWindowState.layoutTree,
+              )
+            this.layout.syncPanelBindings()
+          }
         })
       } else {
         runInAction(() => {
@@ -1818,6 +1857,7 @@ export class AppStore {
       id,
       title,
       config: cfg,
+      capabilities: resolveTerminalConnectionCapabilities(cfg),
       connectionRef: { type: 'local' },
       runtimeState: 'initializing',
     }
@@ -1885,6 +1925,7 @@ export class AppStore {
       id,
       title,
       config: cfg,
+      capabilities: resolveTerminalConnectionCapabilities(cfg),
       connectionRef: { type: 'ssh', entryId },
       runtimeState: 'initializing',
     }

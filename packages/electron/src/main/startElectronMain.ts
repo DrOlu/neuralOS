@@ -33,6 +33,7 @@ import {
   buildSkillStatusSummary
 } from '../../../backend/src/services/Gateway/toolingSummary'
 import { TerminalStateStore } from '../../../backend/src/services/terminal/TerminalStateStore'
+import { createAutoTerminalConfig } from '../../../backend/src/services/terminal/terminalConnectionSupport'
 import { MobileWebServerService } from '../services/MobileWebServerService'
 
 let mainWindow: BrowserWindow | null = null
@@ -61,49 +62,6 @@ interface CreateWindowOptions {
   role?: AppWindowRole
   detachedStateToken?: string
   sourceClientId?: string
-}
-
-function createAutoTerminalConfig(
-  terminals: Array<{ id: string; title: string }>,
-  partial: Record<string, any> = {}
-): Record<string, any> {
-  const requestedType = partial.type === 'ssh' ? 'ssh' : 'local'
-  const ids = new Set(terminals.map((terminal) => terminal.id))
-  const localCount = terminals.filter((terminal) => terminal.id.startsWith('local-') || terminal.id === 'local-main').length
-  const sshCount = terminals.filter((terminal) => terminal.id.startsWith('ssh-')).length
-
-  const nextTerminalId = (() => {
-    if (typeof partial.id === 'string' && partial.id.trim().length > 0 && !ids.has(partial.id.trim())) {
-      return partial.id.trim()
-    }
-    const prefix = requestedType === 'ssh' ? 'ssh' : 'local'
-    const base = requestedType === 'ssh' ? sshCount + 1 : Math.max(2, localCount + 1)
-    let index = base
-    let candidate = `${prefix}-${index}`
-    while (ids.has(candidate)) {
-      index += 1
-      candidate = `${prefix}-${index}`
-    }
-    return candidate
-  })()
-
-  const cols = Number.isInteger(partial.cols) && partial.cols > 0 ? Number(partial.cols) : 120
-  const rows = Number.isInteger(partial.rows) && partial.rows > 0 ? Number(partial.rows) : 32
-  const title =
-    typeof partial.title === 'string' && partial.title.trim().length > 0
-      ? partial.title.trim()
-      : requestedType === 'ssh'
-        ? `SSH (${sshCount + 1})`
-        : `Local (${localCount + 1})`
-
-  return {
-    ...partial,
-    type: requestedType,
-    id: nextTerminalId,
-    title,
-    cols,
-    rows
-  }
 }
 
 function createWindow(options?: CreateWindowOptions): BrowserWindow {

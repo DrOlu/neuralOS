@@ -5,6 +5,7 @@ import path from 'path'
 import os from 'os'
 import type {
   TerminalBackend,
+  TerminalFileSystemBackend,
   TerminalConfig,
   TerminalTab,
   CommandResult,
@@ -13,11 +14,18 @@ import type {
   FileSystemEntry,
   CommandTask
 } from '../types'
+import {
+  isSshConnectionConfig,
+  isTerminalFileSystemBackend,
+} from '../types'
 import { NodePtyBackend } from './NodePtyBackend'
 import { SSHBackend } from './SSHBackend'
 import { escapeShellPathList } from './ShellUtility'
 import { TerminalStateStore, type PersistedTerminalRecord } from './terminal/TerminalStateStore'
 import { v4 as uuidv4 } from 'uuid'
+import {
+  resolveTerminalConnectionCapabilities,
+} from './terminal/terminalConnectionSupport'
 
 const MAX_BUFFER_SIZE = 100000 // 100KB
 const SCROLLBACK_SIZE = 5000 // Keep up to 5000 lines in virtual terminal
@@ -132,6 +140,18 @@ export class TerminalService {
     const backend = this.backends.get(type)
     if (!backend) {
       throw new Error(`No backend found for connection type: ${type}`)
+    }
+    return backend
+  }
+
+  private getFileSystemBackend(
+    terminal: TerminalTab,
+  ): TerminalFileSystemBackend {
+    const backend = this.getBackend(terminal.type)
+    if (!isTerminalFileSystemBackend(backend)) {
+      throw new Error(
+        `Connection type ${terminal.type} does not support filesystem operations.`,
+      )
     }
     return backend
   }
@@ -270,6 +290,7 @@ export class TerminalService {
       existing.rows = mergedConfig.rows
       // Keep title updated (required)
       existing.title = mergedConfig.title
+      existing.capabilities = resolveTerminalConnectionCapabilities(mergedConfig)
       
       const headless = this.headlessPtys.get(config.id)
       if (headless) {
@@ -292,6 +313,7 @@ export class TerminalService {
       cols: config.cols,
       rows: config.rows,
       type: config.type,
+      capabilities: resolveTerminalConnectionCapabilities(config),
       isInitializing: config.type === 'ssh' || (config.type === 'local' && os.platform() === 'win32'), // Enable silence mode for SSH and local Windows
       runtimeState: config.type === 'ssh' || (config.type === 'local' && os.platform() === 'win32') ? 'initializing' : 'ready'
     }
@@ -645,11 +667,14 @@ export class TerminalService {
 
   getFileSystemIdentity(terminalId: string): string | null {
     const terminal = this.getTerminalOrThrow(terminalId)
+    if (!terminal.capabilities.supportsFilesystem) {
+      return null
+    }
     if (terminal.type === 'local') {
       return 'local://default'
     }
     const config = this.terminalConfigs.get(terminalId)
-    if (!config || config.type !== 'ssh') {
+    if (!config || !isSshConnectionConfig(config)) {
       return null
     }
     const host = String(config.host || '').trim().toLowerCase()
@@ -677,7 +702,7 @@ export class TerminalService {
   async readFile(terminalId: string, filePath: string): Promise<Buffer> {
     const terminal = this.getTerminalOrThrow(terminalId)
     const resolvedPath = await this.resolvePath(terminalId, filePath)
-    const backend = this.getBackend(terminal.type)
+    const backend = this.getFileSystemBackend(terminal)
     return backend.readFile(terminal.ptyId, resolvedPath)
   }
 
@@ -690,14 +715,14 @@ export class TerminalService {
   ): Promise<{ chunk: Buffer; bytesRead: number; totalSize: number; nextOffset: number; eof: boolean }> {
     const terminal = this.getTerminalOrThrow(terminalId)
     const resolvedPath = await this.resolvePath(terminalId, filePath)
-    const backend = this.getBackend(terminal.type)
+    const backend = this.getFileSystemBackend(terminal)
     return await backend.readFileChunk(terminal.ptyId, resolvedPath, offset, chunkSize, options)
   }
 
   async writeFile(terminalId: string, filePath: string, content: string): Promise<void> {
     const terminal = this.getTerminalOrThrow(terminalId)
     const resolvedPath = await this.resolvePath(terminalId, filePath)
-    const backend = this.getBackend(terminal.type)
+    const backend = this.getFileSystemBackend(terminal)
     return backend.writeFile(terminal.ptyId, resolvedPath, content)
   }
 
@@ -710,7 +735,7 @@ export class TerminalService {
   ): Promise<{ writtenBytes: number; nextOffset: number }> {
     const terminal = this.getTerminalOrThrow(terminalId)
     const resolvedPath = await this.resolvePath(terminalId, filePath)
-    const backend = this.getBackend(terminal.type)
+    const backend = this.getFileSystemBackend(terminal)
     return await backend.writeFileChunk(terminal.ptyId, resolvedPath, offset, content, options)
   }
 
@@ -725,7 +750,7 @@ export class TerminalService {
   ): Promise<{ totalBytes: number } | null> {
     const terminal = this.getTerminalOrThrow(terminalId)
     const resolvedPath = await this.resolvePath(terminalId, sourcePath)
-    const backend = this.getBackend(terminal.type)
+    const backend = this.getFileSystemBackend(terminal)
     if (typeof backend.downloadFileToLocalPath !== 'function') {
       return null
     }
@@ -743,7 +768,7 @@ export class TerminalService {
   ): Promise<{ totalBytes: number } | null> {
     const terminal = this.getTerminalOrThrow(terminalId)
     const resolvedTargetPath = await this.resolvePath(terminalId, targetPath)
-    const backend = this.getBackend(terminal.type)
+    const backend = this.getFileSystemBackend(terminal)
     if (typeof backend.uploadFileFromLocalPath !== 'function') {
       return null
     }
@@ -753,7 +778,7 @@ export class TerminalService {
   async statFile(terminalId: string, filePath: string): Promise<FileStatInfo> {
     const terminal = this.getTerminalOrThrow(terminalId)
     const resolvedPath = await this.resolvePath(terminalId, filePath)
-    const backend = this.getBackend(terminal.type)
+    const backend = this.getFileSystemBackend(terminal)
     return backend.statFile(terminal.ptyId, resolvedPath)
   }
 
@@ -762,7 +787,7 @@ export class TerminalService {
     dirPath?: string
   ): Promise<{ path: string; entries: FileSystemEntry[] }> {
     const terminal = this.getTerminalOrThrow(terminalId)
-    const backend = this.getBackend(terminal.type)
+    const backend = this.getFileSystemBackend(terminal)
     const hasExplicitPath = typeof dirPath === 'string' && dirPath.trim().length > 0
     const requestedPath = hasExplicitPath
       ? dirPath!.trim()
@@ -801,21 +826,21 @@ export class TerminalService {
   async createDirectory(terminalId: string, dirPath: string): Promise<void> {
     const terminal = this.getTerminalOrThrow(terminalId)
     const resolvedPath = await this.resolvePath(terminalId, dirPath)
-    const backend = this.getBackend(terminal.type)
+    const backend = this.getFileSystemBackend(terminal)
     await backend.createDirectory(terminal.ptyId, resolvedPath)
   }
 
   async createFile(terminalId: string, filePath: string): Promise<void> {
     const terminal = this.getTerminalOrThrow(terminalId)
     const resolvedPath = await this.resolvePath(terminalId, filePath)
-    const backend = this.getBackend(terminal.type)
+    const backend = this.getFileSystemBackend(terminal)
     await backend.createFile(terminal.ptyId, resolvedPath)
   }
 
   async deletePath(terminalId: string, targetPath: string, options?: { recursive?: boolean }): Promise<void> {
     const terminal = this.getTerminalOrThrow(terminalId)
     const resolvedPath = await this.resolvePath(terminalId, targetPath)
-    const backend = this.getBackend(terminal.type)
+    const backend = this.getFileSystemBackend(terminal)
     await backend.deletePath(terminal.ptyId, resolvedPath, options)
   }
 
@@ -823,14 +848,14 @@ export class TerminalService {
     const terminal = this.getTerminalOrThrow(terminalId)
     const resolvedSource = await this.resolvePath(terminalId, sourcePath)
     const resolvedTarget = await this.resolvePath(terminalId, targetPath)
-    const backend = this.getBackend(terminal.type)
+    const backend = this.getFileSystemBackend(terminal)
     await backend.renamePath(terminal.ptyId, resolvedSource, resolvedTarget)
   }
 
   async writeFileBytes(terminalId: string, filePath: string, content: Buffer): Promise<void> {
     const terminal = this.getTerminalOrThrow(terminalId)
     const resolvedPath = await this.resolvePath(terminalId, filePath)
-    const backend = this.getBackend(terminal.type)
+    const backend = this.getFileSystemBackend(terminal)
     await backend.writeFileBytes(terminal.ptyId, resolvedPath, content)
   }
 
