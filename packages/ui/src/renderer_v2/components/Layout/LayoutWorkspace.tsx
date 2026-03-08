@@ -1,4 +1,5 @@
 import React from 'react'
+import { toJS } from 'mobx'
 import { observer } from 'mobx-react-lite'
 import clsx from 'clsx'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
@@ -23,15 +24,20 @@ import { renderPanelByKind } from './panelRenderRegistry'
 import { PanelTypeRail } from './PanelTypeRail'
 import { getPanelKindAdapter } from '../../stores/panelKindAdapters'
 import {
+  WINDOW_CONTEXT,
+  clearDetachedWindowState,
   clearPanelDragState,
   createWindowingChannel,
+  normalizeWindowingTerminalTabSnapshot,
   readPanelDragState,
+  syncDetachedWindowState,
   stashDetachedWindowState,
   stashPanelDragState,
   type DetachedWindowState,
   type WindowingChannel,
   type WindowingDragStartMessage,
   type WindowingPanelDragPayload,
+  type WindowingTerminalTabSnapshot,
   type WindowingMessage
 } from '../../lib/windowing'
 import { normalizeFileEditorSnapshot, type FileEditorSnapshot } from '../../lib/fileEditorSnapshot'
@@ -77,6 +83,7 @@ interface PendingTerminalCloseRequest {
 
 interface CrossWindowTabDragPayload extends TabDragPayload {
   sourceClientId: string
+  terminalTab?: WindowingTerminalTabSnapshot
 }
 
 interface LocalPanelDragPayload {
@@ -134,11 +141,13 @@ const parseCrossWindowTabDragPayload = (
     if (kind !== 'chat' && kind !== 'terminal' && kind !== 'filesystem' && kind !== 'fileEditor') {
       return null
     }
+    const terminalTab = normalizeWindowingTerminalTabSnapshot((parsed as any).terminalTab)
     return {
       sourceClientId,
       tabId,
       sourcePanelId,
-      kind
+      kind,
+      ...(terminalTab ? { terminalTab } : {})
     }
   } catch {
     return null
@@ -182,6 +191,11 @@ const parseCrossWindowPanelDragPayload = (
         ...(activeTabId ? { activeTabId } : {})
       }
     })()
+    const terminalTabs = Array.isArray((parsed as any).terminalTabs)
+      ? (parsed as any).terminalTabs
+          .map((entry: unknown) => normalizeWindowingTerminalTabSnapshot(entry))
+          .filter((entry: WindowingTerminalTabSnapshot | undefined): entry is WindowingTerminalTabSnapshot => !!entry)
+      : undefined
     const fileEditorSnapshot = normalizeFileEditorSnapshot(parsed.fileEditorSnapshot)
     return {
       sourceClientId,
@@ -189,6 +203,7 @@ const parseCrossWindowPanelDragPayload = (
       kind,
       ...(stateToken ? { stateToken } : {}),
       ...(tabBinding ? { tabBinding } : {}),
+      ...(terminalTabs && terminalTabs.length > 0 ? { terminalTabs } : {}),
       ...(fileEditorSnapshot ? { fileEditorSnapshot } : {})
     }
   } catch {
@@ -431,6 +446,7 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
   const localPanelDragStateTokenRef = React.useRef<string | null>(null)
   const pendingLocalPanelDragRef = React.useRef<LocalPanelDragPayload | null>(null)
   const skipDetachedClosingRef = React.useRef(false)
+  const detachedStateSyncTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const windowingChannelRef = React.useRef<WindowingChannel | null>(null)
   /** Stores cross-window drag payload received from the windowing channel
    *  for when DataTransfer.getData() is restricted during dragover. */
@@ -598,6 +614,37 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
     }
   }, [])
 
+  const closeDetachedWindowAfterConfirmedTransfer = React.useCallback((kind: PanelKind): boolean => {
+    if (!store.isDetachedWindow || store.layout.panelCount !== 1) {
+      return false
+    }
+    // A detached single-panel workspace is allowed to disappear after another
+    // window confirms it adopted the transferred content. Skip the generic
+    // detached-closing rollback broadcast so the moved tabs do not bounce back.
+    skipDetachedClosingRef.current = true
+    store.onPanelRemoved(kind)
+    window.close()
+    return true
+  }, [store])
+
+  const closeDetachedWindowIfSinglePanelBecomesEmpty = React.useCallback((kind: PanelKind): boolean => {
+    if (!store.isDetachedWindow || store.layout.panelCount !== 1) {
+      return false
+    }
+    const remainingPanelId = store.layout.panelNodes[0]?.panel.id
+    if (!remainingPanelId) {
+      return false
+    }
+    const remainingPanelKind = store.layout.getPanelKindById(remainingPanelId)
+    if (remainingPanelKind !== kind || !getPanelKindAdapter(kind).supportsTabs) {
+      return false
+    }
+    if (store.layout.getPanelTabIds(remainingPanelId).length > 0) {
+      return false
+    }
+    return closeDetachedWindowAfterConfirmedTransfer(kind)
+  }, [closeDetachedWindowAfterConfirmedTransfer, store])
+
   React.useEffect(() => {
     const channel = createWindowingChannel()
     windowingChannelRef.current = channel
@@ -616,6 +663,7 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
         if (payload.targetClientId === store.windowClientId) return
         store.suppressTabs(payload.kind, [payload.tabId], { syncLayout: false })
         store.layout.detachTabFromLayout(payload.kind, payload.tabId)
+        closeDetachedWindowIfSinglePanelBecomesEmpty(payload.kind)
         return
       }
 
@@ -639,38 +687,8 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
           return
         }
 
-        if (store.isDetachedWindow && store.layout.panelCount === 1) {
-          // A detached single-panel window is allowed to hand off that last panel
-          // to another window. Close the source window after the target confirms
-          // the move, and suppress the generic detached-closing rollback broadcast.
-          skipDetachedClosingRef.current = true
-          store.onPanelRemoved(payload.kind)
-          window.close()
-        }
-        return
-      }
-
-      if (payload.type === 'merge-to-main') {
-        if (store.windowRole !== 'main') return
-        if (payload.sourceClientId === store.windowClientId) return
-        if (payload.mode === 'tab' && payload.tabId) {
-          store.unsuppressTabs(payload.kind, [payload.tabId], { syncLayout: false })
-          const targetPanelId = store.layout.ensurePrimaryPanelForKind(payload.kind)
-          if (targetPanelId) {
-            store.layout.attachTabToPanel(payload.kind, payload.tabId, targetPanelId)
-          }
+        if (closeDetachedWindowAfterConfirmedTransfer(payload.kind)) {
           return
-        }
-        if (payload.mode === 'panel' && payload.panel) {
-          const movedTabIds = payload.panel.tabBinding?.tabIds || []
-          store.unsuppressTabs(payload.panel.kind, movedTabIds, { syncLayout: false })
-          const importedPanelId = store.layout.importPanelFromExternal(
-            payload.panel.kind,
-            payload.panel.tabBinding
-          )
-          if (importedPanelId && payload.panel.tabBinding?.activeTabId) {
-            store.layout.setPanelActiveTab(importedPanelId, payload.panel.tabBinding.activeTabId)
-          }
         }
         return
       }
@@ -679,7 +697,9 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
         if (store.windowRole !== 'main') return
         if (payload.sourceClientId !== store.windowClientId) return
         const tabsByKind = payload.tabsByKind || {}
-        store.unsuppressTabs('chat', tabsByKind.chat || [])
+        const chatTabIds = store.materializeTransferredTabs('chat', tabsByKind.chat || [])
+        store.unsuppressTabs('chat', chatTabIds)
+        store.hydrateTransferredTabs('chat', chatTabIds)
         store.unsuppressTabs('terminal', tabsByKind.terminal || [])
         store.unsuppressTabs('filesystem', tabsByKind.filesystem || [])
         return
@@ -714,7 +734,79 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
         windowingChannelRef.current = null
       }
     }
-  }, [cancelExternalPanelAdoption, cancelExternalTabAdoption, clearLocalPanelDragState, store])
+  }, [
+    cancelExternalPanelAdoption,
+    cancelExternalTabAdoption,
+    clearLocalPanelDragState,
+    closeDetachedWindowAfterConfirmedTransfer,
+    closeDetachedWindowIfSinglePanelBecomesEmpty,
+    store
+  ])
+
+  React.useEffect(() => {
+    const onMainWindowClosing = window.gyshell.windowing.onMainWindowClosing
+    if (typeof onMainWindowClosing !== 'function') {
+      return
+    }
+    const unsubscribe = onMainWindowClosing(() => {
+      // Main-window shutdown cascades close detached windows. Those windows must
+      // skip detached-closing rollback broadcasts during that cascade.
+      skipDetachedClosingRef.current = true
+    })
+    return () => {
+      unsubscribe()
+    }
+  }, [])
+
+  const syncDetachedWindowSnapshot = React.useCallback(() => {
+    if (!store.isDetachedWindow) {
+      return
+    }
+    const detachedStateToken = String(WINDOW_CONTEXT.detachedStateToken || '').trim()
+    const sourceClientId = String(store.detachedSourceClientId || '').trim()
+    if (!detachedStateToken || !sourceClientId) {
+      return
+    }
+    const nextState: DetachedWindowState = {
+      sourceClientId,
+      layoutTree: toJS(store.layout.tree),
+      createdAt: Date.now(),
+      fileEditorSnapshot: store.fileEditor.captureSnapshot()
+    }
+    syncDetachedWindowState(detachedStateToken, nextState)
+  }, [store])
+
+  React.useEffect(() => {
+    if (!store.isDetachedWindow) {
+      return
+    }
+    if (detachedStateSyncTimerRef.current) {
+      clearTimeout(detachedStateSyncTimerRef.current)
+      detachedStateSyncTimerRef.current = null
+    }
+    detachedStateSyncTimerRef.current = setTimeout(() => {
+      detachedStateSyncTimerRef.current = null
+      syncDetachedWindowSnapshot()
+    }, 120)
+    return () => {
+      if (detachedStateSyncTimerRef.current) {
+        clearTimeout(detachedStateSyncTimerRef.current)
+        detachedStateSyncTimerRef.current = null
+      }
+    }
+  }, [
+    store.detachedSourceClientId,
+    store.fileEditor.content,
+    store.fileEditor.dirty,
+    store.fileEditor.errorMessage,
+    store.fileEditor.filePath,
+    store.fileEditor.mode,
+    store.fileEditor.statusMessage,
+    store.fileEditor.terminalId,
+    store.isDetachedWindow,
+    store.layout.tree,
+    syncDetachedWindowSnapshot
+  ])
 
   React.useEffect(() => {
     if (!store.isDetachedWindow) return
@@ -722,9 +814,17 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
     if (!sourceClientId) return
 
     const notifyDetachedClosing = () => {
+      if (detachedStateSyncTimerRef.current) {
+        clearTimeout(detachedStateSyncTimerRef.current)
+        detachedStateSyncTimerRef.current = null
+      }
+      syncDetachedWindowSnapshot()
       if (skipDetachedClosingRef.current) {
         return
       }
+      // Window shutdown stays lightweight on purpose. Dirty file editors only
+      // prompt during explicit panel-level removal flows; closing a detached
+      // window does not intercept unload to preserve the normal app-exit model.
       postWindowingMessage({
         type: 'detached-closing',
         sourceClientId,
@@ -736,7 +836,7 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
     return () => {
       window.removeEventListener('beforeunload', notifyDetachedClosing)
     }
-  }, [postWindowingMessage, store])
+  }, [postWindowingMessage, store, syncDetachedWindowSnapshot])
 
   const toPanelTabBinding = React.useCallback(
     (panelId: string, kind: PanelKind): LayoutPanelTabBinding | undefined => {
@@ -800,11 +900,15 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
         return false
       }
       try {
-        await window.gyshell.windowing.openDetached(token, store.windowClientId)
-        return true
+        const result = await window.gyshell.windowing.openDetached(token, store.windowClientId)
+        if (result?.ok) {
+          return true
+        }
       } catch {
-        return false
+        // noop
       }
+      clearDetachedWindowState(token)
+      return false
     },
     [store.windowClientId]
   )
@@ -860,50 +964,6 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
       store.layout.detachTabFromLayout(payload.kind, tabId)
     },
     [buildDetachedLayoutTree, openDetachedWindow, store]
-  )
-
-  const mergeTabToMain = React.useCallback(
-    (payload: TabDragPayload) => {
-      const tabId = String(payload.tabId || '').trim()
-      if (!tabId) return
-      store.suppressTabs(payload.kind, [tabId], { syncLayout: false })
-      store.layout.detachTabFromLayout(payload.kind, tabId)
-      postWindowingMessage({
-        type: 'merge-to-main',
-        sourceClientId: store.windowClientId,
-        mode: 'tab',
-        kind: payload.kind,
-        tabId
-      })
-    },
-    [postWindowingMessage, store]
-  )
-
-  const mergePanelToMain = React.useCallback(
-    (panelId: string) => {
-      if (!store.layout.canRemovePanel(panelId)) return
-      const panelKind = store.layout.getPanelKindById(panelId)
-      if (!panelKind) return
-      if (!store.canClosePanel(panelKind)) return
-
-      const panelBinding = toPanelTabBinding(panelId, panelKind)
-      const movedTabIds = panelBinding?.tabIds || []
-      store.suppressTabs(panelKind, movedTabIds, { syncLayout: false })
-      store.layout.removePanel(panelId)
-      store.onPanelRemoved(panelKind)
-
-      postWindowingMessage({
-        type: 'merge-to-main',
-        sourceClientId: store.windowClientId,
-        mode: 'panel',
-        kind: panelKind,
-        panel: {
-          kind: panelKind,
-          ...(panelBinding ? { tabBinding: panelBinding } : {})
-        }
-      })
-    },
-    [postWindowingMessage, store, toPanelTabBinding]
   )
 
   const terminalSignature = store.terminalTabs.map((tab) => tab.id).join('|')
@@ -972,21 +1032,13 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
     return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom
   }, [])
 
-  const requestDetachOrMergePanel = React.useCallback((panelId: string) => {
-    if (store.isDetachedWindow) {
-      mergePanelToMain(panelId)
-      return
-    }
+  const requestDetachPanelToWindow = React.useCallback((panelId: string) => {
     void detachPanelToWindow(panelId)
-  }, [detachPanelToWindow, mergePanelToMain, store.isDetachedWindow])
+  }, [detachPanelToWindow])
 
-  const requestDetachOrMergeTab = React.useCallback((payload: TabDragPayload) => {
-    if (store.isDetachedWindow) {
-      mergeTabToMain(payload)
-      return
-    }
+  const requestDetachTabToWindow = React.useCallback((payload: TabDragPayload) => {
     void detachTabToWindow(payload)
-  }, [detachTabToWindow, mergeTabToMain, store.isDetachedWindow])
+  }, [detachTabToWindow])
 
   const resolveTabBarReorderHint = React.useCallback(
     (
@@ -1248,19 +1300,61 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
       }
     }
 
+    const readTransferredTerminalTabSnapshot = (tabId: string): WindowingTerminalTabSnapshot | undefined => {
+      const terminalTab = store.terminalTabs.find((tab) => tab.id === tabId)
+      if (!terminalTab) {
+        return undefined
+      }
+      return {
+        id: terminalTab.id,
+        title: terminalTab.title,
+        config: terminalTab.config,
+        ...(terminalTab.connectionRef ? { connectionRef: terminalTab.connectionRef } : {}),
+        ...(terminalTab.runtimeState ? { runtimeState: terminalTab.runtimeState } : {}),
+        ...(typeof terminalTab.lastExitCode === 'number' ? { lastExitCode: terminalTab.lastExitCode } : {})
+      }
+    }
+
+    const readTransferredTerminalTabSnapshotsForPanel = (
+      panelId: string,
+      kind: PanelKind
+    ): WindowingTerminalTabSnapshot[] | undefined => {
+      if (kind !== 'terminal' && kind !== 'filesystem') {
+        return undefined
+      }
+      const snapshots = store.layout
+        .getPanelTabIds(panelId)
+        .map((tabId) => readTransferredTerminalTabSnapshot(tabId))
+        .filter((snapshot): snapshot is WindowingTerminalTabSnapshot => !!snapshot)
+      return snapshots.length > 0 ? snapshots : undefined
+    }
+
+    const toCrossWindowTabDragPayload = (payload: TabDragPayload): CrossWindowTabDragPayload => {
+      const terminalTab = readTransferredTerminalTabSnapshot(payload.tabId)
+      return {
+        ...payload,
+        sourceClientId: store.windowClientId,
+        ...(terminalTab ? { terminalTab } : {})
+      }
+    }
+
     const toCrossWindowPanelDragPayload = (
       payload: LocalPanelDragPayload
-    ): WindowingPanelDragPayload => ({
-      sourceClientId: store.windowClientId,
-      sourcePanelId: payload.panelId,
-      kind: payload.kind,
-      ...(getPanelKindAdapter(payload.kind).supportsTabs
-        ? { tabBinding: toPanelTabBinding(payload.panelId, payload.kind) }
-        : {}),
-      ...(payload.kind === 'fileEditor'
-        ? { fileEditorSnapshot: toPanelFileEditorSnapshot(payload.kind) }
-        : {})
-    })
+    ): WindowingPanelDragPayload => {
+      const terminalTabs = readTransferredTerminalTabSnapshotsForPanel(payload.panelId, payload.kind)
+      return {
+        sourceClientId: store.windowClientId,
+        sourcePanelId: payload.panelId,
+        kind: payload.kind,
+        ...(getPanelKindAdapter(payload.kind).supportsTabs
+          ? { tabBinding: toPanelTabBinding(payload.panelId, payload.kind) }
+          : {}),
+        ...(terminalTabs ? { terminalTabs } : {}),
+        ...(payload.kind === 'fileEditor'
+          ? { fileEditorSnapshot: toPanelFileEditorSnapshot(payload.kind) }
+          : {})
+      }
+    }
 
     const createPanelTransportPayload = (
       payload: LocalPanelDragPayload
@@ -1376,6 +1470,9 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
           kind: crossWindowPayload.kind,
           sourcePanelId: crossWindowPayload.sourcePanelId
         }
+        store.materializeTransferredTabs(payload.kind, [payload.tabId], {
+          terminalTabs: crossWindowPayload.terminalTab ? [crossWindowPayload.terminalTab] : []
+        })
         store.unsuppressTabs(payload.kind, [payload.tabId], { syncLayout: false })
         store.layout.startTabDragging(payload, event.clientX, event.clientY)
         externalSourceClientIdRef.current = crossWindowPayload.sourceClientId
@@ -1398,6 +1495,9 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
           kind: broadcastDrag.tabPayload.kind,
           sourcePanelId: broadcastDrag.tabPayload.sourcePanelId
         }
+        store.materializeTransferredTabs(payload.kind, [payload.tabId], {
+          terminalTabs: broadcastDrag.tabPayload.terminalTab ? [broadcastDrag.tabPayload.terminalTab] : []
+        })
         store.unsuppressTabs(payload.kind, [payload.tabId], { syncLayout: false })
         store.layout.startTabDragging(payload, event.clientX, event.clientY)
         externalSourceClientIdRef.current = broadcastDrag.sourceClientId
@@ -1413,10 +1513,7 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
     const handleDragStart = (event: DragEvent) => {
       const tabPayload = readTabPayload(event.target)
       if (tabPayload) {
-        const crossPayload: CrossWindowTabDragPayload = {
-          ...tabPayload,
-          sourceClientId: store.windowClientId
-        }
+        const crossPayload = toCrossWindowTabDragPayload(tabPayload)
         if (event.dataTransfer) {
           event.dataTransfer.effectAllowed = 'move'
           const encoded = encodeCrossWindowTabDragPayload(crossPayload)
@@ -1593,7 +1690,7 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
           }
           store.layout.clearDragging()
           resetDragUi()
-          requestDetachOrMergePanel(draggedPanelId)
+          requestDetachPanelToWindow(draggedPanelId)
           return
         }
         updateDropTarget(event.target as HTMLElement | null, event.clientX, event.clientY)
@@ -1621,7 +1718,13 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
 
         const movedTabIds = externalPayload.tabBinding?.tabIds || []
         if (movedTabIds.length > 0) {
-          store.unsuppressTabs(externalPayload.kind, movedTabIds, { syncLayout: false })
+          // External chat panels can carry tab IDs the target window has never
+          // opened in this process. Materialize those inventory entries before
+          // importPanelFromExternal() triggers syncPanelBindings().
+          const materializedTabIds = store.materializeTransferredTabs(externalPayload.kind, movedTabIds, {
+            terminalTabs: externalPayload.terminalTabs
+          })
+          store.unsuppressTabs(externalPayload.kind, materializedTabIds, { syncLayout: false })
         }
         const importedPanelId = store.layout.importPanelFromExternal(
           externalPayload.kind,
@@ -1645,6 +1748,10 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
         if (externalPayload.kind === 'fileEditor' && externalPayload.fileEditorSnapshot) {
           store.fileEditor.restoreSnapshot(externalPayload.fileEditorSnapshot)
         }
+        // A placeholder chat session is enough to keep layout bindings stable
+        // during drop, but background hydration is still required to restore the
+        // transferred conversation history in the target window.
+        store.hydrateTransferredTabs(externalPayload.kind, movedTabIds)
         postWindowingMessage({
           type: 'panel-moved',
           sourceClientId: externalPayload.sourceClientId,
@@ -1681,40 +1788,51 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
       if (detachHover && draggingTab) {
         store.layout.clearDragging()
         resetDragUi()
-        requestDetachOrMergeTab(draggingTab)
+        requestDetachTabToWindow(draggingTab)
         return
       }
 
+      const externalSourceClientId =
+        typeof dragging.externalSourceClientId === 'string' &&
+        dragging.externalSourceClientId !== store.windowClientId
+          ? dragging.externalSourceClientId
+          : null
+      const isExternalTabDrop = externalSourceClientId !== null
       updateDropTarget(event.target as HTMLElement | null, event.clientX, event.clientY)
+      if (isExternalTabDrop && store.layout.dropTargetPanelId) {
+        // Ensure the target window knows about a transferred chat tab before the
+        // layout commit activates it and the renderer tries to resolve its tab id.
+        store.materializeTransferredTabs(draggingTab.kind, [draggingTab.tabId])
+      }
       store.layout.commitDragging()
       let tabPresentInTarget = store.layout.getPanelIdsByKind(draggingTab.kind).some((panelId) =>
         store.layout.getPanelTabIds(panelId).includes(draggingTab.tabId)
       )
       if (
         !tabPresentInTarget &&
-        dragging.externalSourceClientId &&
-        dragging.externalSourceClientId !== store.windowClientId
+        isExternalTabDrop
       ) {
         const targetPanelId = store.layout.ensurePrimaryPanelForKind(draggingTab.kind)
         if (targetPanelId) {
+          store.materializeTransferredTabs(draggingTab.kind, [draggingTab.tabId])
           store.layout.attachTabToPanel(draggingTab.kind, draggingTab.tabId, targetPanelId)
           tabPresentInTarget = store.layout.getPanelTabIds(targetPanelId).includes(draggingTab.tabId)
         }
       }
       if (
-        dragging.externalSourceClientId &&
-        dragging.externalSourceClientId !== store.windowClientId &&
+        isExternalTabDrop &&
         tabPresentInTarget
       ) {
+        store.hydrateTransferredTabs(draggingTab.kind, [draggingTab.tabId])
         postWindowingMessage({
           type: 'tab-moved',
-          sourceClientId: dragging.externalSourceClientId,
+          sourceClientId: externalSourceClientId,
           targetClientId: store.windowClientId,
           kind: draggingTab.kind,
           tabId: draggingTab.tabId
         })
-      } else if (dragging.externalSourceClientId && dragging.externalSourceClientId !== store.windowClientId) {
-        rollbackExternalTabDrag(draggingTab, dragging.externalSourceClientId)
+      } else if (isExternalTabDrop) {
+        rollbackExternalTabDrag(draggingTab, externalSourceClientId)
       }
       resetDragUi()
     }
@@ -1816,8 +1934,8 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
     postWindowingMessage,
     requestCloseTabsByKind,
     requestClosePanel,
-    requestDetachOrMergePanel,
-    requestDetachOrMergeTab,
+    requestDetachPanelToWindow,
+    requestDetachTabToWindow,
     resetDragUi,
     rollbackExternalTabDrag,
     setDetachHover,
@@ -2074,6 +2192,9 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
                 title={t.layout.detachToWindow}
                 data-layout-detach-drop="true"
               >
+                {/* Detached windows intentionally omit a secondary merge-back
+                    affordance. Supported return flows use direct cross-window
+                    drag/drop rather than a dedicated detach action in-place. */}
                 <ExternalLink size={16} strokeWidth={2.2} />
               </div>
             )}

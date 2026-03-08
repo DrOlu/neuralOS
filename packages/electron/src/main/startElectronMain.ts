@@ -197,6 +197,30 @@ function createWindow(options?: CreateWindowOptions): BrowserWindow {
 
   applyPlatformWindowTweaks(windowInstance)
 
+  if (isMainWindow) {
+    windowInstance.on('close', () => {
+      // Detached workspaces are intentionally subordinate to the main workspace.
+      // Closing the main window is treated as shutting down the whole app UI,
+      // not as a request to preserve child windows independently or to retarget
+      // their rollback routing to some future main renderer.
+      const detachedWindows = BrowserWindow.getAllWindows().filter((win) => win !== windowInstance && !win.isDestroyed())
+      // Tell detached renderers this is a cascade shutdown so they skip
+      // detached-closing rollback broadcasts back into the main workspace.
+      detachedWindows.forEach((win) => {
+        if (!win.webContents.isDestroyed()) {
+          win.webContents.send('windowing:mainWindowClosing')
+        }
+      })
+      detachedWindows.forEach((win) => {
+        setTimeout(() => {
+          if (win !== windowInstance && !win.isDestroyed()) {
+            win.close()
+          }
+        }, 0)
+      })
+    })
+  }
+
   windowInstance.on('closed', () => {
     if (isMainWindow) {
       mainWindow = null

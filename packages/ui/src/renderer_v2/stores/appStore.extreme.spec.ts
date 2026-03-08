@@ -669,6 +669,188 @@ const run = async (): Promise<void> => {
     assertCondition(syncCallCount >= 2, 'detached visibility updates should trigger binding sync')
   })
 
+  await runCase('detached new chat sessions become visible to the current window immediately', async () => {
+    const store = new AppStore()
+    ;(store as any).windowRole = 'detached'
+    const existingChatIds = store.chat.sessions.map((session) => session.id)
+    ;(store as any).detachedVisibleTabIdsByKind = {
+      chat: new Set<string>(existingChatIds),
+      terminal: new Set<string>(),
+      filesystem: new Set<string>()
+    }
+    ;(store as any).lastKnownChatSessionIds = new Set(existingChatIds)
+    let syncCallCount = 0
+    ;(store.layout as any).syncPanelBindings = () => {
+      syncCallCount += 1
+    }
+
+    const sessionId = store.chat.createSession('Detached Chat')
+
+    assertCondition(
+      store.getOwnedTabIds('chat').includes(sessionId),
+      'new detached chat session should be visible to detached chat owner inventory'
+    )
+    assertCondition(syncCallCount >= 1, 'new detached chat session should trigger layout binding sync')
+  })
+
+  await runCase('ensureTabInventoryEntry materializes missing chat sessions for cross-window drops', async () => {
+    const store = new AppStore()
+    ;(store as any).windowRole = 'detached'
+    const existingChatIds = store.chat.sessions.map((session) => session.id)
+    ;(store as any).detachedVisibleTabIdsByKind = {
+      chat: new Set<string>(existingChatIds),
+      terminal: new Set<string>(),
+      filesystem: new Set<string>()
+    }
+    ;(store as any).lastKnownChatSessionIds = new Set(existingChatIds)
+    ;(store.layout as any).syncPanelBindings = () => {}
+
+    store.ensureTabInventoryEntry('chat', 'chat-remote-new')
+
+    assertCondition(
+      !!store.chat.getSessionById('chat-remote-new'),
+      'cross-window chat drop target should create a placeholder session when inventory is missing'
+    )
+    assertCondition(
+      store.getOwnedTabIds('chat').includes('chat-remote-new'),
+      'materialized chat session should be immediately visible to detached chat owner inventory'
+    )
+  })
+
+  await runCase('ensureTabInventoryEntry materializes missing terminal inventory for cross-window drops', async () => {
+    const store = new AppStore()
+    ;(store.layout as any).syncPanelBindings = () => {}
+
+    store.ensureTabInventoryEntry('terminal', 'term-remote-new', {
+      terminalTab: {
+        id: 'term-remote-new',
+        title: 'Remote Terminal',
+        config: {
+          type: 'local',
+          id: 'term-remote-new',
+          title: 'Remote Terminal',
+          cols: 80,
+          rows: 24
+        },
+        connectionRef: { type: 'local' },
+        runtimeState: 'ready'
+      }
+    })
+
+    assertCondition(
+      store.getOwnedTabIds('terminal').includes('term-remote-new'),
+      'terminal drop target should seed missing terminal inventory before backend onTabsUpdated arrives'
+    )
+    assertCondition(
+      store.getOwnedTabIds('filesystem').includes('term-remote-new'),
+      'filesystem owner inventory should see the same shared terminal placeholder'
+    )
+  })
+
+  await runCase('materializeTransferredTabs restores detached-created chat sessions before unsuppress', async () => {
+    const store = new AppStore()
+    ;(store.layout as any).syncPanelBindings = () => {}
+
+    const restoredIds = store.materializeTransferredTabs('chat', ['chat-detached-new', 'chat-detached-new'])
+
+    assertEqual(
+      JSON.stringify(restoredIds),
+      JSON.stringify(['chat-detached-new']),
+      'materializeTransferredTabs should normalize duplicate transferred chat ids'
+    )
+    assertCondition(
+      !!store.chat.getSessionById('chat-detached-new'),
+      'main window should materialize detached-created chat inventory before unsuppressing it back into layout'
+    )
+  })
+
+  await runCase('materializeTransferredTabs seeds terminal placeholders from payload snapshots', async () => {
+    const store = new AppStore()
+    ;(store.layout as any).syncPanelBindings = () => {}
+
+    const restoredIds = store.materializeTransferredTabs('filesystem', ['term-fs-remote'], {
+      terminalTabs: [
+        {
+          id: 'term-fs-remote',
+          title: 'Shared Terminal',
+          config: {
+            type: 'local',
+            id: 'term-fs-remote',
+            title: 'Shared Terminal',
+            cols: 120,
+            rows: 32
+          },
+          connectionRef: { type: 'local' },
+          runtimeState: 'ready'
+        }
+      ]
+    })
+
+    assertEqual(
+      JSON.stringify(restoredIds),
+      JSON.stringify(['term-fs-remote']),
+      'materializeTransferredTabs should normalize transferred terminal ids'
+    )
+    assertCondition(
+      store.getOwnedTabIds('filesystem').includes('term-fs-remote'),
+      'filesystem drop target should keep the transferred terminal placeholder visible'
+    )
+  })
+
+  await runCase('hydrateTransferredTabEntry hydrates chat history without forcing activation', async () => {
+    const store = new AppStore()
+    let hydratedSessionId: string | null = null
+    let hydrateActivate: boolean | undefined
+    let hydrateLoadAgentContext: boolean | undefined
+    ;(store.chat as any).hydrateSessionFromBackend = async (
+      sessionId: string,
+      options?: { activate?: boolean; loadAgentContext?: boolean }
+    ) => {
+      hydratedSessionId = sessionId
+      hydrateActivate = options?.activate
+      hydrateLoadAgentContext = options?.loadAgentContext
+    }
+
+    store.hydrateTransferredTabEntry('chat', 'chat-remote-history')
+
+    await Promise.resolve()
+
+    assertCondition(
+      !!store.chat.getSessionById('chat-remote-history'),
+      'background hydration should still materialize a placeholder chat session first'
+    )
+    assertEqual(hydratedSessionId, 'chat-remote-history', 'transferred chat hydration should target the moved session id')
+    assertEqual(hydrateActivate, false, 'transferred chat hydration should not steal active focus')
+    assertEqual(
+      hydrateLoadAgentContext,
+      false,
+      'transferred chat hydration should not switch backend agent context during cross-window drop'
+    )
+  })
+
+  await runCase('hydrateTransferredTabs hydrates every moved chat session in the background', async () => {
+    const store = new AppStore()
+    const hydratedSessionIds: string[] = []
+    ;(store.chat as any).hydrateSessionFromBackend = async (
+      sessionId: string,
+      options?: { activate?: boolean; loadAgentContext?: boolean }
+    ) => {
+      hydratedSessionIds.push(
+        `${sessionId}:${String(options?.activate)}:${String(options?.loadAgentContext)}`
+      )
+    }
+
+    store.hydrateTransferredTabs('chat', ['chat-1', 'chat-2'])
+
+    await Promise.resolve()
+
+    assertEqual(
+      JSON.stringify(hydratedSessionIds),
+      JSON.stringify(['chat-1:false:false', 'chat-2:false:false']),
+      'bulk transferred chat hydration should preserve the non-activating background load contract'
+    )
+  })
+
   await runCase('main suppress terminal should not hide filesystem owner inventory', async () => {
     const store = new AppStore()
     ;(store as any).suppressedTabIdsByKind = {

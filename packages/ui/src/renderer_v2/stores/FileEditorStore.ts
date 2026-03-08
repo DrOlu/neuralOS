@@ -48,37 +48,11 @@ export class FileEditorStore {
     return this.mode === 'text' && this.dirty && !this.busy && this.hasActiveDocument
   }
 
-  async openFromFileSystem(terminalId: string, filePath: string): Promise<boolean> {
-    const panelId = this.appStore.layout.ensurePrimaryPanelForKind('fileEditor')
-    if (!panelId) {
-      throw new Error(this.appStore.i18n.t.fileEditor.openPanelFailed)
-    }
-    this.appStore.layout.focusPrimaryPanel('fileEditor')
-
-    const sameTarget = this.terminalId === terminalId && this.filePath === filePath
-    if (sameTarget && (this.mode === 'text' || this.mode === 'loading')) {
-      return true
-    }
-
-    if (!sameTarget && this.mode === 'text' && this.dirty) {
-      const confirmed = window.confirm(this.appStore.i18n.t.fileEditor.unsavedChangesConfirm)
-      if (!confirmed) {
-        return false
-      }
-    }
-
-    const requestVersion = this.loadRequestVersion + 1
-    this.loadRequestVersion = requestVersion
-
-    this.terminalId = terminalId
-    this.filePath = filePath
-    this.mode = 'loading'
-    this.content = ''
-    this.dirty = false
-    this.busy = false
-    this.errorMessage = null
-    this.statusMessage = null
-
+  private async loadTextFileForRequest(
+    terminalId: string,
+    filePath: string,
+    requestVersion: number
+  ): Promise<boolean> {
     try {
       const result = await window.gyshell.filesystem.readTextFile(terminalId, filePath, { maxBytes: 1024 * 1024 })
       if (this.loadRequestVersion !== requestVersion) {
@@ -112,6 +86,40 @@ export class FileEditorStore {
       })
       return false
     }
+  }
+
+  async openFromFileSystem(terminalId: string, filePath: string): Promise<boolean> {
+    const panelId = this.appStore.layout.ensurePrimaryPanelForKind('fileEditor')
+    if (!panelId) {
+      throw new Error(this.appStore.i18n.t.fileEditor.openPanelFailed)
+    }
+    this.appStore.layout.focusPrimaryPanel('fileEditor')
+
+    const sameTarget = this.terminalId === terminalId && this.filePath === filePath
+    if (sameTarget && (this.mode === 'text' || this.mode === 'loading')) {
+      return true
+    }
+
+    if (!sameTarget && this.mode === 'text' && this.dirty) {
+      const confirmed = window.confirm(this.appStore.i18n.t.fileEditor.unsavedChangesConfirm)
+      if (!confirmed) {
+        return false
+      }
+    }
+
+    const requestVersion = this.loadRequestVersion + 1
+    this.loadRequestVersion = requestVersion
+
+    this.terminalId = terminalId
+    this.filePath = filePath
+    this.mode = 'loading'
+    this.content = ''
+    this.dirty = false
+    this.busy = false
+    this.errorMessage = null
+    this.statusMessage = null
+
+    return await this.loadTextFileForRequest(terminalId, filePath, requestVersion)
   }
 
   updateContent(nextContent: string): void {
@@ -169,7 +177,8 @@ export class FileEditorStore {
       return false
     }
 
-    this.loadRequestVersion += 1
+    const requestVersion = this.loadRequestVersion + 1
+    this.loadRequestVersion = requestVersion
     this.terminalId = normalized.terminalId
     this.filePath = normalized.filePath
     this.mode = normalized.mode
@@ -178,6 +187,9 @@ export class FileEditorStore {
     this.busy = false
     this.errorMessage = normalized.errorMessage
     this.statusMessage = normalized.statusMessage
+    if (normalized.mode === 'loading' && normalized.terminalId && normalized.filePath) {
+      void this.loadTextFileForRequest(normalized.terminalId, normalized.filePath, requestVersion)
+    }
     return true
   }
 

@@ -336,6 +336,7 @@ export interface GyShellAPI {
   }
   windowing: {
     openDetached: (detachedStateToken: string, sourceClientId: string) => Promise<{ ok: boolean }>
+    onMainWindowClosing: (callback: () => void) => () => void
   }
   // Settings
   settings: {
@@ -544,7 +545,12 @@ const api: GyShellAPI = {
   },
   windowing: {
     openDetached: (detachedStateToken, sourceClientId) =>
-      ipcRenderer.invoke('windowing:openDetached', detachedStateToken, sourceClientId)
+      ipcRenderer.invoke('windowing:openDetached', detachedStateToken, sourceClientId),
+    onMainWindowClosing: (callback) => {
+      const handler = () => callback()
+      ipcRenderer.on('windowing:mainWindowClosing', handler)
+      return () => ipcRenderer.off('windowing:mainWindowClosing', handler)
+    }
   },
   settings: {
     get: () => ipcRenderer.invoke('settings:get'),

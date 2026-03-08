@@ -14,8 +14,9 @@ import { FileEditorStore } from './FileEditorStore'
 import { buildLayoutTree, listPanels, type LayoutTree, type PanelKind } from '../layout'
 import {
   WINDOW_CONTEXT,
-  consumeDetachedWindowState,
-  type DetachedWindowState
+  readDetachedWindowState,
+  type DetachedWindowState,
+  type WindowingTerminalTabSnapshot
 } from '../lib/windowing'
 
 const upsertById = <T extends { id: string }>(list: T[], entry: T): T[] => {
@@ -122,6 +123,7 @@ export class AppStore {
   versionCheckInProgress = false
   showVersionUpdateDialog = false
   private detachedVisibleTabIdsByKind: Record<'chat' | 'terminal' | 'filesystem', Set<string>> | null = null
+  private lastKnownChatSessionIds = new Set<string>()
   private suppressedTabIdsByKind: Record<'chat' | 'terminal' | 'filesystem', Set<string>> = {
     chat: new Set<string>(),
     terminal: new Set<string>(),
@@ -224,6 +226,10 @@ export class AppStore {
       setExecCommandActionModelEnabled: action,
       setWriteStdinActionModelEnabled: action,
       sendChatMessage: action,
+      materializeTransferredTabs: action,
+      ensureTabInventoryEntry: action,
+      hydrateTransferredTabs: action,
+      hydrateTransferredTabEntry: action,
       openFileEditorFromFileSystem: action,
       onPanelRemoved: action,
       suppressTabs: action,
@@ -236,7 +242,8 @@ export class AppStore {
       reconcileTerminalTabs: action
     })
     this.chat.setQueueRunner((sessionId, input) => this.sendChatMessage(sessionId, input, { mode: 'queue' }))
-    this.chat.setSessionsChangedListener(() => this.layout.syncPanelBindings())
+    this.chat.setSessionsChangedListener((sessionIds) => this.handleChatSessionsChanged(sessionIds))
+    this.lastKnownChatSessionIds = new Set(this.chat.sessions.map((session) => session.id))
   }
 
   getUniqueTitle(baseTitle: string): string {
@@ -376,6 +383,141 @@ export class AppStore {
       })
     })
     return changed
+  }
+
+  private handleChatSessionsChanged(sessionIds: string[]): void {
+    const normalizedIds = sessionIds
+      .map((sessionId) => String(sessionId || '').trim())
+      .filter((sessionId) => sessionId.length > 0)
+    const nextIds = new Set(normalizedIds)
+    const addedIds = normalizedIds.filter((sessionId) => !this.lastKnownChatSessionIds.has(sessionId))
+    const removedIds = Array.from(this.lastKnownChatSessionIds).filter((sessionId) => !nextIds.has(sessionId))
+
+    // Detached chat windows keep a visibility filter separate from the global
+    // chat inventory. Newly created sessions must be added here immediately or
+    // the window creates the tab and then hides it from itself.
+    if (addedIds.length > 0) {
+      this.updateDetachedVisibleTabIds('chat', addedIds, 'add')
+    }
+    if (removedIds.length > 0) {
+      this.updateDetachedVisibleTabIds('chat', removedIds, 'delete')
+    }
+
+    this.lastKnownChatSessionIds = nextIds
+    this.layout.syncPanelBindings()
+  }
+
+  private upsertTransferredTerminalTab(snapshot: WindowingTerminalTabSnapshot): void {
+    const normalizedId = String(snapshot.id || '').trim()
+    if (!normalizedId) {
+      return
+    }
+    const nextTab: TerminalTabModel = {
+      id: normalizedId,
+      title: String(snapshot.title || '').trim() || normalizedId,
+      config: snapshot.config,
+      ...(snapshot.connectionRef ? { connectionRef: snapshot.connectionRef } : {}),
+      ...(snapshot.runtimeState ? { runtimeState: snapshot.runtimeState } : {}),
+      ...(typeof snapshot.lastExitCode === 'number' ? { lastExitCode: snapshot.lastExitCode } : {})
+    }
+    this.terminalTabs = upsertById(this.terminalTabs, nextTab)
+    if (!this.activeTerminalId) {
+      this.activeTerminalId = normalizedId
+    }
+  }
+
+  ensureTabInventoryEntry(
+    kind: PanelKind,
+    tabId: string,
+    options?: {
+      terminalTab?: WindowingTerminalTabSnapshot
+    }
+  ): void {
+    const normalizedTabId = String(tabId || '').trim()
+    if (!normalizedTabId) {
+      return
+    }
+    if (kind === 'chat') {
+      // Chat sessions are not backed by a shared runtime inventory like terminal
+      // tabs. When a newly created chat tab crosses into another window, materialize
+      // a placeholder session immediately so the target layout can render it before
+      // any later backend/history hydration happens.
+      this.chat.ensureSession(normalizedTabId)
+      return
+    }
+    if ((kind === 'terminal' || kind === 'filesystem') && options?.terminalTab?.id === normalizedTabId) {
+      // Terminal/filesystem tabs share backend inventory, but a target renderer
+      // may still be one onTabsUpdated tick behind when a tab is dragged across
+      // windows. Seed a lightweight placeholder so syncPanelBindings() does not
+      // strip the transferred tab before backend state catches up.
+      this.upsertTransferredTerminalTab(options.terminalTab)
+    }
+  }
+
+  materializeTransferredTabs(
+    kind: PanelKind,
+    tabIds: string[],
+    options?: {
+      terminalTabs?: WindowingTerminalTabSnapshot[]
+    }
+  ): string[] {
+    const normalizedTabIds = Array.from(
+      new Set(
+        (tabIds || [])
+          .map((tabId) => String(tabId || '').trim())
+          .filter((tabId) => tabId.length > 0)
+      )
+    )
+    if (normalizedTabIds.length === 0) {
+      return normalizedTabIds
+    }
+    const terminalTabById = new Map(
+      (options?.terminalTabs || [])
+        .map((terminalTab) => [String(terminalTab.id || '').trim(), terminalTab] as const)
+        .filter(([tabId]) => tabId.length > 0)
+    )
+    // Cross-window transferred tabs must create owner inventory entries before
+    // any layout sync runs, otherwise syncPanelBindings() can strip them back
+    // out of the restored binding as "unknown" ids.
+    normalizedTabIds.forEach((tabId) => {
+      this.ensureTabInventoryEntry(kind, tabId, {
+        terminalTab: terminalTabById.get(tabId)
+      })
+    })
+    return normalizedTabIds
+  }
+
+  hydrateTransferredTabEntry(kind: PanelKind, tabId: string): void {
+    const normalizedTabId = String(tabId || '').trim()
+    if (!normalizedTabId || kind !== 'chat') {
+      return
+    }
+    const session = this.chat.getSessionById(normalizedTabId)
+    if (session && session.messageIds.length > 0) {
+      return
+    }
+    this.chat.ensureSession(normalizedTabId)
+    void this.chat.hydrateSessionFromBackend(normalizedTabId, {
+      activate: false,
+      loadAgentContext: false
+    }).catch(() => {
+      // A brand-new local chat may not exist in backend history yet. Keep the
+      // placeholder session so cross-window tab/panel moves still succeed.
+    })
+  }
+
+  hydrateTransferredTabs(kind: PanelKind, tabIds: string[]): string[] {
+    const normalizedTabIds = Array.from(
+      new Set(
+        (tabIds || [])
+          .map((tabId) => String(tabId || '').trim())
+          .filter((tabId) => tabId.length > 0)
+      )
+    )
+    normalizedTabIds.forEach((tabId) => {
+      this.hydrateTransferredTabEntry(kind, tabId)
+    })
+    return normalizedTabIds
   }
 
   suppressTabs(kind: PanelKind, tabIds: string[], options?: { syncLayout?: boolean }): void {
@@ -1187,7 +1329,7 @@ export class AppStore {
       }
       const detachedWindowState: DetachedWindowState | null =
         this.windowRole === 'detached' && WINDOW_CONTEXT.detachedStateToken
-          ? consumeDetachedWindowState(WINDOW_CONTEXT.detachedStateToken)
+          ? readDetachedWindowState(WINDOW_CONTEXT.detachedStateToken)
           : null
       const effectiveLayout = detachedWindowState
         ? {
@@ -1666,6 +1808,9 @@ export class AppStore {
   }
 
   canClosePanel(kind: PanelKind): boolean {
+    // This guard is intentionally scoped to explicit in-workspace panel removal
+    // flows (close, detach, cross-window move). Full window/app shutdown does
+    // not block on dirty file editors.
     if (kind !== 'fileEditor') {
       return true
     }

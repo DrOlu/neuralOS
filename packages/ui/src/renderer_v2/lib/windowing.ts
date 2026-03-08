@@ -1,3 +1,4 @@
+import type { TerminalConfig } from './ipcTypes'
 import type { LayoutPanelTabBinding, LayoutTree, PanelKind } from '../layout'
 import {
   normalizeFileEditorSnapshot,
@@ -7,11 +8,24 @@ import {
 export type RendererWindowRole = 'main' | 'detached'
 
 const DETACHED_STATE_KEY_PREFIX = 'gyshell.detachedState.'
+const DETACHED_STATE_SESSION_KEY_PREFIX = 'gyshell.detachedStateSession.'
 const PANEL_DRAG_STATE_KEY_PREFIX = 'gyshell.panelDragState.'
 const WINDOW_CLIENT_ID_KEY = 'gyshell.windowClientId'
 export const WINDOWING_BROADCAST_CHANNEL = 'gyshell-windowing-v1'
 const WINDOWING_STORAGE_CHANNEL_KEY_PREFIX = 'gyshell.windowingChannel.'
 export const WINDOWING_STORAGE_CHANNEL_KEY = `${WINDOWING_STORAGE_CHANNEL_KEY_PREFIX}${WINDOWING_BROADCAST_CHANNEL}`
+
+const getDetachedStateLocalKey = (token: string): string | null => {
+  const normalizedToken = String(token || '').trim()
+  if (!normalizedToken) return null
+  return `${DETACHED_STATE_KEY_PREFIX}${normalizedToken}`
+}
+
+const getDetachedStateSessionKey = (token: string): string | null => {
+  const normalizedToken = String(token || '').trim()
+  if (!normalizedToken) return null
+  return `${DETACHED_STATE_SESSION_KEY_PREFIX}${normalizedToken}`
+}
 
 export interface RendererWindowContext {
   role: RendererWindowRole
@@ -24,12 +38,21 @@ export interface DetachedWindowState {
   sourceClientId: string
   layoutTree: LayoutTree
   createdAt: number
+  /**
+   * Seeds a freshly opened detached file-editor window with the current editor
+   * buffer. Closing that window still follows normal window-shutdown semantics
+   * and does not roll editor state back into another renderer automatically.
+   */
   fileEditorSnapshot?: FileEditorSnapshot
 }
 
-export interface WindowingMergePanelPayload {
-  kind: PanelKind
-  tabBinding?: LayoutPanelTabBinding
+export interface WindowingTerminalTabSnapshot {
+  id: string
+  title: string
+  config: TerminalConfig
+  connectionRef?: { type: 'local' } | { type: 'ssh'; entryId: string }
+  runtimeState?: 'initializing' | 'ready' | 'exited'
+  lastExitCode?: number
 }
 
 export interface WindowingTabMovedMessage {
@@ -49,15 +72,6 @@ export interface WindowingPanelMovedMessage {
   tabIds: string[]
 }
 
-export interface WindowingMergeToMainMessage {
-  type: 'merge-to-main'
-  sourceClientId: string
-  mode: 'tab' | 'panel'
-  kind: PanelKind
-  tabId?: string
-  panel?: WindowingMergePanelPayload
-}
-
 export interface WindowingDetachedClosingMessage {
   type: 'detached-closing'
   sourceClientId: string
@@ -73,6 +87,7 @@ export interface WindowingTabDragPayload {
   tabId: string
   kind: PanelKind
   sourcePanelId: string
+  terminalTab?: WindowingTerminalTabSnapshot
 }
 
 export interface WindowingPanelDragPayload {
@@ -85,6 +100,7 @@ export interface WindowingPanelDragPayload {
    */
   stateToken?: string
   tabBinding?: LayoutPanelTabBinding
+  terminalTabs?: WindowingTerminalTabSnapshot[]
   fileEditorSnapshot?: FileEditorSnapshot
 }
 
@@ -107,7 +123,6 @@ export interface WindowingDragEndMessage {
 export type WindowingMessage =
   | WindowingPanelMovedMessage
   | WindowingTabMovedMessage
-  | WindowingMergeToMainMessage
   | WindowingDetachedClosingMessage
   | WindowingDragStartMessage
   | WindowingDragEndMessage
@@ -158,36 +173,97 @@ const readWindowContext = (): RendererWindowContext => {
 export const WINDOW_CONTEXT: RendererWindowContext = readWindowContext()
 
 export const stashDetachedWindowState = (token: string, state: DetachedWindowState): boolean => {
-  const normalizedToken = String(token || '').trim()
-  if (!normalizedToken) return false
+  const localKey = getDetachedStateLocalKey(token)
+  if (!localKey) return false
   try {
-    window.localStorage?.setItem(`${DETACHED_STATE_KEY_PREFIX}${normalizedToken}`, JSON.stringify(state))
+    window.localStorage?.setItem(localKey, JSON.stringify(state))
     return true
   } catch {
     return false
   }
 }
 
-export const consumeDetachedWindowState = (token: string): DetachedWindowState | null => {
-  const normalizedToken = String(token || '').trim()
-  if (!normalizedToken) return null
-  const key = `${DETACHED_STATE_KEY_PREFIX}${normalizedToken}`
+/**
+ * Detached windows refresh this renderer-local snapshot as layout/editor state
+ * changes so reload recovery does not fall back to the stale "just detached"
+ * payload from initial window creation.
+ */
+export const syncDetachedWindowState = (token: string, state: DetachedWindowState): boolean => {
+  const sessionKey = getDetachedStateSessionKey(token)
+  if (!sessionKey) return false
   try {
-    const raw = window.localStorage?.getItem(key)
-    if (!raw) return null
-    window.localStorage?.removeItem(key)
-    const parsed = JSON.parse(raw) as Partial<DetachedWindowState>
-    if (!parsed || typeof parsed !== 'object') return null
-    if (!parsed.layoutTree || typeof parsed.layoutTree !== 'object') return null
-    const sourceClientId = typeof parsed.sourceClientId === 'string' ? parsed.sourceClientId.trim() : ''
-    if (!sourceClientId) return null
-    const fileEditorSnapshot = normalizeFileEditorSnapshot((parsed as any).fileEditorSnapshot)
-    return {
-      sourceClientId,
-      layoutTree: parsed.layoutTree as LayoutTree,
-      createdAt: Number.isFinite(parsed.createdAt) ? Number(parsed.createdAt) : Date.now(),
-      ...(fileEditorSnapshot ? { fileEditorSnapshot } : {})
+    window.sessionStorage?.setItem(sessionKey, JSON.stringify(state))
+    return true
+  } catch {
+    return false
+  }
+}
+
+export const clearDetachedWindowState = (token: string): void => {
+  const sessionKey = getDetachedStateSessionKey(token)
+  const localKey = getDetachedStateLocalKey(token)
+  try {
+    if (sessionKey) {
+      window.sessionStorage?.removeItem(sessionKey)
     }
+  } catch {
+    // ignore cleanup failures
+  }
+  try {
+    if (localKey) {
+      window.localStorage?.removeItem(localKey)
+    }
+  } catch {
+    // ignore cleanup failures
+  }
+}
+
+const parseDetachedWindowState = (raw: string): DetachedWindowState | null => {
+  const parsed = JSON.parse(raw) as Partial<DetachedWindowState>
+  if (!parsed || typeof parsed !== 'object') return null
+  if (!parsed.layoutTree || typeof parsed.layoutTree !== 'object') return null
+  const sourceClientId = typeof parsed.sourceClientId === 'string' ? parsed.sourceClientId.trim() : ''
+  if (!sourceClientId) return null
+  const fileEditorSnapshot = normalizeFileEditorSnapshot((parsed as any).fileEditorSnapshot)
+  return {
+    sourceClientId,
+    layoutTree: parsed.layoutTree as LayoutTree,
+    createdAt: Number.isFinite(parsed.createdAt) ? Number(parsed.createdAt) : Date.now(),
+    ...(fileEditorSnapshot ? { fileEditorSnapshot } : {})
+  }
+}
+
+export const readDetachedWindowState = (token: string): DetachedWindowState | null => {
+  const localKey = getDetachedStateLocalKey(token)
+  const sessionKey = getDetachedStateSessionKey(token)
+  if (!localKey || !sessionKey) return null
+  try {
+    const sessionRaw = window.sessionStorage?.getItem(sessionKey)
+    if (sessionRaw) {
+      const parsed = parseDetachedWindowState(sessionRaw)
+      if (parsed) {
+        return parsed
+      }
+      window.sessionStorage?.removeItem(sessionKey)
+    }
+
+    const localRaw = window.localStorage?.getItem(localKey)
+    if (!localRaw) return null
+    const parsed = parseDetachedWindowState(localRaw)
+    if (!parsed) {
+      window.localStorage?.removeItem(localKey)
+      return null
+    }
+    // Detached-state payloads can include large file-editor buffers. Mirror the
+    // initial payload into sessionStorage for reload survival, then remove the
+    // persistent localStorage copy so repeated detach/close cycles do not leak.
+    try {
+      window.sessionStorage?.setItem(sessionKey, localRaw)
+      window.localStorage?.removeItem(localKey)
+    } catch {
+      // If sessionStorage is unavailable, keep localStorage as a fallback.
+    }
+    return parsed
   } catch {
     return null
   }
@@ -219,6 +295,40 @@ const normalizePanelTabBinding = (value: unknown): LayoutPanelTabBinding | undef
   }
 }
 
+export const normalizeWindowingTerminalTabSnapshot = (value: unknown): WindowingTerminalTabSnapshot | undefined => {
+  if (!value || typeof value !== 'object') {
+    return undefined
+  }
+  const raw = value as Partial<WindowingTerminalTabSnapshot>
+  const id = typeof raw.id === 'string' ? raw.id.trim() : ''
+  const title = typeof raw.title === 'string' ? raw.title.trim() : ''
+  const config = raw.config
+  if (!id || !title || !config || typeof config !== 'object') {
+    return undefined
+  }
+  const connectionRef =
+    raw.connectionRef && typeof raw.connectionRef === 'object'
+      ? raw.connectionRef.type === 'local'
+        ? { type: 'local' as const }
+        : raw.connectionRef.type === 'ssh' && typeof raw.connectionRef.entryId === 'string'
+          ? { type: 'ssh' as const, entryId: raw.connectionRef.entryId.trim() }
+          : undefined
+      : undefined
+  const runtimeState =
+    raw.runtimeState === 'initializing' || raw.runtimeState === 'ready' || raw.runtimeState === 'exited'
+      ? raw.runtimeState
+      : undefined
+  const lastExitCode = typeof raw.lastExitCode === 'number' && Number.isFinite(raw.lastExitCode) ? raw.lastExitCode : undefined
+  return {
+    id,
+    title,
+    config: config as TerminalConfig,
+    ...(connectionRef ? { connectionRef } : {}),
+    ...(runtimeState ? { runtimeState } : {}),
+    ...(typeof lastExitCode === 'number' ? { lastExitCode } : {})
+  }
+}
+
 const normalizePanelDragState = (value: unknown): WindowingPanelDragPayload | null => {
   if (!value || typeof value !== 'object') {
     return null
@@ -235,6 +345,11 @@ const normalizePanelDragState = (value: unknown): WindowingPanelDragPayload | nu
     return null
   }
   const tabBinding = normalizePanelTabBinding(parsed.tabBinding)
+  const terminalTabs = Array.isArray(parsed.terminalTabs)
+    ? parsed.terminalTabs
+        .map((entry) => normalizeWindowingTerminalTabSnapshot(entry))
+        .filter((entry): entry is WindowingTerminalTabSnapshot => !!entry)
+    : undefined
   const fileEditorSnapshot = normalizeFileEditorSnapshot(parsed.fileEditorSnapshot)
   return {
     sourceClientId,
@@ -242,6 +357,7 @@ const normalizePanelDragState = (value: unknown): WindowingPanelDragPayload | nu
     kind,
     ...(stateToken ? { stateToken } : {}),
     ...(tabBinding ? { tabBinding } : {}),
+    ...(terminalTabs && terminalTabs.length > 0 ? { terminalTabs } : {}),
     ...(fileEditorSnapshot ? { fileEditorSnapshot } : {})
   }
 }

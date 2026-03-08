@@ -84,6 +84,7 @@ export class ChatStore {
       hydrateSessionInventoryFromLayout: action,
       hydrateSessionsFromBackend: action,
       createSession: action,
+      ensureSession: action,
       setActiveSession: action,
       closeSession: action,
       addMessage: action,
@@ -93,6 +94,7 @@ export class ChatStore {
       setSessionBusy: action,
       clear: action,
       handleUiUpdate: action,
+      hydrateSessionFromBackend: action,
       loadChatHistory: action,
       deleteChatSession: action,
       renameChatSession: action,
@@ -315,6 +317,22 @@ export class ChatStore {
     return id
   }
 
+  ensureSession(id: string, title: string = 'New Chat'): void {
+    const normalizedId = String(id || '').trim()
+    if (!normalizedId) {
+      return
+    }
+    if (this.getSessionById(normalizedId)) {
+      return
+    }
+    const normalizedTitle = String(title || '').trim() || 'New Chat'
+    const session = this.createEmptySession(normalizedId, normalizedTitle)
+    runInAction(() => {
+      this.sessions.push(session)
+    })
+    this.emitSessionsChanged()
+  }
+
   setActiveSession(id: string) {
     this.activeSessionId = id
   }
@@ -534,7 +552,13 @@ export class ChatStore {
     }
   }
 
-  async loadChatHistory(sessionId: string): Promise<void> {
+  async hydrateSessionFromBackend(
+    sessionId: string,
+    options?: {
+      activate?: boolean
+      loadAgentContext?: boolean
+    }
+  ): Promise<void> {
     try {
       // Get all history first to find the title
       const allHistory = await this.getAllChatHistory()
@@ -582,16 +606,34 @@ export class ChatStore {
           })
         }
 
-        this.activeSessionId = sessionId
+        if (options?.activate !== false) {
+          this.activeSessionId = sessionId
+        }
       })
       this.emitSessionsChanged()
 
-      // Also load backend session for agent context
-      await window.gyshell.agent.loadChatSession(sessionId)
+      if (options?.loadAgentContext !== false) {
+        // Also load backend session for agent context when the caller is doing
+        // a user-visible navigation to this session.
+        await window.gyshell.agent.loadChatSession(sessionId)
+      }
     } catch (error) {
       console.error('Failed to load chat history:', error)
       throw error
     }
+  }
+
+  async loadChatHistory(
+    sessionId: string,
+    options?: {
+      activate?: boolean
+      loadAgentContext?: boolean
+    }
+  ): Promise<void> {
+    await this.hydrateSessionFromBackend(sessionId, {
+      activate: options?.activate !== false,
+      loadAgentContext: options?.loadAgentContext !== false
+    })
   }
 
   async getAllChatHistory(): Promise<any[]> {

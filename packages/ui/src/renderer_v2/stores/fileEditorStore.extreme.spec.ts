@@ -123,6 +123,46 @@ const run = async (): Promise<void> => {
     assertEqual(target.busy, false, 'restoring snapshot should not keep busy state')
   })
 
+  await runCase('restoreSnapshot resumes loading snapshots in the target store', async () => {
+    let readCallCount = 0
+    ;(globalThis as unknown as { window: unknown }).window = {
+      gyshell: {
+        filesystem: {
+          readTextFile: async (_terminalId: string, filePath: string) => {
+            readCallCount += 1
+            return {
+              path: filePath,
+              content: 'restored-content',
+              size: 16,
+              encoding: 'utf8' as const
+            }
+          },
+          writeTextFile: async () => {}
+        }
+      },
+      confirm: () => true
+    }
+
+    const source = new FileEditorStore(makeAppStoreMock())
+    source.terminalId = 'term-a'
+    source.filePath = '/tmp/loading.txt'
+    source.mode = 'loading'
+
+    const snapshot = source.captureSnapshot()
+
+    const target = new FileEditorStore(makeAppStoreMock())
+    const restored = target.restoreSnapshot(snapshot)
+    assertEqual(restored, true, 'restoreSnapshot should accept loading snapshots')
+    assertEqual(target.mode, 'loading', 'target should enter loading mode immediately')
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    assertEqual(readCallCount, 1, 'restoring a loading snapshot should restart the file read')
+    assertEqual(target.mode, 'text', 'target should leave loading mode after the restarted read')
+    assertEqual(target.content, 'restored-content', 'target should receive the reloaded content')
+    assertEqual(target.filePath, '/tmp/loading.txt', 'target should keep the restored file path')
+  })
+
   // --- Load-cancellation race ---
   await runCase('openFromFileSystem load-cancellation: second open supersedes first, first returns false', async () => {
     let firstReadResolve: ((value: unknown) => void) | null = null

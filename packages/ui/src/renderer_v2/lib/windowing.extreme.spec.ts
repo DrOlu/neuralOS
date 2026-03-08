@@ -9,10 +9,13 @@ import {
   clearPanelDragState,
   createWindowingChannel,
   readPanelDragState,
+  readDetachedWindowState,
+  syncDetachedWindowState,
+  stashDetachedWindowState,
   stashPanelDragState,
   WINDOWING_STORAGE_CHANNEL_KEY
 } from './windowing'
-import type { PanelKind } from '../layout'
+import type { LayoutTree, PanelKind } from '../layout'
 
 const assertEqual = <T>(actual: T, expected: T, message: string): void => {
   if (actual !== expected) {
@@ -126,6 +129,64 @@ runCase('stashed panel drag state round-trips through localStorage by token', ()
     assertDeepEqual(readPanelDragState(token), payload, 'panel drag state should be restored intact')
     clearPanelDragState(token)
     assertEqual(readPanelDragState(token), null, 'cleared panel drag state should not be readable')
+  } finally {
+    ;(globalThis as any).window = originalWindow
+  }
+})
+
+runCase('detached window state survives repeated reads for renderer reloads', () => {
+  const originalWindow = (globalThis as any).window
+  const localStorageState = new Map<string, string>()
+  const sessionStorageState = new Map<string, string>()
+
+  const createStorage = (state: Map<string, string>) => ({
+    getItem(key: string) {
+      return state.has(key) ? state.get(key)! : null
+    },
+    setItem(key: string, value: string) {
+      state.set(key, value)
+    },
+    removeItem(key: string) {
+      state.delete(key)
+    }
+  })
+
+  ;(globalThis as any).window = {
+    localStorage: createStorage(localStorageState),
+    sessionStorage: createStorage(sessionStorageState)
+  }
+
+  try {
+    const token = 'detached-state-token'
+    const detachedState = {
+      sourceClientId: 'win-main',
+      layoutTree: {
+        schemaVersion: 2,
+        root: { type: 'panel' as const, id: 'node-term', panel: { id: 'panel-term', kind: 'terminal' as const } },
+        focusedPanelId: 'panel-term'
+      } as LayoutTree,
+      createdAt: 123
+    }
+
+    assertEqual(stashDetachedWindowState(token, detachedState), true, 'detached state should be stashed')
+    assertDeepEqual(readDetachedWindowState(token), detachedState, 'first detached state read should succeed')
+    assertCondition(
+      !localStorageState.has(`gyshell.detachedState.${token}`),
+      'first detached state read should clear the persistent localStorage blob'
+    )
+    assertDeepEqual(readDetachedWindowState(token), detachedState, 'second detached state read should still succeed after reload')
+
+    const refreshedState = {
+      ...detachedState,
+      createdAt: 456,
+      layoutTree: {
+        schemaVersion: 2,
+        root: { type: 'panel' as const, id: 'node-chat', panel: { id: 'panel-chat', kind: 'chat' as const } },
+        focusedPanelId: 'panel-chat'
+      } as LayoutTree
+    }
+    assertEqual(syncDetachedWindowState(token, refreshedState), true, 'detached state refresh should update session snapshot')
+    assertDeepEqual(readDetachedWindowState(token), refreshedState, 'later reads should pick refreshed detached session snapshot')
   } finally {
     ;(globalThis as any).window = originalWindow
   }
