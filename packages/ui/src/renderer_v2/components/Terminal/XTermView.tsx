@@ -8,6 +8,14 @@ import './xtermView.scss'
 import type { TerminalConfig } from '../../lib/ipcTypes'
 import { isTerminalTrackedByBackend } from './runtimeRetention'
 import { resolveTerminalSize } from './terminalDimensions'
+import {
+  mergeTerminalRefitRequests,
+  NORMAL_TERMINAL_REFIT_REQUEST,
+  normalizeTerminalRecoveryReason,
+  RECOVERY_TERMINAL_REFIT_REQUEST,
+  shouldSendTerminalBackendResize,
+  type TerminalRefitRequest
+} from './terminalRecovery'
 import { isRuntimeOwnedByUi } from './runtimeOwnership'
 import {
   hasFileSystemPanelDragPayloadType,
@@ -48,9 +56,14 @@ interface TerminalRuntime {
   selectionDispose: () => void
   scrollDispose: () => void
   removeDomListeners: () => void
+  refitFrame: number | null
+  settleRefitFrame: number | null
+  pendingRefitRequest: TerminalRefitRequest
+  lastHandledRecoveryEpoch: number
 }
 
 const runtimePool = new Map<string, TerminalRuntime>()
+let terminalRecoveryEpoch = 0
 
 const toPlainConfig = (config: TerminalConfig): TerminalConfig =>
   JSON.parse(JSON.stringify(config)) as TerminalConfig
@@ -61,21 +74,78 @@ const clearTimer = (timerId: number | null): void => {
   }
 }
 
-const refitRuntime = (runtime: TerminalRuntime): void => {
+const clearAnimationFrame = (frameId: number | null): void => {
+  if (frameId !== null) {
+    window.cancelAnimationFrame(frameId)
+  }
+}
+
+const noteTerminalRecoveryEvent = (): number => {
+  terminalRecoveryEpoch += 1
+  return terminalRecoveryEpoch
+}
+
+const refitRuntime = (
+  runtime: TerminalRuntime,
+  request: TerminalRefitRequest = NORMAL_TERMINAL_REFIT_REQUEST
+): void => {
   const host = runtime.hostEl
   if (!host) return
   if (host.clientWidth <= 0 || host.clientHeight <= 0) return
   try {
+    if (request.clearTextureAtlas) {
+      runtime.term.clearTextureAtlas()
+    }
+    const previousCols = runtime.term.cols
+    const previousRows = runtime.term.rows
     runtime.fit.fit()
     const next = runtime.fit.proposeDimensions()
     const size = resolveTerminalSize(next, {
       cols: runtime.term.cols,
       rows: runtime.term.rows
     })
-    window.gyshell.terminal.resize(runtime.terminalId, size.cols, size.rows)
+    if (
+      shouldSendTerminalBackendResize({
+        previousCols,
+        previousRows,
+        nextCols: size.cols,
+        nextRows: size.rows,
+        forceBackendResize: request.forceBackendResize
+      })
+    ) {
+      void window.gyshell.terminal.resize(runtime.terminalId, size.cols, size.rows).catch(() => {
+        // ignore transient backend issues during recovery or hot reload
+      })
+    }
+    runtime.term.refresh(0, Math.max(0, runtime.term.rows - 1))
   } catch {
     // ignore transient DOM/layout issues
   }
+}
+
+const scheduleRuntimeRefit = (
+  runtime: TerminalRuntime,
+  request: TerminalRefitRequest = NORMAL_TERMINAL_REFIT_REQUEST
+): void => {
+  runtime.pendingRefitRequest = mergeTerminalRefitRequests(runtime.pendingRefitRequest, request)
+  clearAnimationFrame(runtime.refitFrame)
+  clearAnimationFrame(runtime.settleRefitFrame)
+  runtime.refitFrame = window.requestAnimationFrame(() => {
+    runtime.refitFrame = null
+    const nextRequest = runtime.pendingRefitRequest
+    runtime.pendingRefitRequest = { ...NORMAL_TERMINAL_REFIT_REQUEST }
+    refitRuntime(runtime, nextRequest)
+    // Resizable panel layout can settle one frame later; run one more fit pass.
+    runtime.settleRefitFrame = window.requestAnimationFrame(() => {
+      runtime.settleRefitFrame = null
+      refitRuntime(runtime, NORMAL_TERMINAL_REFIT_REQUEST)
+    })
+  })
+}
+
+const scheduleRuntimeRecoveryRefit = (runtime: TerminalRuntime, recoveryEpoch = terminalRecoveryEpoch): void => {
+  runtime.lastHandledRecoveryEpoch = Math.max(runtime.lastHandledRecoveryEpoch, recoveryEpoch)
+  scheduleRuntimeRefit(runtime, RECOVERY_TERMINAL_REFIT_REQUEST)
 }
 
 const attachRuntimeToHost = (runtime: TerminalRuntime, hostEl: HTMLDivElement): void => {
@@ -90,8 +160,12 @@ const attachRuntimeToHost = (runtime: TerminalRuntime, hostEl: HTMLDivElement): 
 const disposeRuntime = (runtime: TerminalRuntime): void => {
   clearTimer(runtime.releaseTimer)
   clearTimer(runtime.scrollHideTimer)
+  clearAnimationFrame(runtime.refitFrame)
+  clearAnimationFrame(runtime.settleRefitFrame)
   runtime.releaseTimer = null
   runtime.scrollHideTimer = null
+  runtime.refitFrame = null
+  runtime.settleRefitFrame = null
   runtime.cleanupBackendData()
   runtime.cleanupContextMenuListener()
   runtime.inputDispose()
@@ -159,7 +233,11 @@ const createRuntime = (
     inputDispose: () => {},
     selectionDispose: () => {},
     scrollDispose: () => {},
-    removeDomListeners: () => {}
+    removeDomListeners: () => {},
+    refitFrame: null,
+    settleRefitFrame: null,
+    pendingRefitRequest: { ...NORMAL_TERMINAL_REFIT_REQUEST },
+    lastHandledRecoveryEpoch: terminalRecoveryEpoch
   }
 
   const showScrollbar = () => {
@@ -449,12 +527,6 @@ export function XTermView(props: {
   const hostRef = useRef<HTMLDivElement>(null)
   const runtimeRef = useRef<TerminalRuntime | null>(null)
 
-  const refitTerminal = React.useCallback(() => {
-    const runtime = runtimeRef.current
-    if (!runtime) return
-    refitRuntime(runtime)
-  }, [])
-
   useEffect(() => {
     const hostEl = hostRef.current
     if (!hostEl) return
@@ -470,23 +542,47 @@ export function XTermView(props: {
     const handleResize = () => {
       const activeRuntime = runtimeRef.current
       if (!activeRuntime?.isActive) return
-      refitTerminal()
+      scheduleRuntimeRefit(activeRuntime)
+    }
+
+    const handleRecoveryHint = () => {
+      const recoveryEpoch = noteTerminalRecoveryEvent()
+      const activeRuntime = runtimeRef.current
+      if (!activeRuntime?.isActive) return
+      scheduleRuntimeRecoveryRefit(activeRuntime, recoveryEpoch)
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return
+      handleRecoveryHint()
     }
 
     window.addEventListener('resize', handleResize)
+    window.addEventListener('pageshow', handleRecoveryHint)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
     const resizeObserver =
       typeof ResizeObserver !== 'undefined'
         ? new ResizeObserver(() => {
             const activeRuntime = runtimeRef.current
             if (!activeRuntime?.isActive) return
-            refitTerminal()
+            scheduleRuntimeRefit(activeRuntime)
           })
         : null
     resizeObserver?.observe(hostEl)
+    const removeRecoveryHintListener =
+      typeof window.gyshell.terminal.onRecoveryHint === 'function'
+        ? window.gyshell.terminal.onRecoveryHint((payload) => {
+            if (!normalizeTerminalRecoveryReason(payload?.reason)) return
+            handleRecoveryHint()
+          })
+        : () => {}
 
     return () => {
       window.removeEventListener('resize', handleResize)
+      window.removeEventListener('pageshow', handleRecoveryHint)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
       resizeObserver?.disconnect()
+      removeRecoveryHintListener()
       hostEl.classList.remove('is-scrollbar-visible')
       const activeRuntime = runtimeRef.current
       if (activeRuntime && activeRuntime.terminalId === props.config.id) {
@@ -494,7 +590,7 @@ export function XTermView(props: {
       }
       releaseRuntime(props.config.id)
     }
-  }, [props.config.id, refitTerminal])
+  }, [props.config.id])
 
   useEffect(() => {
     const runtime = runtimeRef.current
@@ -518,6 +614,13 @@ export function XTermView(props: {
     const runtime = runtimeRef.current
     if (!runtime) return
     runtime.isActive = props.isActive ?? false
+    if (runtime.isActive) {
+      if (runtime.lastHandledRecoveryEpoch < terminalRecoveryEpoch) {
+        scheduleRuntimeRecoveryRefit(runtime, terminalRecoveryEpoch)
+      } else {
+        scheduleRuntimeRefit(runtime)
+      }
+    }
   }, [props.isActive, props.config.id])
 
   // Live-update theme (Tabby-style behavior)
@@ -544,7 +647,7 @@ export function XTermView(props: {
       if (!props.isActive) return
       const activeRuntime = runtimeRef.current
       if (!activeRuntime || activeRuntime.terminalId !== props.config.id) return
-      refitTerminal()
+      scheduleRuntimeRefit(activeRuntime)
     })
   }, [
     props.terminalSettings?.fontSize,
@@ -553,8 +656,7 @@ export function XTermView(props: {
     props.terminalSettings?.cursorStyle,
     props.terminalSettings?.cursorBlink,
     props.config.id,
-    props.isActive,
-    refitTerminal
+    props.isActive
   ])
 
   // Re-fit when the tab becomes active (Tabby-like behavior)
@@ -565,9 +667,9 @@ export function XTermView(props: {
     requestAnimationFrame(() => {
       const activeRuntime = runtimeRef.current
       if (!activeRuntime || activeRuntime.terminalId !== props.config.id) return
-      refitTerminal()
+      scheduleRuntimeRefit(activeRuntime)
     })
-  }, [props.isActive, props.layoutSignature, props.config.id, refitTerminal])
+  }, [props.isActive, props.layoutSignature, props.config.id])
 
   return <div className="xterm-host" ref={hostRef} />
 }

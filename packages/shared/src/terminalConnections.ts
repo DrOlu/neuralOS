@@ -1,5 +1,6 @@
 export interface TerminalConnectionCapabilities {
   supportsFilesystem: boolean
+  supportsMonitor: boolean
 }
 
 export type TerminalConnectionIconKind = 'local' | 'remote' | 'generic'
@@ -37,6 +38,7 @@ const KNOWN_TERMINAL_CONNECTION_TYPE_DEFINITIONS: Record<
     iconKind: 'local',
     capabilities: {
       supportsFilesystem: true,
+      supportsMonitor: true,
     },
   },
   ssh: {
@@ -46,6 +48,7 @@ const KNOWN_TERMINAL_CONNECTION_TYPE_DEFINITIONS: Record<
     iconKind: 'remote',
     capabilities: {
       supportsFilesystem: true,
+      supportsMonitor: true,
     },
   },
 }
@@ -58,6 +61,7 @@ const FALLBACK_TERMINAL_CONNECTION_TYPE_DEFINITION: TerminalConnectionTypeDefini
     iconKind: 'generic',
     capabilities: {
       supportsFilesystem: false,
+      supportsMonitor: false,
     },
     isKnown: false,
   }

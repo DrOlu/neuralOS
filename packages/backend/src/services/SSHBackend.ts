@@ -36,6 +36,10 @@ interface SSHInstance {
   cwd?: string
   homeDir?: string
   remoteOs?: 'unix' | 'windows'
+  systemInfo?: any
+  systemInfoPromise?: Promise<any>
+  systemInfoRetryTimer?: ReturnType<typeof setTimeout>
+  systemInfoRetryCount?: number
   forwardServers: net.Server[]
   remoteForwards: Array<{ host: string; port: number }>
   remoteForwardHandlerInstalled: boolean
@@ -62,10 +66,66 @@ export class SSHBackend implements TerminalBackend {
   private static readonly FAST_TRANSFER_TIMEOUT_MIN_MS = 45_000
   private static readonly FAST_TRANSFER_TIMEOUT_MAX_MS = 10 * 60 * 1000
   private static readonly FAST_TRANSFER_TIMEOUT_PER_MB_MS = 12_000
+  private static readonly SYSTEM_INFO_RETRY_BASE_MS = 1500
+  private static readonly SYSTEM_INFO_RETRY_MAX_MS = 8000
+  private static readonly SYSTEM_INFO_RETRY_MAX_ATTEMPTS = 6
+
+  /**
+   * Public exec wrapper for ResourceMonitorService.
+   * Executes a command on an existing SSH session and collects output.
+   */
+  async execOnSession(
+    ptyId: string,
+    command: string,
+    timeoutMs = 6000
+  ): Promise<{ stdout: string; stderr: string } | null> {
+    const instance = this.sessions.get(ptyId)
+    if (!instance) return null
+    try {
+      return await this.execCollect(instance.client, command, timeoutMs)
+    } catch {
+      return null
+    }
+  }
 
   private stripReadyMarker(chunk: string): string {
     if (!chunk.includes(GYSHELL_READY_MARKER)) return chunk
     return chunk.replace(/__GYSHELL_READY__/g, '')
+  }
+
+  private clearSystemInfoRetry(instance: SSHInstance): void {
+    if (instance.systemInfoRetryTimer) {
+      clearTimeout(instance.systemInfoRetryTimer)
+      instance.systemInfoRetryTimer = undefined
+    }
+    instance.systemInfoRetryCount = 0
+  }
+
+  private scheduleSystemInfoRetry(ptyId: string): void {
+    const instance = this.sessions.get(ptyId)
+    if (!instance || instance.systemInfo || instance.systemInfoPromise || instance.systemInfoRetryTimer) {
+      return
+    }
+    if (instance.initializationState === 'failed') {
+      return
+    }
+    const nextAttempt = (instance.systemInfoRetryCount || 0) + 1
+    if (nextAttempt > SSHBackend.SYSTEM_INFO_RETRY_MAX_ATTEMPTS) {
+      return
+    }
+    instance.systemInfoRetryCount = nextAttempt
+    const delayMs = Math.min(
+      SSHBackend.SYSTEM_INFO_RETRY_BASE_MS * Math.max(1, 2 ** (nextAttempt - 1)),
+      SSHBackend.SYSTEM_INFO_RETRY_MAX_MS
+    )
+    instance.systemInfoRetryTimer = setTimeout(() => {
+      const current = this.sessions.get(ptyId)
+      if (!current) {
+        return
+      }
+      current.systemInfoRetryTimer = undefined
+      void this.getSystemInfo(ptyId)
+    }, delayMs)
   }
 
   private async execCollect(
@@ -484,7 +544,8 @@ Write-Output "__GYSHELL_READY__"
       forwardServers: [],
       remoteForwards: [],
       remoteForwardHandlerInstalled: false,
-      initializationState: 'initializing'
+      initializationState: 'initializing',
+      systemInfoRetryCount: 0,
     }
     this.sessions.set(config.id, instance)
 
@@ -649,6 +710,7 @@ Write-Output "__GYSHELL_READY__"
           })
 
           stream.on('close', (code: number) => {
+            this.clearSystemInfoRetry(instance)
             for (const s of instance.forwardServers) { try { s.close() } catch {} }
             for (const rf of instance.remoteForwards) { try { instance.client.unforwardIn(rf.host, rf.port) } catch {} }
             try { instance.sftp?.end?.() } catch {}
@@ -735,6 +797,7 @@ Write-Output "__GYSHELL_READY__"
   kill(ptyId: string): void {
     const instance = this.sessions.get(ptyId)
     if (instance) {
+      this.clearSystemInfoRetry(instance)
       this.closeChunkSessionsForPty(ptyId)
       for (const s of instance.forwardServers) { try { s.close() } catch {} }
       for (const rf of instance.remoteForwards) { try { instance.client.unforwardIn(rf.host, rf.port) } catch {} }
@@ -766,61 +829,79 @@ Write-Output "__GYSHELL_READY__"
     return this.sessions.get(ptyId)?.initializationState
   }
 
+  private async waitForRemoteOs(instance: SSHInstance, timeoutMs = 4000): Promise<'unix' | 'windows' | undefined> {
+    if (instance.remoteOs) {
+      return instance.remoteOs
+    }
+    const deadline = Date.now() + timeoutMs
+    while (!instance.remoteOs && instance.initializationState === 'initializing' && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    return instance.remoteOs
+  }
+
+  private buildWindowsSystemInfoCommand(): string {
+    const script = [
+      "$utf8=[System.Text.UTF8Encoding]::new($false)",
+      '[Console]::OutputEncoding=$utf8',
+      '$OutputEncoding=$utf8',
+      '$os=Get-CimInstance Win32_OperatingSystem',
+      "$json=([pscustomobject]@{Version=$os.Version;CSName=$os.CSName;Arch=$(if([Environment]::Is64BitOperatingSystem){'x64'}else{'x86'})}|ConvertTo-Json -Compress)",
+      '$bytes=$utf8.GetBytes($json)',
+      '[Console]::OpenStandardOutput().Write($bytes,0,$bytes.Length)',
+    ].join(';')
+    const encoded = Buffer.from(script, 'utf16le').toString('base64')
+    return `powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ${encoded}`
+  }
+
   async getSystemInfo(ptyId: string): Promise<any> {
     const instance = this.sessions.get(ptyId)
     if (!instance) return undefined
+    if (instance.systemInfo) {
+      return instance.systemInfo
+    }
+    if (instance.systemInfoPromise) {
+      return await instance.systemInfoPromise
+    }
 
     const client = instance.client
-    const isWindows = instance.remoteOs === 'windows'
+    instance.systemInfoPromise = (async () => {
+      const remoteOs = await this.waitForRemoteOs(instance)
+      if (!remoteOs) {
+        return undefined
+      }
+      const isWindows = remoteOs === 'windows'
 
-    if (isWindows) {
-      try {
-        const [ver, info] = await Promise.all([
-          this.execCollect(client, 'cmd.exe /c ver'),
-          this.execCollect(client, 'powershell.exe -Command "Get-ComputerInfo -Property OsName,OsVersion,CsProcessors,CsName | ConvertTo-Json"')
-        ])
-        
-        let osName = 'Windows'
-        let release = ''
-        let arch = ''
-        let hostname = ''
-
+      if (isWindows) {
         try {
-          const parsed = JSON.parse(info.stdout)
-          osName = parsed.OsName || 'Windows'
-          release = parsed.OsVersion || ''
-          hostname = parsed.CsName || ''
-          arch = parsed.CsProcessors?.[0]?.Architecture || ''
+          const info = await this.execCollect(
+            client,
+            this.buildWindowsSystemInfoCommand(),
+            10000
+          )
+          const parsed = JSON.parse(info.stdout || '{}')
+          const next = {
+            os: 'Windows',
+            platform: 'win32',
+            release: parsed.Version || '',
+            arch: parsed.Arch || '',
+            hostname: parsed.CSName || '',
+            isRemote: true,
+            shell: 'powershell.exe'
+          }
+          this.clearSystemInfoRetry(instance)
+          instance.systemInfo = next
+          return next
         } catch {
-          const verMatch = ver.stdout.match(/Version ([\d.]+)/)
-          release = verMatch ? verMatch[1] : ''
-        }
-
-        return {
-          os: osName,
-          platform: 'win32',
-          release,
-          arch,
-          hostname,
-          isRemote: true,
-          shell: 'powershell.exe'
-        }
-      } catch {
-        return {
-          os: 'Windows',
-          platform: 'win32',
-          release: 'unknown',
-          arch: 'unknown',
-          hostname: 'unknown',
-          isRemote: true
+          return undefined
         }
       }
-    } else {
+
       try {
         const [uname, osRelease, hostname] = await Promise.all([
-          this.execCollect(client, 'uname -a'),
-          this.execCollect(client, 'cat /etc/os-release 2>/dev/null || cat /usr/lib/os-release 2>/dev/null'),
-          this.execCollect(client, 'hostname')
+          this.execCollect(client, 'uname -a', 8000),
+          this.execCollect(client, 'cat /etc/os-release 2>/dev/null || cat /usr/lib/os-release 2>/dev/null', 8000),
+          this.execCollect(client, 'hostname', 8000)
         ])
 
         let os = 'unix'
@@ -831,28 +912,42 @@ Write-Output "__GYSHELL_READY__"
           const unameS = uname.stdout.split(' ')[0].toLowerCase()
           os = unameS || 'unix'
         }
+        const unameS = uname.stdout.split(' ')[0].toLowerCase()
+        const platform =
+          unameS.includes('darwin')
+            ? 'darwin'
+            : unameS.includes('linux')
+              ? 'linux'
+              : 'unix'
 
         const parts = uname.stdout.split(' ')
-        return {
+        const next = {
           os,
-          platform: process.platform === 'win32' ? 'linux' : 'unix', // Best guess
+          platform,
           release: parts[2] || '',
           arch: parts[parts.length - 2] || '',
           hostname: hostname.stdout.trim() || parts[1] || '',
           isRemote: true,
-          shell: '/bin/sh' // Default fallback
+          shell: '/bin/sh'
         }
+        this.clearSystemInfoRetry(instance)
+        instance.systemInfo = next
+        return next
       } catch {
-        return {
-          os: 'unix',
-          platform: 'unix',
-          release: 'unknown',
-          arch: 'unknown',
-          hostname: 'unknown',
-          isRemote: true
-        }
+        return undefined
       }
+    })()
+
+    let result: any
+    try {
+      result = await instance.systemInfoPromise
+    } finally {
+      instance.systemInfoPromise = undefined
     }
+    if (!result) {
+      this.scheduleSystemInfoRetry(ptyId)
+    }
+    return result
   }
 
   private normalizeRemotePath(filePath: string): string {

@@ -14,7 +14,6 @@ import {
   type LayoutNode,
   type LayoutPanelTabBinding,
   type LayoutRect,
-  type LayoutTree,
   type LayoutSplitNode,
   type PanelKind,
   type TabDragPayload
@@ -25,13 +24,13 @@ import { PanelTypeRail } from './PanelTypeRail'
 import { getPanelKindAdapter } from '../../stores/panelKindAdapters'
 import {
   WINDOW_CONTEXT,
-  clearDetachedWindowState,
+  buildDetachedLayoutTree,
   clearPanelDragState,
   createWindowingChannel,
   normalizeWindowingTerminalTabSnapshot,
+  openDetachedWindowState,
   readPanelDragState,
   syncDetachedWindowState,
-  stashDetachedWindowState,
   stashPanelDragState,
   type DetachedWindowState,
   type WindowingChannel,
@@ -138,7 +137,7 @@ const parseCrossWindowTabDragPayload = (
     const sourcePanelId = typeof parsed.sourcePanelId === 'string' ? parsed.sourcePanelId.trim() : ''
     const kind = parsed.kind
     if (!sourceClientId || !tabId || !sourcePanelId) return null
-    if (kind !== 'chat' && kind !== 'terminal' && kind !== 'filesystem' && kind !== 'fileEditor') {
+    if (kind !== 'chat' && kind !== 'terminal' && kind !== 'filesystem' && kind !== 'fileEditor' && kind !== 'monitor') {
       return null
     }
     const terminalTab = normalizeWindowingTerminalTabSnapshot((parsed as any).terminalTab)
@@ -171,7 +170,7 @@ const parseCrossWindowPanelDragPayload = (
     const stateToken = typeof parsed.stateToken === 'string' ? parsed.stateToken.trim() : ''
     const kind = parsed.kind
     if (!sourceClientId || !sourcePanelId) return null
-    if (kind !== 'chat' && kind !== 'terminal' && kind !== 'filesystem' && kind !== 'fileEditor') {
+    if (kind !== 'chat' && kind !== 'terminal' && kind !== 'filesystem' && kind !== 'fileEditor' && kind !== 'monitor') {
       return null
     }
     const tabBinding = (() => {
@@ -702,6 +701,7 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
         store.hydrateTransferredTabs('chat', chatTabIds)
         store.unsuppressTabs('terminal', tabsByKind.terminal || [])
         store.unsuppressTabs('filesystem', tabsByKind.filesystem || [])
+        store.unsuppressTabs('monitor', tabsByKind.monitor || [])
         return
       }
 
@@ -863,56 +863,6 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
     [store.fileEditor]
   )
 
-  const buildDetachedLayoutTree = React.useCallback(
-    (kind: PanelKind, tabBinding?: LayoutPanelTabBinding): LayoutTree => {
-      const panelId = makeLayoutId(`panel-${kind}`)
-      return {
-        schemaVersion: 2,
-        root: {
-          type: 'panel',
-          id: makeLayoutId('node'),
-          panel: {
-            id: panelId,
-            kind
-          }
-        },
-        focusedPanelId: panelId,
-        ...(tabBinding && getPanelKindAdapter(kind).supportsTabs
-          ? {
-              panelTabs: {
-                [panelId]: {
-                  tabIds: tabBinding.tabIds || [],
-                  ...(tabBinding.activeTabId ? { activeTabId: tabBinding.activeTabId } : {})
-                }
-              }
-            }
-          : {})
-      }
-    },
-    []
-  )
-
-  const openDetachedWindow = React.useCallback(
-    async (state: DetachedWindowState): Promise<boolean> => {
-      const token = `detached-${makeLayoutId('state')}`
-      const stashed = stashDetachedWindowState(token, state)
-      if (!stashed) {
-        return false
-      }
-      try {
-        const result = await window.gyshell.windowing.openDetached(token, store.windowClientId)
-        if (result?.ok) {
-          return true
-        }
-      } catch {
-        // noop
-      }
-      clearDetachedWindowState(token)
-      return false
-    },
-    [store.windowClientId]
-  )
-
   const detachPanelToWindow = React.useCallback(
     async (panelId: string) => {
       if (!store.layout.canRemovePanel(panelId)) return
@@ -923,7 +873,7 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
       const panelBinding = toPanelTabBinding(panelId, panelKind)
       const fileEditorSnapshot = toPanelFileEditorSnapshot(panelKind)
       const detachedTree = buildDetachedLayoutTree(panelKind, panelBinding)
-      const opened = await openDetachedWindow({
+      const opened = await openDetachedWindowState({
         sourceClientId: store.windowClientId,
         layoutTree: detachedTree,
         createdAt: Date.now(),
@@ -938,7 +888,7 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
       store.layout.removePanel(panelId)
       store.onPanelRemoved(panelKind)
     },
-    [buildDetachedLayoutTree, openDetachedWindow, store, toPanelFileEditorSnapshot, toPanelTabBinding]
+    [store, toPanelFileEditorSnapshot, toPanelTabBinding]
   )
 
   const detachTabToWindow = React.useCallback(
@@ -951,7 +901,7 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
         tabIds: [tabId],
         activeTabId: tabId
       })
-      const opened = await openDetachedWindow({
+      const opened = await openDetachedWindowState({
         sourceClientId: store.windowClientId,
         layoutTree: detachedTree,
         createdAt: Date.now()
@@ -963,7 +913,32 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
       store.suppressTabs(payload.kind, [tabId], { syncLayout: false })
       store.layout.detachTabFromLayout(payload.kind, tabId)
     },
-    [buildDetachedLayoutTree, openDetachedWindow, store]
+    [store]
+  )
+
+  const openKindInDetachedWindow = React.useCallback(
+    async (
+      kind: 'chat' | 'terminal' | 'filesystem' | 'monitor',
+      intent: 'create-new-tab' | 'open-panel-only'
+    ) => {
+      const adapter = getPanelKindAdapter(kind)
+      const ownerTabIds = adapter.supportsTabs ? adapter.getOwnerTabIds(store) : []
+      const activeTabId = adapter.supportsTabs ? adapter.getGlobalActiveTabId(store) : null
+      const tabBinding =
+        adapter.supportsTabs && (intent === 'open-panel-only' || ownerTabIds.length > 0)
+          ? {
+              tabIds: ownerTabIds,
+              ...(activeTabId && ownerTabIds.includes(activeTabId) ? { activeTabId } : ownerTabIds[0] ? { activeTabId: ownerTabIds[0] } : {})
+            }
+          : undefined
+
+      await openDetachedWindowState({
+        sourceClientId: store.windowClientId,
+        layoutTree: buildDetachedLayoutTree(kind, tabBinding),
+        createdAt: Date.now()
+      })
+    },
+    [store]
   )
 
   const terminalSignature = store.terminalTabs.map((tab) => tab.id).join('|')
@@ -1249,7 +1224,7 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
       const tabId = tabElement.getAttribute('data-layout-tab-id')
       const kind = tabElement.getAttribute('data-layout-tab-kind')
       const sourcePanelId = tabElement.getAttribute('data-layout-tab-panel-id')
-      if (!tabId || !sourcePanelId || (kind !== 'chat' && kind !== 'terminal' && kind !== 'filesystem' && kind !== 'fileEditor')) {
+      if (!tabId || !sourcePanelId || (kind !== 'chat' && kind !== 'terminal' && kind !== 'filesystem' && kind !== 'fileEditor' && kind !== 'monitor')) {
         return null
       }
       if (!getPanelKindAdapter(kind).supportsTabs) {
@@ -1281,7 +1256,7 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
       if (!panelDragSource) return null
       const panelId = panelDragSource.getAttribute('data-layout-panel-id')
       const kind = panelDragSource.getAttribute('data-layout-panel-kind') as PanelKind | null
-      if (!panelId || (kind !== 'chat' && kind !== 'terminal' && kind !== 'filesystem' && kind !== 'fileEditor')) {
+      if (!panelId || (kind !== 'chat' && kind !== 'terminal' && kind !== 'filesystem' && kind !== 'fileEditor' && kind !== 'monitor')) {
         return null
       }
       // A cross-window panel move removes the source panel from this window after
@@ -1319,7 +1294,7 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
       panelId: string,
       kind: PanelKind
     ): WindowingTerminalTabSnapshot[] | undefined => {
-      if (kind !== 'terminal' && kind !== 'filesystem') {
+      if (kind !== 'terminal' && kind !== 'filesystem' && kind !== 'monitor') {
         return undefined
       }
       const snapshots = store.layout
@@ -2041,7 +2016,15 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
     const splitItems = splitActions.map((entry) => ({
       action: entry.action,
       labelKey: entry.labelKey,
-      disabled: !canSplit || !hasTargetTab
+      disabled:
+        !canSplit ||
+        !hasTargetTab ||
+        !store.layout.canSplitPanel(
+          layoutMenu.panelId,
+          layoutMenu.panelKind,
+          entry.direction,
+          entry.position
+        )
     }))
 
     return [
@@ -2121,7 +2104,14 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
 
   return (
     <div ref={rootRef} className="gyshell-layout-root">
-      {store.isDetachedWindow ? null : <PanelTypeRail store={store} />}
+      {store.isDetachedWindow ? null : (
+        <PanelTypeRail
+          store={store}
+          onPrimaryPanelUnavailable={(kind, intent) => {
+            void openKindInDetachedWindow(kind, intent)
+          }}
+        />
+      )}
       <div ref={canvasRef} className="gyshell-layout-canvas">
         <ConfirmDialog
           open={pendingTerminalCloseCount > 0}

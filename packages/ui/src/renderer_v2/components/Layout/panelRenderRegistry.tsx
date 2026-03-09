@@ -4,6 +4,7 @@ import { ChatPanel } from '../Chat/ChatPanel'
 import { TerminalPanel } from '../Terminal/TerminalPanel'
 import { FileSystemPanel } from '../FileSystem/FileSystemPanel'
 import { FileEditorPanel } from '../FileSystem/FileEditorPanel'
+import { MonitorPanel } from '../Monitor/MonitorPanel'
 import type { PanelKind } from '../../layout'
 
 export interface LayoutPanelRenderProps {
@@ -92,11 +93,32 @@ const FileEditorPanelRenderer: LayoutPanelRenderer = ({
   />
 )
 
+const MonitorPanelRenderer: LayoutPanelRenderer = ({
+  store,
+  panelId,
+  tabIds,
+  activeTabId,
+  onSelectTab,
+  onLayoutHeaderContextMenu
+}) => (
+  <MonitorPanel
+    store={store}
+    panelId={panelId}
+    tabs={tabIds
+      .map((tabId) => store.monitorTabs.find((tab) => tab.id === tabId))
+      .filter((tab): tab is NonNullable<typeof tab> => !!tab)}
+    activeTabId={activeTabId}
+    onSelectTab={onSelectTab}
+    onLayoutHeaderContextMenu={onLayoutHeaderContextMenu}
+  />
+)
+
 const PANEL_RENDERERS: Record<PanelKind, LayoutPanelRenderer> = {
   terminal: TerminalPanelRenderer,
   chat: ChatPanelRenderer,
   filesystem: FileSystemPanelRenderer,
-  fileEditor: FileEditorPanelRenderer
+  fileEditor: FileEditorPanelRenderer,
+  monitor: MonitorPanelRenderer
 }
 
 export const renderPanelByKind = (

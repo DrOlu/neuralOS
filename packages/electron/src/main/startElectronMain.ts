@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, screen, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, powerMonitor, screen, shell } from 'electron'
 import { join, resolve } from 'path'
 import { SettingsService } from '../../../backend/src/services/SettingsService'
 import { UiSettingsStore } from '../settings/UiSettingsStore'
@@ -35,6 +35,9 @@ import {
 import { TerminalStateStore } from '../../../backend/src/services/terminal/TerminalStateStore'
 import { createAutoTerminalConfig } from '../../../backend/src/services/terminal/terminalConnectionSupport'
 import { MobileWebServerService } from '../services/MobileWebServerService'
+import { ResourceMonitorService } from '../../../backend/src/services/ResourceMonitorService'
+import { MonitorWindowRegistry } from './MonitorWindowRegistry'
+import { broadcastTerminalRecoveryHint, isDisplayMetricsRecoveryRelevant } from './terminalRecovery'
 
 let mainWindow: BrowserWindow | null = null
 let settingsService: SettingsService
@@ -55,6 +58,8 @@ let versionService: VersionService
 let accessTokenService: AccessTokenService
 let webSocketGatewayControlService: WebSocketGatewayControlService | null = null
 let mobileWebServerService: MobileWebServerService | null = null
+let resourceMonitorService: ResourceMonitorService
+let monitorWindowRegistry: MonitorWindowRegistry
 
 type AppWindowRole = 'main' | 'detached'
 
@@ -63,6 +68,9 @@ interface CreateWindowOptions {
   detachedStateToken?: string
   sourceClientId?: string
 }
+
+const DETACHED_WINDOW_DEFAULT_WIDTH_SCALE = 0.5
+const DETACHED_WINDOW_DEFAULT_HEIGHT_SCALE = 0.75
 
 function createWindow(options?: CreateWindowOptions): BrowserWindow {
   const role: AppWindowRole = options?.role === 'detached' ? 'detached' : 'main'
@@ -89,8 +97,10 @@ function createWindow(options?: CreateWindowOptions): BrowserWindow {
       width = Math.min(Math.max(workAreaW - 200, 800), 2000)
       height = Math.min(Math.max(workAreaH - 200, 500), 1200)
     } else {
-      width = Math.min(Math.max(workAreaW - 280, 760), 1800)
-      height = Math.min(Math.max(workAreaH - 220, 420), 1200)
+      const defaultDetachedWidth = Math.min(Math.max(workAreaW - 280, 760), 1800)
+      const defaultDetachedHeight = Math.min(Math.max(workAreaH - 220, 420), 1200)
+      width = Math.max(Math.round(defaultDetachedWidth * DETACHED_WINDOW_DEFAULT_WIDTH_SCALE), 520)
+      height = Math.max(Math.round(defaultDetachedHeight * DETACHED_WINDOW_DEFAULT_HEIGHT_SCALE), 340)
     }
   }
 
@@ -249,6 +259,7 @@ export async function startElectronMain(): Promise<void> {
     terminalStateStore
   })
   fileSystemService = new FileSystemService(terminalService)
+  resourceMonitorService = new ResourceMonitorService(terminalService)
   commandPolicyService = new CommandPolicyService()
   mcpToolService = new McpToolService()
   themeStore = new ThemeConfigStore()
@@ -628,6 +639,40 @@ export async function startElectronMain(): Promise<void> {
   )
   ipcAdapter.registerHandlers()
 
+  // Resource monitor IPC handlers
+  monitorWindowRegistry = new MonitorWindowRegistry(resourceMonitorService)
+  resourceMonitorService.setPublisher((channel, data) => {
+    monitorWindowRegistry.publish(channel, data)
+  })
+
+  ipcMain.handle('monitor:start', async (event: any, terminalId: string, intervalMs?: number) => {
+    monitorWindowRegistry.retain(event.sender, terminalId, intervalMs)
+    return { ok: true }
+  })
+
+  ipcMain.handle('monitor:stop', async (event: any, terminalId: string) => {
+    monitorWindowRegistry.release(event.sender, terminalId)
+    return { ok: true }
+  })
+
+  ipcMain.handle('monitor:subscribe', async (event: any, terminalId: string) => {
+    monitorWindowRegistry.subscribe(event.sender, terminalId)
+    return { ok: true }
+  })
+
+  ipcMain.handle('monitor:unsubscribe', async (event: any, terminalId: string) => {
+    monitorWindowRegistry.unsubscribe(event.sender, terminalId)
+    return { ok: true }
+  })
+
+  ipcMain.handle('monitor:snapshot', async (_: any, terminalId: string) => {
+    return await resourceMonitorService.collectSnapshot(terminalId)
+  })
+
+  ipcMain.handle('monitor:isMonitoring', async (_: any, terminalId: string) => {
+    return { monitoring: resourceMonitorService.isMonitoring(terminalId) }
+  })
+
   ipcMain.handle('windowing:openDetached', async (event: any, detachedStateToken: string, sourceClientId: string) => {
     const token = String(detachedStateToken || '').trim()
     if (!token) {
@@ -672,6 +717,25 @@ export async function startElectronMain(): Promise<void> {
 
   // Create window
   createWindow()
+
+  const broadcastRecoveryHint = (reason: 'resume' | 'unlock-screen' | 'display-metrics-changed') => {
+    broadcastTerminalRecoveryHint(BrowserWindow.getAllWindows(), reason)
+  }
+
+  powerMonitor.on('resume', () => {
+    broadcastRecoveryHint('resume')
+  })
+
+  powerMonitor.on('unlock-screen', () => {
+    broadcastRecoveryHint('unlock-screen')
+  })
+
+  screen.on('display-metrics-changed', (_event, _display, changedMetrics) => {
+    if (!isDisplayMetricsRecoveryRelevant(changedMetrics)) {
+      return
+    }
+    broadcastRecoveryHint('display-metrics-changed')
+  })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

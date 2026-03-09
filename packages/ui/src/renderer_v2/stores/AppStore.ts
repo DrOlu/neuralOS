@@ -13,6 +13,7 @@ import type {
   TerminalConfig,
   AppLanguage,
   ModelDefinition,
+  MonitorSnapshot,
   ProxyEntry,
   TunnelEntry,
 } from '../lib/ipcTypes'
@@ -38,11 +39,14 @@ import {
   type PanelKind,
 } from '../layout'
 import {
+  buildDetachedLayoutTree,
   WINDOW_CONTEXT,
+  openDetachedWindowState,
   readDetachedWindowState,
   type DetachedWindowState,
   type WindowingTerminalTabSnapshot,
 } from '../lib/windowing'
+import type { FileEditorSnapshot } from '../lib/fileEditorSnapshot'
 import {
   resolveTerminalConnectionCapabilities,
   type TerminalConnectionRef,
@@ -59,7 +63,9 @@ const upsertById = <T extends { id: string }>(list: T[], entry: T): T[] => {
 const removeById = <T extends { id: string }>(list: T[], id: string): T[] =>
   list.filter((x) => x.id !== id)
 
-type WindowScopedTabKind = 'chat' | 'terminal' | 'filesystem';
+type WindowScopedTabKind = 'chat' | 'terminal' | 'filesystem' | 'monitor';
+const MONITOR_HISTORY_LIMIT = 64
+const MONITOR_POLL_INTERVAL_MS = 3500
 
 const resolveSuppressionKinds = (kind: PanelKind): WindowScopedTabKind[] =>
   kind === 'chat'
@@ -68,7 +74,9 @@ const resolveSuppressionKinds = (kind: PanelKind): WindowScopedTabKind[] =>
       ? ['terminal']
       : kind === 'filesystem'
         ? ['filesystem']
-        : []
+        : kind === 'monitor'
+          ? ['monitor']
+          : []
 
 export type AppView = 'main' | 'settings' | 'connections';
 export type SettingsSection =
@@ -131,6 +139,32 @@ export interface FileSystemClipboardState {
   createdAt: number;
 }
 
+export interface MonitorTerminalState {
+  snapshot: MonitorSnapshot | null
+  lastError: string | null
+  cpuHistory: number[]
+  memoryHistory: number[]
+  rxHistory: number[]
+  txHistory: number[]
+}
+
+const createMonitorTerminalState = (): MonitorTerminalState => ({
+  snapshot: null,
+  lastError: null,
+  cpuHistory: [],
+  memoryHistory: [],
+  rxHistory: [],
+  txHistory: [],
+})
+
+const appendMonitorHistoryValue = (history: number[], value: number): number[] => {
+  if (!Number.isFinite(value)) {
+    return history
+  }
+  const next = [...history, value]
+  return next.length > MONITOR_HISTORY_LIMIT ? next.slice(-MONITOR_HISTORY_LIMIT) : next
+}
+
 export class AppStore {
   readonly windowRole = WINDOW_CONTEXT.role
   readonly windowClientId = WINDOW_CONTEXT.clientId
@@ -144,6 +178,7 @@ export class AppStore {
   terminalTabs: TerminalTabModel[] = []
   terminalTabsHydrated = false
   activeTerminalId: string | null = null
+  monitorStateByTerminalId: Record<string, MonitorTerminalState> = {}
   terminalSelections: Record<string, string> = {}
   fileSystemClipboard: FileSystemClipboardState | null = null
 
@@ -171,18 +206,22 @@ export class AppStore {
     running: false,
   }
   private detachedVisibleTabIdsByKind: Record<
-    'chat' | 'terminal' | 'filesystem',
+    'chat' | 'terminal' | 'filesystem' | 'monitor',
     Set<string>
   > | null = null
   private lastKnownChatSessionIds = new Set<string>()
   private suppressedTabIdsByKind: Record<
-    'chat' | 'terminal' | 'filesystem',
+    'chat' | 'terminal' | 'filesystem' | 'monitor',
     Set<string>
   > = {
     chat: new Set<string>(),
     terminal: new Set<string>(),
     filesystem: new Set<string>(),
+    monitor: new Set<string>(),
   }
+  private monitorRetainedTabIds = new Set<string>()
+  private monitorSubscribedTabIds = new Set<string>()
+  private monitorSnapshotUnsubscribe: (() => void) | null = null
 
   constructor() {
     makeObservable(this, {
@@ -193,6 +232,7 @@ export class AppStore {
       terminalTabs: observable,
       terminalTabsHydrated: observable,
       activeTerminalId: observable,
+      monitorStateByTerminalId: observable,
       terminalSelections: observable,
       fileSystemClipboard: observable,
       xtermTheme: observable,
@@ -216,6 +256,7 @@ export class AppStore {
       isConnections: computed,
       activeTerminal: computed,
       fileSystemTabs: computed,
+      monitorTabs: computed,
       openSettings: action,
       closeSettings: action,
       toggleSettings: action,
@@ -313,6 +354,148 @@ export class AppStore {
     )
   }
 
+  getMonitorTerminalState(terminalId: string): MonitorTerminalState | null {
+    return this.monitorStateByTerminalId[terminalId] || null
+  }
+
+  private ensureMonitorListener(): void {
+    if (this.monitorSnapshotUnsubscribe || typeof window === 'undefined' || !window.gyshell?.monitor) {
+      return
+    }
+    this.monitorSnapshotUnsubscribe = window.gyshell.monitor.onSnapshot((snapshot: MonitorSnapshot) => {
+      runInAction(() => {
+        this.applyMonitorSnapshot(snapshot)
+      })
+    })
+  }
+
+  private syncMonitorSnapshotSubscriptions(): void {
+    if (!this.isBootstrapped || typeof window === 'undefined' || !window.gyshell?.monitor) {
+      return
+    }
+
+    const monitorTabIds = new Set(this.monitorTabs.map((tab) => tab.id))
+    const desiredSubscriptionIds = new Set(
+      this.getOwnedTabIds('monitor').filter((terminalId) => monitorTabIds.has(terminalId)),
+    )
+
+    const nextMonitorState = { ...this.monitorStateByTerminalId }
+    let stateChanged = false
+    Object.keys(nextMonitorState).forEach((terminalId) => {
+      if (desiredSubscriptionIds.has(terminalId)) {
+        return
+      }
+      delete nextMonitorState[terminalId]
+      stateChanged = true
+    })
+    if (stateChanged) {
+      this.monitorStateByTerminalId = nextMonitorState
+    }
+
+    Array.from(this.monitorSubscribedTabIds).forEach((terminalId) => {
+      if (desiredSubscriptionIds.has(terminalId)) {
+        return
+      }
+      this.monitorSubscribedTabIds.delete(terminalId)
+      void window.gyshell.monitor.unsubscribe(terminalId).catch(() => {
+        // Ignore unsubscribe failures; window-scoped delivery is best-effort.
+      })
+    })
+
+    desiredSubscriptionIds.forEach((terminalId) => {
+      if (this.monitorSubscribedTabIds.has(terminalId)) {
+        return
+      }
+      this.monitorSubscribedTabIds.add(terminalId)
+      void window.gyshell.monitor.subscribe(terminalId).catch(() => {
+        this.monitorSubscribedTabIds.delete(terminalId)
+      })
+    })
+  }
+
+  private syncMonitorSessions(): void {
+    if (!this.isBootstrapped || typeof window === 'undefined' || !window.gyshell?.monitor) {
+      return
+    }
+
+    this.syncMonitorSnapshotSubscriptions()
+
+    if (this.windowRole !== 'main') {
+      return
+    }
+
+    const desiredMonitorIds = new Set(
+      this.terminalTabs
+        .filter((tab) => tab.capabilities.supportsMonitor && tab.runtimeState === 'ready')
+        .map((tab) => tab.id)
+    )
+
+    Array.from(this.monitorRetainedTabIds).forEach((terminalId) => {
+      if (desiredMonitorIds.has(terminalId)) {
+        return
+      }
+      this.monitorRetainedTabIds.delete(terminalId)
+      void window.gyshell.monitor.stop(terminalId).catch(() => {
+        // Ignore stop failures; the backend session is best-effort.
+      })
+    })
+
+    desiredMonitorIds.forEach((terminalId) => {
+      if (this.monitorRetainedTabIds.has(terminalId)) {
+        return
+      }
+      this.monitorRetainedTabIds.add(terminalId)
+      void window.gyshell.monitor
+        .start(terminalId, MONITOR_POLL_INTERVAL_MS)
+        .catch(() => {
+          this.monitorRetainedTabIds.delete(terminalId)
+        })
+    })
+  }
+
+  private applyMonitorSnapshot(snapshot: MonitorSnapshot): void {
+    const terminalId = String(snapshot?.terminalId || '').trim()
+    if (!terminalId) {
+      return
+    }
+    if (!this.monitorSubscribedTabIds.has(terminalId)) {
+      return
+    }
+
+    const currentState = this.monitorStateByTerminalId[terminalId] || createMonitorTerminalState()
+    const nextState: MonitorTerminalState = {
+      ...currentState,
+      lastError: snapshot.error || null,
+    }
+
+    if (!snapshot.error) {
+      nextState.snapshot = snapshot
+      if (typeof snapshot.cpu?.usagePercent === 'number') {
+        nextState.cpuHistory = appendMonitorHistoryValue(nextState.cpuHistory, snapshot.cpu.usagePercent)
+      }
+      if (typeof snapshot.memory?.usagePercent === 'number') {
+        nextState.memoryHistory = appendMonitorHistoryValue(nextState.memoryHistory, snapshot.memory.usagePercent)
+      }
+      if (snapshot.network && snapshot.network.length > 0) {
+        const totals = snapshot.network.reduce(
+          (acc: { rx: number; tx: number }, entry: NonNullable<MonitorSnapshot['network']>[number]) => {
+            acc.rx += Number.isFinite(entry.rxBytesPerSec) ? entry.rxBytesPerSec : 0
+            acc.tx += Number.isFinite(entry.txBytesPerSec) ? entry.txBytesPerSec : 0
+            return acc
+          },
+          { rx: 0, tx: 0 }
+        )
+        nextState.rxHistory = appendMonitorHistoryValue(nextState.rxHistory, totals.rx)
+        nextState.txHistory = appendMonitorHistoryValue(nextState.txHistory, totals.tx)
+      }
+    }
+
+    this.monitorStateByTerminalId = {
+      ...this.monitorStateByTerminalId,
+      [terminalId]: nextState,
+    }
+  }
+
   getUniqueTitle(baseTitle: string): string {
     const existingTitles = this.terminalTabs.map((t) => t.title)
     if (!existingTitles.includes(baseTitle)) {
@@ -358,12 +541,19 @@ export class AppStore {
     if (kind === 'filesystem') {
       return ['terminal', 'filesystem']
     }
+    if (kind === 'monitor') {
+      return ['terminal', 'monitor']
+    }
     if (kind !== 'terminal') {
       return []
     }
     const linkedKinds: WindowScopedTabKind[] = ['terminal']
     if (this.supportsFilesystemForTabId(tabId)) {
       linkedKinds.push('filesystem')
+    }
+    const tab = this.terminalTabs.find((t) => t.id === tabId)
+    if (tab?.capabilities.supportsMonitor) {
+      linkedKinds.push('monitor')
     }
     return linkedKinds
   }
@@ -394,6 +584,13 @@ export class AppStore {
         .filter((id) => !hidden.has(id))
       return filterByDetachedVisibility(tabIds, 'filesystem')
     }
+    if (kind === 'monitor') {
+      const hidden = this.suppressedTabIdsByKind.monitor
+      const tabIds = this.monitorTabs
+        .map((tab) => tab.id)
+        .filter((id) => !hidden.has(id))
+      return filterByDetachedVisibility(tabIds, 'monitor')
+    }
     if (kind === 'chat') {
       const hidden = this.suppressedTabIdsByKind.chat
       const tabIds = this.chat.sessions
@@ -415,6 +612,7 @@ export class AppStore {
         chat: new Set<string>(),
         terminal: new Set<string>(),
         filesystem: new Set<string>(),
+        monitor: new Set<string>(),
       }
     }
 
@@ -422,6 +620,7 @@ export class AppStore {
       chat: new Set<string>(),
       terminal: new Set<string>(),
       filesystem: new Set<string>(),
+      monitor: new Set<string>(),
     }
     const panelKindById = new Map(
       listPanels(layoutTree).map(
@@ -555,7 +754,7 @@ export class AppStore {
       return
     }
     if (
-      (kind === 'terminal' || kind === 'filesystem') &&
+      (kind === 'terminal' || kind === 'filesystem' || kind === 'monitor') &&
       options?.terminalTab?.id === normalizedTabId
     ) {
       // Terminal/filesystem tabs share backend inventory, but a target renderer
@@ -667,6 +866,9 @@ export class AppStore {
     if (changed && shouldSyncLayout) {
       this.layout.syncPanelBindings()
     }
+    if (changed) {
+      this.syncMonitorSessions()
+    }
   }
 
   unsuppressTabs(
@@ -698,13 +900,16 @@ export class AppStore {
     if (changed && shouldSyncLayout) {
       this.layout.syncPanelBindings()
     }
+    if (changed) {
+      this.syncMonitorSessions()
+    }
   }
 
   collectAssignedTabsByKind(): Partial<
-    Record<'chat' | 'terminal' | 'filesystem', string[]>
+    Record<'chat' | 'terminal' | 'filesystem' | 'monitor', string[]>
   > {
     const collectForKind = (
-      kind: Extract<PanelKind, 'chat' | 'terminal' | 'filesystem'>,
+      kind: Extract<PanelKind, 'chat' | 'terminal' | 'filesystem' | 'monitor'>,
     ): string[] => {
       const ids = new Set<string>()
       this.layout.getPanelIdsByKind(kind).forEach((panelId) => {
@@ -721,6 +926,7 @@ export class AppStore {
       chat: collectForKind('chat'),
       terminal: collectForKind('terminal'),
       filesystem: collectForKind('filesystem'),
+      monitor: collectForKind('monitor'),
     }
   }
 
@@ -742,6 +948,12 @@ export class AppStore {
   get fileSystemTabs(): TerminalTabModel[] {
     return this.terminalTabs.filter(
       (tab) => tab.capabilities.supportsFilesystem,
+    )
+  }
+
+  get monitorTabs(): TerminalTabModel[] {
+    return this.terminalTabs.filter(
+      (tab) => tab.capabilities.supportsMonitor,
     )
   }
 
@@ -911,6 +1123,7 @@ export class AppStore {
     this.terminalTabsHydrated = true
     this.activeTerminalId = nextActive
     this.layout.syncPanelBindings()
+    this.syncMonitorSessions()
   }
 
   private async fetchCombinedSettings(): Promise<AppSettings> {
@@ -1755,6 +1968,7 @@ export class AppStore {
           this.reconcileTerminalTabs(payload)
         })
       })
+      this.ensureMonitorListener()
 
       // MCP tool status updates
       window.gyshell.tools.onMcpUpdated((mcpTools) => {
@@ -1794,6 +2008,7 @@ export class AppStore {
           this.terminalTabsHydrated = true
           this.activeTerminalId = null
         })
+        this.syncMonitorSessions()
         const ensurePanelForDefault =
           this.windowRole === 'main' &&
           this.isFirstLaunchDefaultLayout(effectiveLayout)
@@ -2187,6 +2402,7 @@ export class AppStore {
     })
     this.unsuppressTabs('terminal', [tabId], { syncLayout: false })
     this.layout.syncPanelBindings()
+    this.syncMonitorSessions()
 
     // Kill backend session (best-effort)
     try {
@@ -2208,6 +2424,28 @@ export class AppStore {
     }
     this.setActiveTerminal(terminalId)
     return await this.fileEditor.openFromFileSystem(terminalId, filePath)
+  }
+
+  async openDetachedFileEditorForPath(
+    terminalId: string,
+    filePath: string,
+  ): Promise<boolean> {
+    const snapshot: FileEditorSnapshot = {
+      terminalId,
+      filePath,
+      mode: 'loading',
+      content: '',
+      dirty: false,
+      errorMessage: null,
+      statusMessage: null,
+    }
+
+    return await openDetachedWindowState({
+      sourceClientId: this.windowClientId,
+      layoutTree: buildDetachedLayoutTree('fileEditor'),
+      createdAt: Date.now(),
+      fileEditorSnapshot: snapshot,
+    })
   }
 
   canClosePanel(kind: PanelKind): boolean {

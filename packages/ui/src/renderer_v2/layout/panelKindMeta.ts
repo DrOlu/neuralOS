@@ -1,8 +1,8 @@
 import type { PanelKind } from './types'
 
 export type PanelKindCategory = 'normal' | 'special'
-export type RailPanelKind = Extract<PanelKind, 'chat' | 'terminal' | 'filesystem'>
-export type TabbedPanelKind = Extract<PanelKind, 'chat' | 'terminal' | 'filesystem'>
+export type RailPanelKind = Extract<PanelKind, 'chat' | 'terminal' | 'filesystem' | 'monitor'>
+export type TabbedPanelKind = Extract<PanelKind, 'chat' | 'terminal' | 'filesystem' | 'monitor'>
 
 export interface PanelKindMeta {
   kind: PanelKind
@@ -37,6 +37,12 @@ const PANEL_KIND_META_REGISTRY: Record<PanelKind, PanelKindMeta> = {
     supportsTabs: false,
     showInRail: false,
     maxPanels: 1
+  },
+  monitor: {
+    kind: 'monitor',
+    category: 'normal',
+    supportsTabs: true,
+    showInRail: true
   }
 }
 

@@ -89,6 +89,14 @@ export class FileEditorStore {
   }
 
   async openFromFileSystem(terminalId: string, filePath: string): Promise<boolean> {
+    const existingPanelId = this.appStore.layout.getPrimaryPanelId('fileEditor')
+    if (!existingPanelId) {
+      const detachedOpened = await this.appStore.openDetachedFileEditorForPath(terminalId, filePath)
+      if (detachedOpened) {
+        return true
+      }
+    }
+
     const panelId = this.appStore.layout.ensurePrimaryPanelForKind('fileEditor')
     if (!panelId) {
       throw new Error(this.appStore.i18n.t.fileEditor.openPanelFailed)

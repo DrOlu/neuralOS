@@ -992,6 +992,32 @@ export class TerminalService {
     return result.join('\n')
   }
 
+  getTerminalById(terminalId: string): TerminalTab | undefined {
+    return this.terminals.get(terminalId)
+  }
+
+  /**
+   * Execute a command on the terminal's backend and collect stdout/stderr.
+   * Used by ResourceMonitorService to run stat-collection commands.
+   */
+  async execOnTerminal(
+    terminalId: string,
+    command: string,
+    timeoutMs = 6000
+  ): Promise<{ stdout: string; stderr: string } | null> {
+    const tab = this.terminals.get(terminalId)
+    if (!tab) return null
+
+    const backend = this.getBackend(tab.type)
+    if (!backend) return null
+
+    if (typeof backend.execOnSession === 'function') {
+      return await backend.execOnSession(tab.ptyId, command, timeoutMs)
+    }
+
+    return null
+  }
+
   getDisplayTerminals(): TerminalTab[] {
     return Array.from(this.terminals.values())
   }

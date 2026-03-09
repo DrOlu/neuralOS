@@ -120,6 +120,8 @@ interface UiSettings {
   }
 }
 
+type TerminalRecoveryReason = 'resume' | 'unlock-screen' | 'display-metrics-changed'
+
 type AppSettings = BackendSettings & UiSettings
 
 interface CommandPolicyLists {
@@ -400,6 +402,7 @@ export interface GyShellAPI {
         }>
       }) => void
     ) => () => void
+    onRecoveryHint: (callback: (data: { reason: TerminalRecoveryReason }) => void) => () => void
   }
 
   filesystem: {
@@ -542,6 +545,16 @@ export interface GyShellAPI {
     stop: () => Promise<{ ok: boolean }>
     setPort: (port: number | null) => Promise<{ ok: boolean }>
   }
+
+  monitor: {
+    start: (terminalId: string, intervalMs?: number) => Promise<{ ok: boolean }>
+    stop: (terminalId: string) => Promise<{ ok: boolean }>
+    subscribe: (terminalId: string) => Promise<{ ok: boolean }>
+    unsubscribe: (terminalId: string) => Promise<{ ok: boolean }>
+    snapshot: (terminalId: string) => Promise<any>
+    isMonitoring: (terminalId: string) => Promise<{ monitoring: boolean }>
+    onSnapshot: (callback: (data: any) => void) => () => void
+  }
 }
 
 const api: GyShellAPI = {
@@ -624,6 +637,11 @@ const api: GyShellAPI = {
       ) => callback(data)
       ipcRenderer.on('terminal:tabs', handler)
       return () => ipcRenderer.off('terminal:tabs', handler)
+    },
+    onRecoveryHint: (callback) => {
+      const handler = (_: IpcRendererEvent, data: { reason: TerminalRecoveryReason }) => callback(data)
+      ipcRenderer.on('terminal:recoveryHint', handler)
+      return () => ipcRenderer.off('terminal:recoveryHint', handler)
     }
   },
 
@@ -671,6 +689,26 @@ const api: GyShellAPI = {
       }) => callback(payload)
       ipcRenderer.on('filesystem:transferProgress', handler)
       return () => ipcRenderer.off('filesystem:transferProgress', handler)
+    }
+  },
+
+  monitor: {
+    start: (terminalId: string, intervalMs?: number) =>
+      ipcRenderer.invoke('monitor:start', terminalId, intervalMs),
+    stop: (terminalId: string) =>
+      ipcRenderer.invoke('monitor:stop', terminalId),
+    subscribe: (terminalId: string) =>
+      ipcRenderer.invoke('monitor:subscribe', terminalId),
+    unsubscribe: (terminalId: string) =>
+      ipcRenderer.invoke('monitor:unsubscribe', terminalId),
+    snapshot: (terminalId: string) =>
+      ipcRenderer.invoke('monitor:snapshot', terminalId),
+    isMonitoring: (terminalId: string) =>
+      ipcRenderer.invoke('monitor:isMonitoring', terminalId) as Promise<{ monitoring: boolean }>,
+    onSnapshot: (callback: (data: any) => void) => {
+      const handler = (_: IpcRendererEvent, data: any) => callback(data)
+      ipcRenderer.on('monitor:snapshot', handler)
+      return () => ipcRenderer.off('monitor:snapshot', handler)
     }
   },
 

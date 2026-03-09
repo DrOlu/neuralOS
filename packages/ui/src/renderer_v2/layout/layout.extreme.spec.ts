@@ -1,11 +1,10 @@
 import {
-  CHAT_GRID_TOTAL_ROWS,
-  CHAT_MIN_GRID_ROWS,
   MAX_LAYOUT_PANELS,
   MAX_LAYOUT_SPLIT_CHILDREN,
-  TECHNICAL_MIN_PANEL_SIZE_PX,
   computeChildMinSizePercentages,
   determineDropDirection,
+  getPanelMinHeightPx,
+  getPanelMinWidthPx,
   getPanelCount,
   listPanels,
   movePanel,
@@ -164,12 +163,36 @@ runCase('computeChildMinSizePercentages reflects chat minimum height requirement
     { left: 0, top: 0, width: 1200, height: 1200 },
     1200
   )
-  const expectedChatMinPx = Math.max(
-    TECHNICAL_MIN_PANEL_SIZE_PX,
-    Math.floor((1200 * CHAT_MIN_GRID_ROWS) / CHAT_GRID_TOTAL_ROWS)
-  )
+  const expectedChatMinPx = getPanelMinHeightPx('chat', 1200)
   assertCondition(Math.abs(percentages[0] - (expectedChatMinPx / 1200) * 100) < 0.001, 'chat min percentage should be exact')
   assertCondition(percentages[0] > percentages[1], 'chat min percentage should exceed terminal in this viewport')
+})
+
+runCase('validateLayoutTree enforces per-panel minimum width', () => {
+  const tree: LayoutTree = {
+    schemaVersion: 2,
+    root: makeSplit(
+      'root',
+      'horizontal',
+      [makePanel('term-node-a', 'term-panel-a', 'terminal'), makePanel('term-node-b', 'term-panel-b', 'terminal')],
+      [50, 50]
+    )
+  }
+
+  const result = validateLayoutTree(tree, {
+    width: getPanelMinWidthPx('terminal') * 2 - 20,
+    height: 900
+  })
+  assertEqual(result.valid, false, 'terminal panels narrower than the minimum width must be rejected')
+  assertCondition(Boolean(result.reason?.startsWith('panel-width-limit:')), 'width limit reason should be reported')
+})
+
+runCase('panel minimum sizes remain per-kind and use the reduced thresholds', () => {
+  assertEqual(getPanelMinWidthPx('chat'), 140, 'chat min width should use per-kind reduced threshold')
+  assertEqual(getPanelMinWidthPx('terminal'), 160, 'terminal min width should use per-kind reduced threshold')
+  assertEqual(getPanelMinWidthPx('monitor'), 170, 'monitor min width should use per-kind reduced threshold')
+  assertEqual(getPanelMinHeightPx('terminal', 900), 90, 'terminal min height should use per-kind reduced threshold')
+  assertEqual(getPanelMinHeightPx('monitor', 900), 120, 'monitor min height should use per-kind reduced threshold')
 })
 
 runCase('determineDropDirection classifies center and edges', () => {

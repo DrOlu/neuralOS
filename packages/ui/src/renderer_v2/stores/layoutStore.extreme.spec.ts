@@ -301,6 +301,30 @@ const run = async (): Promise<void> => {
     )
   })
 
+  await runCase('splitPanel rejects projected layouts that violate minimum panel sizes', async () => {
+    const store = createStore({
+      terminalIds: ['term-a'],
+      chatIds: ['chat-a'],
+      terminalInventoryHydrated: true
+    })
+    store.bootstrap()
+    store.setViewport(620, 700)
+
+    const terminalPrimaryId = store.getPrimaryPanelId('terminal')
+    assertCondition(Boolean(terminalPrimaryId), 'terminal primary panel should exist before split')
+    assertEqual(
+      store.canSplitPanel(terminalPrimaryId!, 'terminal', 'horizontal', 'after'),
+      false,
+      'horizontal terminal split should be rejected when it would undersize both panels'
+    )
+
+    store.splitPanel(terminalPrimaryId!, 'terminal', 'horizontal', 'after')
+
+    const terminalPanels = store.panelNodes.filter((node) => node.panel.kind === 'terminal')
+    assertEqual(terminalPanels.length, 1, 'rejected split should not create a second terminal panel')
+    assertEqual(store.panelCount, 2, 'layout should remain unchanged after rejected split')
+  })
+
   await runCase('file editor special panel stays without tabs and remains singleton', async () => {
     const store = createStore({
       terminalIds: ['term-a'],
@@ -507,7 +531,7 @@ const run = async (): Promise<void> => {
       chatIds: ['chat-a']
     })
     store.bootstrap()
-    store.setViewport(1200, 700)
+    store.setViewport(1400, 700)
 
     const terminalPanelId = store.getPrimaryPanelId('terminal')
     assertCondition(Boolean(terminalPanelId), 'terminal panel should exist')

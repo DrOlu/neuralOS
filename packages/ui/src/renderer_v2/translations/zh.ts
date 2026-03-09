@@ -358,8 +358,10 @@ export const zh = {
     chatKind: '聊天',
     terminalKind: '终端',
     filesystemKind: '文件',
+    monitorKind: '监控',
     addChatSession: '新建聊天会话',
     addTerminalTab: '新建本地终端',
-    openFilesystemPanel: '打开文件面板'
+    openFilesystemPanel: '打开文件面板',
+    openMonitorPanel: '打开资源监控'
   },
 }

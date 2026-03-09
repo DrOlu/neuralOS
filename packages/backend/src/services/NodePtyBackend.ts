@@ -3,6 +3,8 @@ import * as os from 'os'
 import * as fs from 'fs'
 import * as path from 'path'
 import { pipeline } from 'node:stream/promises'
+import { execFile } from 'child_process'
+import { promisify } from 'util'
 import {
   isLocalConnectionConfig,
   type TerminalBackend,
@@ -10,6 +12,8 @@ import {
   type FileSystemEntry,
   type FileStatInfo,
 } from '../types'
+
+const execFileAsync = promisify(execFile)
 
 const GYSHELL_READY_MARKER = '__GYSHELL_READY__'
 
@@ -27,6 +31,37 @@ export class NodePtyBackend implements TerminalBackend {
   private tmpPathsByPtyId: Map<string, string> = new Map()
   private cwdByPtyId: Map<string, string> = new Map()
   private homeDirByPtyId: Map<string, string> = new Map()
+
+  private buildMonitorExecEnv(): Record<string, string> {
+    const env = this.getSafeEnv()
+    if (os.platform() !== 'win32') {
+      env.LC_ALL = 'en_US.UTF-8'
+      env.LANG = 'en_US.UTF-8'
+    }
+    return env
+  }
+
+  /**
+   * Execute a local shell command and collect output.
+   * Used by ResourceMonitorService for local resource stats.
+   */
+  async execOnSession(
+    _ptyId: string,
+    command: string,
+    timeoutMs = 6000
+  ): Promise<{ stdout: string; stderr: string } | null> {
+    try {
+      const shell = os.platform() === 'win32' ? 'cmd.exe' : '/bin/sh'
+      const args = os.platform() === 'win32' ? ['/c', command] : ['-c', command]
+      const { stdout, stderr } = await execFileAsync(shell, args, {
+        timeout: timeoutMs,
+        env: this.buildMonitorExecEnv(),
+      })
+      return { stdout, stderr }
+    } catch {
+      return null
+    }
+  }
 
   private stripReadyMarker(chunk: string): string {
     if (!chunk.includes(GYSHELL_READY_MARKER)) return chunk

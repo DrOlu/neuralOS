@@ -1,7 +1,7 @@
 import { AppStore } from "./AppStore";
 import { ChatStore } from "./ChatStore";
 import type { LayoutTree } from "../layout";
-import { WINDOW_CONTEXT, stashDetachedWindowState } from "../lib/windowing";
+import { WINDOW_CONTEXT, readDetachedWindowState, stashDetachedWindowState } from "../lib/windowing";
 
 const assertCondition = (condition: unknown, message: string): void => {
   if (!condition) {
@@ -171,6 +171,15 @@ const installBootstrapWindowMock = (
             },
           ],
         }),
+      },
+      monitor: {
+        start: async () => ({ ok: true }),
+        stop: async () => ({ ok: true }),
+        subscribe: async () => ({ ok: true }),
+        unsubscribe: async () => ({ ok: true }),
+        snapshot: async () => null,
+        isMonitoring: async () => ({ monitoring: false }),
+        onSnapshot: () => () => {},
       },
       tools: {
         onMcpUpdated: () => {},
@@ -909,7 +918,7 @@ const run = async (): Promise<void> => {
             cols: 80,
             rows: 24,
           },
-          capabilities: { supportsFilesystem: true },
+          capabilities: { supportsFilesystem: true, supportsMonitor: true },
           connectionRef: { type: "local" },
           runtimeState: "ready",
         },
@@ -923,7 +932,7 @@ const run = async (): Promise<void> => {
             cols: 80,
             rows: 24,
           },
-          capabilities: { supportsFilesystem: true },
+          capabilities: { supportsFilesystem: true, supportsMonitor: true },
           connectionRef: { type: "local" },
           runtimeState: "ready",
         },
@@ -964,7 +973,7 @@ const run = async (): Promise<void> => {
             cols: 80,
             rows: 24,
           },
-          capabilities: { supportsFilesystem: true },
+          capabilities: { supportsFilesystem: true, supportsMonitor: true },
           connectionRef: { type: "local" },
           runtimeState: "ready",
         },
@@ -1019,7 +1028,7 @@ const run = async (): Promise<void> => {
             cols: 80,
             rows: 24,
           },
-          capabilities: { supportsFilesystem: true },
+          capabilities: { supportsFilesystem: true, supportsMonitor: true },
           connectionRef: { type: "local" },
           runtimeState: "ready",
         },
@@ -1065,7 +1074,7 @@ const run = async (): Promise<void> => {
             cols: 80,
             rows: 24,
           },
-          capabilities: { supportsFilesystem: true },
+          capabilities: { supportsFilesystem: true, supportsMonitor: true },
           connectionRef: { type: "local" },
           runtimeState: "ready",
         },
@@ -1079,7 +1088,7 @@ const run = async (): Promise<void> => {
             cols: 80,
             rows: 24,
           },
-          capabilities: { supportsFilesystem: true },
+          capabilities: { supportsFilesystem: true, supportsMonitor: true },
           connectionRef: { type: "local" },
           runtimeState: "ready",
         },
@@ -1361,7 +1370,7 @@ const run = async (): Promise<void> => {
             cols: 80,
             rows: 24,
           },
-          capabilities: { supportsFilesystem: true },
+          capabilities: { supportsFilesystem: true, supportsMonitor: true },
           connectionRef: { type: "local" },
           runtimeState: "ready",
         },
@@ -1426,6 +1435,7 @@ const run = async (): Promise<void> => {
           chat: ["chat-a"],
           terminal: ["term-a", "term-b"],
           filesystem: [],
+          monitor: [],
         }),
         "assigned tabs should include currently bound ids",
       );
@@ -1437,6 +1447,7 @@ const run = async (): Promise<void> => {
           chat: ["chat-a"],
           terminal: ["term-b"],
           filesystem: [],
+          monitor: [],
         }),
         "detached tab should not remain in detached-closing payload inventory",
       );
@@ -1558,6 +1569,227 @@ const run = async (): Promise<void> => {
         0,
         "rejected custom CIDR clear should not call the IPC setter",
       );
+    },
+  );
+
+  await runCase(
+    "reconcileTerminalTabs starts and stops backend monitor sessions from the main window",
+    async () => {
+      const startCalls: Array<{ terminalId: string; intervalMs?: number }> = [];
+      const stopCalls: string[] = [];
+      const subscribeCalls: string[] = [];
+      const unsubscribeCalls: string[] = [];
+      (globalThis as unknown as { window: unknown }).window = {
+        gyshell: {
+          settings: {
+            set: async () => {},
+          },
+          monitor: {
+            start: async (terminalId: string, intervalMs?: number) => {
+              startCalls.push({ terminalId, intervalMs });
+              return { ok: true };
+            },
+            stop: async (terminalId: string) => {
+              stopCalls.push(terminalId);
+              return { ok: true };
+            },
+            subscribe: async (terminalId: string) => {
+              subscribeCalls.push(terminalId);
+              return { ok: true };
+            },
+            unsubscribe: async (terminalId: string) => {
+              unsubscribeCalls.push(terminalId);
+              return { ok: true };
+            },
+            onSnapshot: () => () => {},
+          },
+        },
+      };
+
+      const store = new AppStore();
+      (store as any).isBootstrapped = true;
+      (store.layout as any).syncPanelBindings = () => {};
+
+      store.reconcileTerminalTabs({
+        terminals: [
+          {
+            id: "term-a",
+            title: "Linux A",
+            type: "local",
+            cols: 80,
+            rows: 24,
+            runtimeState: "ready",
+          },
+          {
+            id: "term-b",
+            title: "SSH B",
+            type: "ssh",
+            cols: 80,
+            rows: 24,
+            runtimeState: "initializing",
+          },
+        ],
+      } as any);
+      await Promise.resolve();
+
+      assertEqual(
+        JSON.stringify(startCalls),
+        JSON.stringify([{ terminalId: "term-a", intervalMs: 3500 }]),
+        "ready monitor-capable terminals should start monitor sessions with the shared interval",
+      );
+      assertEqual(
+        JSON.stringify(subscribeCalls),
+        JSON.stringify(["term-a", "term-b"]),
+        "main window should subscribe only its monitor-capable terminal ids for snapshot delivery",
+      );
+
+      store.reconcileTerminalTabs({
+        terminals: [
+          {
+            id: "term-a",
+            title: "Linux A",
+            type: "local",
+            cols: 80,
+            rows: 24,
+            runtimeState: "exited",
+          },
+        ],
+      } as any);
+      await Promise.resolve();
+
+      assertEqual(
+        JSON.stringify(stopCalls),
+        JSON.stringify(["term-a"]),
+        "monitor sessions should stop when the terminal is no longer ready",
+      );
+      assertEqual(
+        JSON.stringify(unsubscribeCalls),
+        JSON.stringify(["term-b"]),
+        "removed terminals should be unsubscribed from per-window monitor snapshots",
+      );
+    },
+  );
+
+  await runCase(
+    "applyMonitorSnapshot ignores terminals that the current window is not subscribed to",
+    async () => {
+      const store = new AppStore();
+      (store as any).monitorSubscribedTabIds = new Set(["term-a"]);
+
+      (store as any).applyMonitorSnapshot({
+        terminalId: "term-b",
+        timestamp: 1,
+        cpu: { usagePercent: 90 },
+      });
+      (store as any).applyMonitorSnapshot({
+        terminalId: "term-a",
+        timestamp: 2,
+        cpu: { usagePercent: 30 },
+      });
+
+      assertCondition(
+        store.getMonitorTerminalState("term-b") === null,
+        "unsubscribed monitor snapshots should not allocate window-local state",
+      );
+      assertEqual(
+        store.getMonitorTerminalState("term-a")?.snapshot?.cpu?.usagePercent,
+        30,
+        "subscribed monitor snapshots should still populate window-local state",
+      );
+    },
+  );
+
+  await runCase(
+    "applyMonitorSnapshot keeps bounded histories per terminal",
+    async () => {
+      const store = new AppStore();
+      (store as any).monitorSubscribedTabIds = new Set(["term-a"]);
+      for (let index = 0; index < 80; index += 1) {
+        (store as any).applyMonitorSnapshot({
+          terminalId: "term-a",
+          timestamp: index,
+          cpu: { usagePercent: index },
+          memory: { usagePercent: index, totalBytes: 100, usedBytes: 50, availableBytes: 50 },
+          network: [{ interface: "eth0", rxBytesPerSec: index * 10, txBytesPerSec: index * 5 }],
+        });
+      }
+
+      const state = store.getMonitorTerminalState("term-a");
+      assertCondition(state !== null, "monitor state should exist after applying snapshots");
+      assertEqual(state!.cpuHistory.length, 64, "cpu history should be bounded");
+      assertEqual(state!.memoryHistory.length, 64, "memory history should be bounded");
+      assertEqual(state!.rxHistory.length, 64, "rx history should be bounded");
+      assertEqual(state!.txHistory.length, 64, "tx history should be bounded");
+      assertEqual(state!.cpuHistory[0], 16, "history should retain the most recent values");
+      assertEqual(state!.cpuHistory[63], 79, "history tail should match the latest snapshot");
+    },
+  );
+
+  await runCase(
+    "openDetachedFileEditorForPath stashes a loading editor snapshot for the new window",
+    async () => {
+      const originalWindow = (globalThis as any).window;
+      const localStorageState = new Map<string, string>();
+      const sessionStorageState = new Map<string, string>();
+      const openDetachedCalls: Array<{ token: string; sourceClientId: string }> = [];
+
+      try {
+        (globalThis as any).window = {
+          localStorage: createStorage(localStorageState),
+          sessionStorage: createStorage(sessionStorageState),
+          gyshell: {
+            windowing: {
+              openDetached: async (token: string, sourceClientId: string) => {
+                openDetachedCalls.push({ token, sourceClientId });
+                return { ok: true };
+              },
+            },
+          },
+        };
+
+        const store = new AppStore();
+        const opened = await store.openDetachedFileEditorForPath("term-a", "/tmp/demo.txt");
+
+        assertEqual(opened, true, "detached file editor open should succeed when IPC open succeeds");
+        assertEqual(openDetachedCalls.length, 1, "detached file editor should request exactly one window");
+        assertEqual(
+          openDetachedCalls[0].sourceClientId,
+          store.windowClientId,
+          "detached file editor should forward the current renderer client id",
+        );
+
+        const detachedState = readDetachedWindowState(openDetachedCalls[0].token);
+        assertCondition(detachedState !== null, "detached file editor should stash a detached window state");
+        assertEqual(
+          detachedState!.sourceClientId,
+          store.windowClientId,
+          "detached file editor state should preserve the source client id",
+        );
+        assertCondition(detachedState!.layoutTree.root.type === "panel", "detached file editor should use a single-panel layout");
+        if (detachedState!.layoutTree.root.type !== "panel") {
+          throw new Error("detached file editor layout root should be a panel");
+        }
+        assertEqual(
+          detachedState!.layoutTree.root.panel.kind,
+          "fileEditor",
+          "detached file editor layout should target the fileEditor panel kind",
+        );
+        assertEqual(
+          JSON.stringify(detachedState!.fileEditorSnapshot),
+          JSON.stringify({
+            terminalId: "term-a",
+            filePath: "/tmp/demo.txt",
+            mode: "loading",
+            content: "",
+            dirty: false,
+            errorMessage: null,
+            statusMessage: null,
+          }),
+          "detached file editor should seed the loading snapshot for the requested path",
+        );
+      } finally {
+        (globalThis as any).window = originalWindow;
+      }
     },
   );
 };

@@ -1,9 +1,9 @@
 import type { LucideIcon } from 'lucide-react'
-import { FolderTree, MessageSquare, SquareTerminal } from 'lucide-react'
+import { Activity, FolderTree, MessageSquare, SquareTerminal } from 'lucide-react'
 import { PANEL_KINDS_WITH_RAIL } from '../../layout'
 import type { AppStore } from '../../stores/AppStore'
 
-type LayoutPanelKindLabelKey = 'chatKind' | 'terminalKind' | 'filesystemKind'
+type LayoutPanelKindLabelKey = 'chatKind' | 'terminalKind' | 'filesystemKind' | 'monitorKind'
 export type RailClickIntent = 'open-panel-only' | 'create-new-tab'
 export type RailPanelKind = (typeof PANEL_KINDS_WITH_RAIL)[number]
 
@@ -60,6 +60,16 @@ export const PANEL_KIND_UI_REGISTRY: Record<RailPanelKind, PanelKindUiRegistryIt
     getOwnerTabCount: (store) => store.fileSystemTabs.length,
     createDefaultTab: () => {
       // Filesystem tabs are attached to terminal tabs and cannot be created independently.
+    }
+  }),
+  monitor: createPanelKindUiItem({
+    kind: 'monitor',
+    icon: Activity,
+    labelKey: 'monitorKind',
+    resolveRailClickIntent: () => 'open-panel-only',
+    getOwnerTabCount: (store) => store.monitorTabs.length,
+    createDefaultTab: () => {
+      // Monitor tabs are derived from terminal tabs and cannot be created independently.
     }
   })
 }

@@ -1,5 +1,10 @@
 import type { TerminalConfig } from './ipcTypes'
-import type { LayoutPanelTabBinding, LayoutTree, PanelKind } from '../layout'
+import {
+  makeLayoutId,
+  type LayoutPanelTabBinding,
+  type LayoutTree,
+  type PanelKind
+} from '../layout'
 import {
   normalizeFileEditorSnapshot,
   type FileEditorSnapshot
@@ -76,7 +81,7 @@ export interface WindowingPanelMovedMessage {
 export interface WindowingDetachedClosingMessage {
   type: 'detached-closing'
   sourceClientId: string
-  tabsByKind: Partial<Record<Extract<PanelKind, 'chat' | 'terminal' | 'filesystem'>, string[]>>
+  tabsByKind: Partial<Record<Extract<PanelKind, 'chat' | 'terminal' | 'filesystem' | 'monitor'>, string[]>>
 }
 
 /**
@@ -172,6 +177,35 @@ const readWindowContext = (): RendererWindowContext => {
 }
 
 export const WINDOW_CONTEXT: RendererWindowContext = readWindowContext()
+
+export const buildDetachedLayoutTree = (
+  kind: PanelKind,
+  tabBinding?: LayoutPanelTabBinding
+): LayoutTree => {
+  const panelId = makeLayoutId(`panel-${kind}`)
+  return {
+    schemaVersion: 2,
+    root: {
+      type: 'panel',
+      id: makeLayoutId('node'),
+      panel: {
+        id: panelId,
+        kind
+      }
+    },
+    focusedPanelId: panelId,
+    ...(tabBinding
+      ? {
+          panelTabs: {
+            [panelId]: {
+              tabIds: tabBinding.tabIds || [],
+              ...(tabBinding.activeTabId ? { activeTabId: tabBinding.activeTabId } : {})
+            }
+          }
+        }
+      : {})
+  }
+}
 
 export const stashDetachedWindowState = (token: string, state: DetachedWindowState): boolean => {
   const localKey = getDetachedStateLocalKey(token)
@@ -270,6 +304,31 @@ export const readDetachedWindowState = (token: string): DetachedWindowState | nu
   }
 }
 
+export const openDetachedWindowState = async (state: DetachedWindowState): Promise<boolean> => {
+  const sourceClientId = String(state.sourceClientId || '').trim()
+  if (!sourceClientId) {
+    return false
+  }
+
+  const token = `detached-${makeLayoutId('state')}`
+  const stashed = stashDetachedWindowState(token, state)
+  if (!stashed) {
+    return false
+  }
+
+  try {
+    const result = await window.gyshell.windowing.openDetached(token, sourceClientId)
+    if (result?.ok) {
+      return true
+    }
+  } catch {
+    // noop
+  }
+
+  clearDetachedWindowState(token)
+  return false
+}
+
 const readLocalStorage = (): Storage | null => {
   try {
     return window.localStorage ?? null
@@ -355,7 +414,7 @@ const normalizePanelDragState = (value: unknown): WindowingPanelDragPayload | nu
   if (!sourceClientId || !sourcePanelId) {
     return null
   }
-  if (kind !== 'chat' && kind !== 'terminal' && kind !== 'filesystem' && kind !== 'fileEditor') {
+  if (kind !== 'chat' && kind !== 'terminal' && kind !== 'filesystem' && kind !== 'fileEditor' && kind !== 'monitor') {
     return null
   }
   const tabBinding = normalizePanelTabBinding(parsed.tabBinding)

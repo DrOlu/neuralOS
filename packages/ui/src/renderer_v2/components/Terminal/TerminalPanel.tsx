@@ -33,9 +33,8 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = observer(({
   const menuRef = React.useRef<HTMLDivElement | null>(null)
   const t = store.i18n.t
   const isLayoutDragSource = store.layout.isDragging && store.layout.draggingPanelId === panelId
-  const layoutSignature = `${store.layout.panelOrder.join(',')}|${store.layout.panelSizes
-    .map((size) => size.toFixed(3))
-    .join(',')}`
+  const panelRect = store.layout.getPanelRect(panelId)
+  const layoutSignature = `${Math.round(panelRect?.width || 0)}x${Math.round(panelRect?.height || 0)}`
 
   React.useEffect(() => {
     if (!menuOpen) return

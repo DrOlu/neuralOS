@@ -15,6 +15,21 @@ import {
 } from './types'
 import { getPanelCount, normalizeSizes } from './tree'
 
+const PANEL_MIN_WIDTH_PX: Record<PanelKind, number> = {
+  chat: 140,
+  terminal: 160,
+  filesystem: 160,
+  fileEditor: 160,
+  monitor: 170
+}
+
+const PANEL_MIN_HEIGHT_PX: Record<Exclude<PanelKind, 'chat'>, number> = {
+  terminal: 90,
+  filesystem: 90,
+  fileEditor: 90,
+  monitor: 120
+}
+
 export interface LayoutGeometry {
   nodeRects: Record<string, LayoutRect>
   panelRects: Record<string, LayoutRect>
@@ -29,25 +44,34 @@ const cloneRect = (rect: LayoutRect): LayoutRect => ({
 
 export const getChatMinHeightPx = (viewportHeight: number): number => {
   if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) {
-    return TECHNICAL_MIN_PANEL_SIZE_PX
+    return 100
   }
   const gridBased = Math.floor((viewportHeight * CHAT_MIN_GRID_ROWS) / CHAT_GRID_TOTAL_ROWS)
-  return Math.max(TECHNICAL_MIN_PANEL_SIZE_PX, gridBased)
+  return Math.max(100, gridBased)
+}
+
+export const getPanelMinWidthPx = (kind: PanelKind): number => {
+  const configuredMinWidth = PANEL_MIN_WIDTH_PX[kind]
+  return Math.max(TECHNICAL_MIN_PANEL_SIZE_PX, configuredMinWidth)
 }
 
 export const getPanelMinHeightPx = (kind: PanelKind, viewportHeight: number): number => {
   if (kind === 'chat') {
     return getChatMinHeightPx(viewportHeight)
   }
-  return TECHNICAL_MIN_PANEL_SIZE_PX
+  return Math.max(TECHNICAL_MIN_PANEL_SIZE_PX, PANEL_MIN_HEIGHT_PX[kind])
+}
+
+export const getPanelMinSize = (kind: PanelKind, viewportHeight: number): NodeMinSize => {
+  return {
+    minWidthPx: getPanelMinWidthPx(kind),
+    minHeightPx: getPanelMinHeightPx(kind, viewportHeight)
+  }
 }
 
 export const computeNodeMinSize = (node: LayoutNode, viewportHeight: number): NodeMinSize => {
   if (node.type === 'panel') {
-    return {
-      minWidthPx: TECHNICAL_MIN_PANEL_SIZE_PX,
-      minHeightPx: getPanelMinHeightPx(node.panel.kind, viewportHeight)
-    }
+    return getPanelMinSize(node.panel.kind, viewportHeight)
   }
 
   const childrenMin = node.children.map((child) => computeNodeMinSize(child, viewportHeight))
@@ -184,22 +208,28 @@ export const validateLayoutTree = (tree: LayoutTree, viewport: LayoutViewport): 
   collect(tree.root)
 
   for (const [panelId, rect] of Object.entries(panelRects)) {
-    if (rect.width < TECHNICAL_MIN_PANEL_SIZE_PX || rect.height < TECHNICAL_MIN_PANEL_SIZE_PX) {
+    const kind = panelNodes.get(panelId)
+    const minWidth = kind ? getPanelMinWidthPx(kind) : TECHNICAL_MIN_PANEL_SIZE_PX
+    const minHeight = kind
+      ? getPanelMinHeightPx(kind, viewport.height)
+      : TECHNICAL_MIN_PANEL_SIZE_PX
+
+    if (rect.width < minWidth) {
       return {
         valid: false,
-        reason: `panel-too-small:${panelId}`
+        reason: `panel-width-limit:${panelId}`
       }
     }
 
-    const kind = panelNodes.get(panelId)
-    if (kind === 'chat') {
-      const chatMinHeight = getChatMinHeightPx(viewport.height)
-      if (rect.height < chatMinHeight) {
-        return {
-          valid: false,
-          reason: `chat-height-limit:${panelId}`
-        }
+    if (rect.height < minHeight) {
+      return {
+        valid: false,
+        reason: kind === 'chat' ? `chat-height-limit:${panelId}` : `panel-height-limit:${panelId}`
       }
+    }
+
+    if (kind === 'chat') {
+      continue
     }
   }
 

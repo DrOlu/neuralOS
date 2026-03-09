@@ -6,6 +6,7 @@ import type {
   WindowingTabMovedMessage
 } from './windowing'
 import {
+  buildDetachedLayoutTree,
   clearPanelDragState,
   createWindowingChannel,
   readPanelDragState,
@@ -190,6 +191,30 @@ runCase('detached window state survives repeated reads for renderer reloads', ()
   } finally {
     ;(globalThis as any).window = originalWindow
   }
+})
+
+runCase('buildDetachedLayoutTree creates a single-panel detached layout with optional tab binding', () => {
+  const tree = buildDetachedLayoutTree('terminal', {
+    tabIds: ['term-a', 'term-b'],
+    activeTabId: 'term-b'
+  })
+
+  assertEqual(tree.schemaVersion, 2, 'detached layout tree should use schema version 2')
+  assertCondition(tree.root.type === 'panel', 'detached layout root should be a single panel')
+  if (tree.root.type !== 'panel') {
+    throw new Error('detached layout root should be a panel')
+  }
+  assertEqual(tree.root.panel.kind, 'terminal', 'detached layout panel kind should match')
+  assertCondition(Boolean(tree.focusedPanelId), 'detached layout should focus its only panel')
+  assertCondition(Boolean(tree.panelTabs?.[tree.root.panel.id]), 'detached layout should persist tab bindings')
+  assertDeepEqual(
+    tree.panelTabs?.[tree.root.panel.id],
+    {
+      tabIds: ['term-a', 'term-b'],
+      activeTabId: 'term-b'
+    },
+    'detached layout should preserve the provided tab binding'
+  )
 })
 
 runCase('file protocol falls back to storage-backed windowing channel', () => {

@@ -397,6 +397,172 @@ export interface AgentEvent {
   maxTokens?: number
 }
 
+// ============ Resource Monitor Types ============
+export interface CpuSnapshot {
+  /** Overall CPU usage percentage (0–100) */
+  usagePercent: number
+  /** Per-core usage percentages */
+  corePercents?: number[]
+  /** Logical CPU/core count */
+  logicalCoreCount?: number
+  /** CPU model name when available */
+  modelName?: string
+  /** User time percentage */
+  userPercent?: number
+  /** System/kernel time percentage */
+  systemPercent?: number
+  /** Idle time percentage */
+  idlePercent?: number
+}
+
+export interface MemorySnapshot {
+  /** Total memory in bytes */
+  totalBytes: number
+  /** Used memory in bytes */
+  usedBytes: number
+  /** Available memory in bytes */
+  availableBytes: number
+  /** Usage percentage (0–100) */
+  usagePercent: number
+  /** Free memory bytes when available */
+  freeBytes?: number
+  /** Cache / reclaimable memory bytes when available */
+  cachedBytes?: number
+  /** Wired memory bytes when available */
+  wiredBytes?: number
+  /** Compressed memory bytes when available */
+  compressedBytes?: number
+  /** Swap usage info */
+  swap?: {
+    totalBytes: number
+    usedBytes: number
+  }
+}
+
+export interface DiskSnapshot {
+  /** Filesystem name / mount point */
+  filesystem: string
+  mountPoint: string
+  /** Total bytes */
+  totalBytes: number
+  /** Used bytes */
+  usedBytes: number
+  /** Available bytes */
+  availableBytes: number
+  /** Usage percentage (0–100) */
+  usagePercent: number
+}
+
+export interface GpuSnapshot {
+  /** GPU name/model */
+  name?: string
+  /** GPU utilization percentage (0–100) */
+  utilizationPercent: number
+  /** Memory used in MiB */
+  memoryUsedMiB: number
+  /** Total memory in MiB */
+  memoryTotalMiB: number
+  /** GPU temperature in Celsius */
+  temperatureC?: number
+}
+
+export interface NetworkSnapshot {
+  /** Network interface name */
+  interface: string
+  /** Bytes received since last sample */
+  rxBytesPerSec: number
+  /** Bytes transmitted since last sample */
+  txBytesPerSec: number
+}
+
+export interface ProcessSnapshot {
+  /** Process ID */
+  pid: number
+  /** Owning user when available */
+  user?: string
+  /** Display/process name */
+  name: string
+  /** CPU usage percentage */
+  cpuPercent?: number
+  /** Resident/working-set bytes */
+  memoryBytes?: number
+  /** Full command line when available */
+  command?: string
+  /** Executable path when available */
+  path?: string
+  /** Process state when available */
+  state?: string
+}
+
+export interface NetworkConnectionSnapshot {
+  /** Transport protocol */
+  protocol: 'tcp' | 'udp'
+  /** Listening/bound/local address */
+  localAddress: string
+  /** Listening/bound/local port */
+  localPort?: number
+  /** Socket state such as LISTEN / ESTABLISHED */
+  state?: string
+  /** Whether this row represents a listening socket */
+  isListening?: boolean
+  /** Owning PID when available */
+  pid?: number
+  /** Owning process name when available */
+  processName?: string
+  /** Owning user when available */
+  user?: string
+  /** Number of unique remote hosts currently attached to this socket */
+  remoteHostCount: number
+  /** Number of active connections currently attached to this socket */
+  connectionCount: number
+}
+
+export interface ResourceSystemSnapshot {
+  /** Local or SSH-backed connection type */
+  connectionType: ConnectionType
+  /** Normalized OS/platform */
+  platform: 'linux' | 'darwin' | 'windows' | 'unknown'
+  /** Reported hostname when available */
+  hostname?: string
+  /** Friendly OS name / distro */
+  osName?: string
+  /** OS release / kernel / version */
+  release?: string
+  /** CPU architecture */
+  arch?: string
+  /** Default shell */
+  shell?: string
+}
+
+export interface ResourceSnapshot {
+  /** Timestamp when the snapshot was taken (ms since epoch) */
+  timestamp: number
+  /** Terminal ID this snapshot belongs to */
+  terminalId: string
+  /** Host/platform metadata */
+  system?: ResourceSystemSnapshot
+  /** System load averages [1min, 5min, 15min] */
+  loadAverage?: [number, number, number]
+  /** CPU snapshot */
+  cpu?: CpuSnapshot
+  /** Memory snapshot */
+  memory?: MemorySnapshot
+  /** Disk snapshots */
+  disks?: DiskSnapshot[]
+  /** GPU snapshots (may be empty if no GPU detected) */
+  gpus?: GpuSnapshot[]
+  /** Network interface snapshots */
+  network?: NetworkSnapshot[]
+  /** Top processes */
+  processes?: ProcessSnapshot[]
+  /** Aggregated socket/listener view */
+  networkConnections?: NetworkConnectionSnapshot[]
+  /** System uptime in seconds */
+  uptimeSeconds?: number
+  /** Error message if collection partially failed */
+  error?: string
+}
+
 // ============ Terminal Backend Interface ============
 export interface TerminalSessionBackend {
   /**
@@ -449,6 +615,15 @@ export interface TerminalSessionBackend {
    * Get detailed system information.
    */
   getSystemInfo(ptyId: string): Promise<TerminalSystemInfo | undefined>
+
+  /**
+   * Execute a side-band command on the session and collect stdout/stderr when supported.
+   */
+  execOnSession?(
+    ptyId: string,
+    command: string,
+    timeoutMs?: number
+  ): Promise<{ stdout: string; stderr: string } | null>
 }
 
 export interface TerminalFileSystemBackend {

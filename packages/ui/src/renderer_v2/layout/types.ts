@@ -1,12 +1,12 @@
 export const LAYOUT_V2_SCHEMA_VERSION = 2
 
-export const TECHNICAL_MIN_PANEL_SIZE_PX = 40
-export const CHAT_MIN_GRID_ROWS = 2
+export const TECHNICAL_MIN_PANEL_SIZE_PX = 20
+export const CHAT_MIN_GRID_ROWS = 1
 export const CHAT_GRID_TOTAL_ROWS = 24
 export const MAX_LAYOUT_PANELS = 32
 export const MAX_LAYOUT_SPLIT_CHILDREN = 5
 
-export type PanelKind = 'chat' | 'terminal' | 'filesystem' | 'fileEditor'
+export type PanelKind = 'chat' | 'terminal' | 'filesystem' | 'fileEditor' | 'monitor'
 
 export type SplitDirection = 'horizontal' | 'vertical'
 

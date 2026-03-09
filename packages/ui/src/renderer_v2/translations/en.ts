@@ -361,8 +361,10 @@ export const en = {
     chatKind: 'Chat',
     terminalKind: 'Terminal',
     filesystemKind: 'Files',
+    monitorKind: 'Monitor',
     addChatSession: 'New Chat Session',
     addTerminalTab: 'New Local Terminal',
-    openFilesystemPanel: 'Open File Panel'
+    openFilesystemPanel: 'Open File Panel',
+    openMonitorPanel: 'Open Resource Monitor'
   },
 }

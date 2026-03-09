@@ -19,9 +19,11 @@ const runCase = async (name: string, fn: () => Promise<void> | void): Promise<vo
 
 const makeAppStoreMock = () => ({
   layout: {
+    getPrimaryPanelId: () => 'panel-file-editor',
     ensurePrimaryPanelForKind: () => 'panel-file-editor',
     focusPrimaryPanel: () => {}
   },
+  openDetachedFileEditorForPath: async () => false,
   i18n: {
     t: {
       fileEditor: {
@@ -36,6 +38,51 @@ const makeAppStoreMock = () => ({
 } as any)
 
 const run = async (): Promise<void> => {
+  await runCase('openFromFileSystem opens a detached editor window when no local editor panel exists', async () => {
+    let readCallCount = 0
+    const detachedRequests: Array<{ terminalId: string; filePath: string }> = []
+    ;(globalThis as unknown as { window: unknown }).window = {
+      gyshell: {
+        filesystem: {
+          readTextFile: async () => {
+            readCallCount += 1
+            return {
+              path: '/tmp/unused.txt',
+              content: 'unused',
+              size: 6,
+              encoding: 'utf8' as const
+            }
+          },
+          writeTextFile: async () => {}
+        }
+      },
+      confirm: () => true
+    }
+
+    const store = new FileEditorStore({
+      ...makeAppStoreMock(),
+      layout: {
+        getPrimaryPanelId: () => null,
+        ensurePrimaryPanelForKind: () => {
+          throw new Error('ensurePrimaryPanelForKind should not run when detached editor open succeeds')
+        },
+        focusPrimaryPanel: () => {}
+      },
+      openDetachedFileEditorForPath: async (terminalId: string, filePath: string) => {
+        detachedRequests.push({ terminalId, filePath })
+        return true
+      }
+    } as any)
+
+    const opened = await store.openFromFileSystem('term-a', '/tmp/detached.txt')
+    assertEqual(opened, true, 'openFromFileSystem should resolve true when detached editor open succeeds')
+    assertEqual(readCallCount, 0, 'current window should not read the file when detached editor takes ownership')
+    assertEqual(detachedRequests.length, 1, 'detached editor helper should be called exactly once')
+    assertEqual(detachedRequests[0].terminalId, 'term-a', 'detached helper should receive the terminal id')
+    assertEqual(detachedRequests[0].filePath, '/tmp/detached.txt', 'detached helper should receive the file path')
+    assertEqual(store.mode, 'idle', 'local file editor store should remain idle when file opens in a detached window')
+  })
+
   await runCase('openFromFileSystem loads text file and reuses existing panel', async () => {
     let readCallCount = 0
     let writeCallCount = 0
@@ -262,6 +309,53 @@ const run = async (): Promise<void> => {
     // The dirty flag must NOT be cleared on failure — the user still has unsaved changes.
     assertEqual(store.dirty, true, 'dirty flag should remain set after a failed save')
     assertEqual(store.mode, 'text', 'mode should remain text after a failed save')
+  })
+
+  await runCase('independent editor stores save different files without mixing state', async () => {
+    const writeCalls: Array<{ terminalId: string; filePath: string; content: string }> = []
+    ;(globalThis as unknown as { window: unknown }).window = {
+      gyshell: {
+        filesystem: {
+          readTextFile: async (_terminalId: string, filePath: string) => ({
+            path: filePath,
+            content: `initial:${filePath}`,
+            size: filePath.length + 8,
+            encoding: 'utf8' as const
+          }),
+          writeTextFile: async (terminalId: string, filePath: string, content: string) => {
+            writeCalls.push({ terminalId, filePath, content })
+          }
+        }
+      },
+      confirm: () => true
+    }
+
+    const storeA = new FileEditorStore(makeAppStoreMock())
+    const storeB = new FileEditorStore(makeAppStoreMock())
+
+    await storeA.openFromFileSystem('term-a', '/tmp/a.txt')
+    await storeB.openFromFileSystem('term-b', '/tmp/b.txt')
+
+    storeA.updateContent('alpha')
+    storeB.updateContent('beta')
+
+    const savedB = await storeB.save()
+    assertEqual(savedB, true, 'second editor should save successfully')
+    assertEqual(storeA.dirty, true, 'saving the second editor must not clear the first editor dirty state')
+    assertEqual(storeA.content, 'alpha', 'saving the second editor must not overwrite the first editor content')
+
+    const savedA = await storeA.save()
+    assertEqual(savedA, true, 'first editor should save successfully after the second editor')
+    assertEqual(storeA.dirty, false, 'first editor dirty state should clear after its own save')
+    assertEqual(storeB.dirty, false, 'second editor dirty state should stay cleared after its save')
+    assertEqual(
+      JSON.stringify(writeCalls),
+      JSON.stringify([
+        { terminalId: 'term-b', filePath: '/tmp/b.txt', content: 'beta' },
+        { terminalId: 'term-a', filePath: '/tmp/a.txt', content: 'alpha' }
+      ]),
+      'each editor should write only its own terminalId, filePath, and content'
+    )
   })
 
   // --- Dirty-state confirmation guard ---

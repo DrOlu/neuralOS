@@ -78,6 +78,22 @@ const PANEL_KIND_ADAPTERS: Record<PanelKind, PanelKindAdapter> = {
     setGlobalActiveTab: () => {
       // Special panel has no tab inventory to sync.
     }
+  }),
+  monitor: createPanelKindAdapter({
+    kind: 'monitor',
+    supportsTabs: true,
+    getOwnerTabIds: (appStore) =>
+      resolveOwnedTabIds(appStore, 'monitor', () => appStore.monitorTabs.map((tab) => tab.id)),
+    getGlobalActiveTabId: (appStore) => {
+      if (appStore.activeTerminalId && appStore.monitorTabs.some((tab) => tab.id === appStore.activeTerminalId)) {
+        return appStore.activeTerminalId
+      }
+      return appStore.monitorTabs[0]?.id || null
+    },
+    isOwnerInventoryHydrated: (appStore) => appStore.terminalTabsHydrated === true,
+    setGlobalActiveTab: (appStore, tabId) => {
+      appStore.setActiveTerminal(tabId)
+    }
   })
 }
 

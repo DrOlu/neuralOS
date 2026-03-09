@@ -277,6 +277,9 @@ export class LayoutStore {
   }
 
   splitPanel(targetPanelId: string, kind: PanelKind, direction: 'horizontal' | 'vertical', position: 'before' | 'after') {
+    if (!this.canSplitPanel(targetPanelId, kind, direction, position)) {
+      return
+    }
     const nextTree = splitPanel(this.tree, targetPanelId, kind, direction, position)
     if (nextTree !== this.tree && nextTree.focusedPanelId) {
       this.pinnedEmptyPanelIds.add(nextTree.focusedPanelId)
@@ -320,6 +323,38 @@ export class LayoutStore {
 
   getPrimaryPanelId(kind: PanelKind): string | null {
     return this.getPanelIdsByKind(kind)[0] || null
+  }
+
+  canSplitPanel(
+    targetPanelId: string,
+    kind: PanelKind,
+    direction: SplitDirection,
+    position: 'before' | 'after'
+  ): boolean {
+    if (!this.panelNodes.some((node) => node.panel.id === targetPanelId)) {
+      return false
+    }
+    if (this.panelCount >= MAX_LAYOUT_PANELS) {
+      return false
+    }
+
+    const adapter = getPanelKindAdapter(kind)
+    const maxPanels = adapter.maxPanels
+    if (Number.isFinite(maxPanels) && this.getPanelIdsByKind(kind).length >= maxPanels!) {
+      return false
+    }
+
+    const projectedTree = splitPanelWithPanelId(
+      this.tree,
+      targetPanelId,
+      {
+        kind,
+        panelId: PREVIEW_PANEL_ID
+      },
+      direction,
+      position
+    )
+    return validateLayoutTree(projectedTree, this.viewport).valid
   }
 
   getPanelTabIds(panelId: string): string[] {
@@ -376,6 +411,9 @@ export class LayoutStore {
     }
 
     const createdPanelId = makeLayoutId(`panel-${kind}`)
+    if (!this.canSplitPanel(targetPanelId, kind, 'horizontal', 'after')) {
+      return null
+    }
     const nextTree = splitPanelWithPanelId(
       this.tree,
       targetPanelId,
@@ -542,6 +580,9 @@ export class LayoutStore {
         : this.tree
 
     const panelId = makeLayoutId(`panel-${kind}`)
+    if (!this.canSplitPanel(targetPanelId, kind, splitDirection, splitPosition)) {
+      return null
+    }
     const splitTree = splitPanelWithPanelId(
       baseTree,
       targetPanelId,
@@ -842,17 +883,12 @@ export class LayoutStore {
       return false
     }
 
-    const projectedTree = splitPanelWithPanelId(
-      this.tree,
+    return this.canSplitPanel(
       targetPanelId,
-      {
-        kind: payload.kind,
-        panelId: PREVIEW_PANEL_ID
-      },
+      payload.kind,
       splitPlacement.direction,
       splitPlacement.position
     )
-    return validateLayoutTree(projectedTree, this.viewport).valid
   }
 
   private canAcceptExternalPanelDrop(kind: PanelKind, targetPanelId: string, direction: DropDirection): boolean {
@@ -875,17 +911,12 @@ export class LayoutStore {
       return false
     }
 
-    const projectedTree = splitPanelWithPanelId(
-      this.tree,
+    return this.canSplitPanel(
       targetPanelId,
-      {
-        kind,
-        panelId: PREVIEW_PANEL_ID
-      },
+      kind,
       splitPlacement.direction,
       splitPlacement.position
     )
-    return validateLayoutTree(projectedTree, this.viewport).valid
   }
 
   getPanelKindById(panelId: string): PanelKind | null {
