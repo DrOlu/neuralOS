@@ -1,6 +1,12 @@
 appId: com.gyshell.app
 productName: GyShell
 npmRebuild: false
+afterPack: apps/electron/scripts/after-pack-linux.mjs
+artifactBuildCompleted: apps/electron/scripts/normalize-linux-artifact-name.mjs
+toolsets:
+  # Use the newer AppImage runtime/toolset so Linux ARM64 builds do not rely on
+  # the legacy AppImage runtime that has known loader issues on some systems.
+  appimage: "1.0.2"
 directories:
   output: dist
   buildResources: apps/electron/materials
@@ -20,6 +26,8 @@ extraResources:
     to: mobile-web
     filter:
       - '**/*'
+  - from: apps/electron/materials/icons/512x512.png
+    to: icon.png
 asarUnpack:
   - '**/*.node'
 mac:
@@ -52,28 +60,49 @@ nsis:
 portable:
   artifactName: "${productName}.Portable.${version}-${arch}.${ext}"
 linux:
-  icon: apps/electron/materials/icon.png
+  icon: apps/electron/materials/icons
   executableName: gyshell
   target:
     - target: AppImage
-      arch:
-        - x64
-        - arm64
     - target: deb
-      arch:
-        - x64
-        - arm64
+    - target: pacman
+    - target: rpm
   category: Development
   desktop:
-    Name: GyShell
-    Comment: AI-Native Terminal App
-    StartupWMClass: GyShell
+    entry:
+      Name: GyShell
+      Comment: AI-Native Terminal App
+      StartupWMClass: gyshell
   artifactName: "${productName}-${version}-${arch}.${ext}"
 appImage:
   artifactName: "${productName}-${version}-${arch}.${ext}"
 deb:
   artifactName: "${productName}-${version}-${arch}.${ext}"
   maintainer: "TUOTUO <tuotuo@gyshell.com>"
+  # Post-install script restores chrome-sandbox SUID permissions and works
+  # around electron-builder's 0x0 icon-size bug (#5294).
+  afterInstall: apps/electron/scripts/postinstall-linux.sh
+pacman:
+  artifactName: "${productName}-${version}-${arch}.${ext}"
+  depends:
+    - c-ares
+    - ffmpeg
+    - gtk3
+    - libevent
+    - libvpx
+    - libxslt
+    - libxss
+    - minizip
+    - nss
+    - re2
+    - snappy
+    - libnotify
+    - libappindicator-gtk3
+rpm:
+  artifactName: "${productName}-${version}-${arch}.${ext}"
+  # Post-install script restores chrome-sandbox SUID permissions and works
+  # around electron-builder's 0x0 icon-size bug (#5294).
+  afterInstall: apps/electron/scripts/postinstall-linux.sh
 dmg:
   artifactName: "${productName}-${version}-${arch}.${ext}"
   contents:

@@ -673,6 +673,25 @@ export async function startElectronMain(): Promise<void> {
     return { monitoring: resourceMonitorService.isMonitoring(terminalId) }
   })
 
+  // Window controls — used by the Linux custom title bar in TopBar
+  ipcMain.handle('window:minimize', (event: any) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (win && !win.isDestroyed()) win.minimize()
+  })
+
+  ipcMain.handle('window:maximize', (event: any) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (win && !win.isDestroyed()) {
+      if (win.isMaximized()) win.unmaximize()
+      else win.maximize()
+    }
+  })
+
+  ipcMain.handle('window:close', (event: any) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (win && !win.isDestroyed()) win.close()
+  })
+
   ipcMain.handle('windowing:openDetached', async (event: any, detachedStateToken: string, sourceClientId: string) => {
     const token = String(detachedStateToken || '').trim()
     if (!token) {

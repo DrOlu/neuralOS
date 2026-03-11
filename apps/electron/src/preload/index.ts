@@ -555,6 +555,12 @@ export interface GyShellAPI {
     isMonitoring: (terminalId: string) => Promise<{ monitoring: boolean }>
     onSnapshot: (callback: (data: any) => void) => () => void
   }
+
+  windowControls: {
+    minimize: () => Promise<void>
+    maximize: () => Promise<void>
+    close: () => Promise<void>
+  }
 }
 
 const api: GyShellAPI = {
@@ -575,6 +581,11 @@ const api: GyShellAPI = {
       ipcRenderer.on('windowing:mainWindowClosing', handler)
       return () => ipcRenderer.off('windowing:mainWindowClosing', handler)
     }
+  },
+  windowControls: {
+    minimize: () => ipcRenderer.invoke('window:minimize'),
+    maximize: () => ipcRenderer.invoke('window:maximize'),
+    close: () => ipcRenderer.invoke('window:close'),
   },
   settings: {
     get: () => ipcRenderer.invoke('settings:get'),

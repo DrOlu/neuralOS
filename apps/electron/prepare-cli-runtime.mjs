@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
+import { assertLinuxBinaryMatchesTarget, getLinuxRuntimeBinaryPath } from './scripts/linux-packaging-utils.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -79,10 +80,16 @@ function runBuild(target) {
 }
 
 function validateRuntime(target) {
-  const binary = target.startsWith('windows-') ? 'gyll.exe' : 'gyll'
-  const binaryPath = path.join(runtimeRoot, 'bin', binary)
+  const parsed = parseTarget(target)
+  const binaryPath =
+    parsed.platform === 'linux'
+      ? getLinuxRuntimeBinaryPath(runtimeRoot)
+      : path.join(runtimeRoot, 'bin', parsed.platform === 'win32' ? 'gyll.exe' : 'gyll')
   if (!fs.existsSync(binaryPath)) {
     throw new Error(`Missing compiled CLI binary after build: ${binaryPath}`)
+  }
+  if (parsed.platform === 'linux') {
+    assertLinuxBinaryMatchesTarget(binaryPath, target)
   }
   fs.writeFileSync(
     path.join(runtimeRoot, 'README.txt'),

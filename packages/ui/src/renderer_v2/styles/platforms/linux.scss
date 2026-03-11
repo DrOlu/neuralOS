@@ -1,0 +1,147 @@
+// ─── Platform-specific overrides ─────────────────────────────────────────────
+.platform-linux {
+  // ─── TopBar layout ─────────────────────────────────────────────────────────
+  // Layout goal: [GYSHELL] [←── drag area ──→] [⚡][⚙] [─][□][×]
+  // GYSHELL on the far left; icon buttons + window controls pushed to the right.
+  .topbar {
+    background: var(--app-bg) !important;
+    backdrop-filter: none !important;
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+
+    // Override base `justify-content: space-between` — let auto-margin drive layout
+    justify-content: flex-start;
+
+    // 1. GYSHELL title — far left, no extra padding
+    .topbar-left {
+      padding-left: 0 !important;
+      order: 1;
+    }
+
+    // 2. Icon buttons (connections / settings) — pushed to right via auto margin
+    .topbar-right {
+      order: 2;
+      margin-left: auto;
+      -webkit-app-region: no-drag;
+    }
+
+    // 3. Window control buttons (─ □ ×) — rightmost
+    .linux-wc {
+      order: 3;
+    }
+
+    // Sub-windows don't render .topbar-right, so push window controls right
+    &:not(:has(.topbar-right)) .linux-wc {
+      margin-left: auto;
+    }
+
+    .icon-btn {
+      background: transparent !important;
+      border: none !important;
+    }
+
+    .icon-btn:hover,
+    .icon-btn:active {
+      background: transparent !important;
+      border: none !important;
+    }
+
+    .icon-btn svg {
+      transform: scale(1.1);
+      transform-origin: center;
+    }
+  }
+
+  // ─── Left panel header ──────────────────────────────────────────────────────
+  .panel-header-minimal {
+    padding-left: 12px !important;
+    -webkit-app-region: drag;
+
+    .chat-tab-add,
+    .chat-tab-history,
+    .chat-tab-history-menu,
+    .chat-tabs {
+      -webkit-app-region: no-drag;
+    }
+  }
+
+  // ─── Linux window control buttons ──────────────────────────────────────────
+  .linux-wc {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-left: 8px;
+    -webkit-app-region: no-drag;
+  }
+
+  .linux-wc-btn {
+    width: 26px;
+    height: 26px;
+    border-radius: 4px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--fg-muted);
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    transition: all 0.1s;
+    padding: 0;
+    line-height: 0;
+
+    &:hover {
+      background: color-mix(in srgb, var(--fg) 8%, transparent);
+      color: var(--fg);
+      border-color: color-mix(in srgb, var(--fg) 15%, transparent);
+    }
+
+    &:active {
+      background: color-mix(in srgb, var(--fg) 14%, transparent);
+    }
+  }
+
+  // Close button gets a subtle red tint on hover — familiar Linux convention
+  .linux-wc-close {
+    &:hover {
+      background: color-mix(in srgb, #e04040 18%, transparent) !important;
+      border-color: color-mix(in srgb, #e04040 30%, transparent) !important;
+      color: #e04040 !important;
+    }
+    &:active {
+      background: color-mix(in srgb, #e04040 28%, transparent) !important;
+    }
+  }
+
+  // ─── Themed scrollbars (identical logic to Windows) ────────────────────────
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--fg) 12%, transparent);
+    border-radius: 5px;
+    border: 2px solid var(--app-bg);
+    background-clip: content-box;
+
+    &:hover {
+      background: color-mix(in srgb, var(--fg) 22%, transparent);
+      border: 2px solid var(--app-bg);
+      background-clip: content-box;
+    }
+  }
+
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  // Terminal viewport scrollbar — matches the Windows treatment
+  .xterm-viewport::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--fg) 16%, transparent) !important;
+    border: none;
+    border-radius: 4px;
+  }
+}

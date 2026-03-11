@@ -7,6 +7,10 @@ out
 reference code/
 step_plan/
 scripts/
+!apps/electron/scripts/
+apps/electron/scripts/*
+!apps/electron/scripts/*.sh
+!apps/electron/scripts/*.mjs
 !apps/tui/scripts/
 apps/tui/scripts/*
 !apps/tui/scripts/build-cli-binaries.ts
@@ -16,7 +20,7 @@ about_mcp.md
 mcp.json
 .cursorignore
 demo.md
-build.sh
+.PKGINFO
 *.tsbuildinfo
 .gybackend-data/
 apps/electron/cli-runtime/
