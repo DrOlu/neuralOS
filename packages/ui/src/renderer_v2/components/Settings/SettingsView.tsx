@@ -797,6 +797,35 @@ export const SettingsView: React.FC<{ store: AppStore }> = observer(
                 </div>
                 <div className="settings-row">
                   <div className="settings-row-label-with-info">
+                    <label>{t.settings.tabDisplayMode}</label>
+                    <InfoTooltip content={t.settings.tooltips.tabDisplayMode} />
+                  </div>
+                  <Select
+                    className="settings-native-select"
+                    value={store.panelTabDisplayMode}
+                    onChange={(value) =>
+                      store.setPanelTabDisplayMode(
+                        value as AppStore["panelTabDisplayMode"],
+                      )
+                    }
+                    options={[
+                      {
+                        value: "auto",
+                        label: t.settings.tabDisplayModes.auto,
+                      },
+                      {
+                        value: "expanded",
+                        label: t.settings.tabDisplayModes.expanded,
+                      },
+                      {
+                        value: "select",
+                        label: t.settings.tabDisplayModes.select,
+                      },
+                    ]}
+                  />
+                </div>
+                <div className="settings-row">
+                  <div className="settings-row-label-with-info">
                     <label>{t.settings.recursionLimit}</label>
                       <InfoTooltip
                         content={t.settings.tooltips.recursionLimit}

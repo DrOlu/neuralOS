@@ -23,6 +23,9 @@
   --control-bg-hover: rgba(255, 255, 255, 0.09);
   --control-bg-active: rgba(255, 255, 255, 0.12);
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  --panel-tab-header-height: 28px;
+  --panel-tab-font-size: 10px;
+  --panel-tab-drag-handle-width: 12px;
 
   /* Typography */
   --font-ui: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial,
@@ -205,5 +208,4 @@ textarea {
 @import './components/select.scss';
 @import './platforms/windows.scss';
 @import './platforms/linux.scss';
-
 

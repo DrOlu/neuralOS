@@ -5,16 +5,32 @@
 ### 1. What It Is
 
 - Mobile-first remote client for GyShell sessions.
+- Available in two forms:
+  - desktop-built-in mobile-web server (`Settings -> Gateway`) for end users
+  - standalone dev/preview build (`npm run dev:mobile-web`, `npm run start:mobile-web`) for contributors
 - Supports session browse/search, prompt sending, permission replies, rollback, tool toggles, skill toggles, and terminal tab management.
-- Does not render terminal screen output directly.
+- Does not render the live terminal screen directly.
 
-### 2. Prerequisites
+### 2. Recommended User Path: Desktop-Built-In Mobile Web
 
-- A reachable GyShell backend websocket endpoint.
-- Backend must have at least one terminal tab.
-- If phone and backend are on different devices, backend must be exposed to LAN/VPN and firewall must allow the selected port.
+1. Open the desktop app.
+2. Go to `Settings -> Gateway`.
+3. Set `WebSocket Gateway Exposure` to one of:
+   - `LAN only`
+   - `Custom IP ranges`
+   - `Internet`
+4. Optional: adjust `WebSocket Gateway Port`.
+5. Turn on `Mobile Web Server`.
+6. Choose `Auto` or `Manual` mobile-web port.
+7. Copy one of the generated `Access Links` and open it on your phone/browser.
 
-### 3. Start Mobile-Web
+Notes:
+
+- The built-in mobile-web server only works when the websocket gateway is reachable from the network. `Localhost only` and `Disabled` are not enough for phones or other devices.
+- Generated access links already include `?gateway=ws://...`, so the mobile page usually arrives with the gateway URL prefilled.
+- For non-localhost access, create an access token in the same `Gateway` settings page and paste it into the mobile-web `Settings` panel once.
+
+### 3. Standalone / Development Mobile-Web
 
 From repo root:
 
@@ -35,29 +51,40 @@ npm run start:mobile-web
 
 ### 4. Connect to Backend
 
+Built-in desktop flow:
+
+1. Open a copied desktop `Access Link`.
+2. Open the mobile `Settings` panel.
+3. Confirm the prefilled gateway URL.
+4. Paste an access token if the gateway is not localhost-only.
+5. Tap `Connect`.
+
+Manual flow (standalone page or custom deployment):
+
 1. Open mobile-web in browser.
-2. Go to `Settings` tab.
+2. Go to `Settings`.
 3. Set Gateway URL, for example:
 
 ```text
 ws://192.168.1.8:17888
 ```
 
-4. Tap `Connect`.
+4. Paste an access token when connecting over LAN/VPN/public interfaces.
+5. Tap `Connect`.
 
 Notes:
 
-- If mobile-web and backend are on the same machine, default URL usually works (`ws://<page-host>:17888`).
 - `Connect` enables auto-reconnect; `Disconnect` disables it.
+- Localhost-only development can usually skip the token.
 
 ### 5. Core Workflows
 
 - `Chat`
-  - Session Browser (search + running indicator)
+  - Session browser (search + running indicator)
   - Open/create session
   - Send prompt, stop run
   - Reply permission asks
-  - Rollback to a previous message
+  - Roll back to a previous message
 - `Terminal`
   - Create local terminal tab
   - Create SSH terminal tab from saved desktop SSH connections
@@ -67,23 +94,31 @@ Notes:
 - `Tools`
   - Toggle MCP servers and built-in tools
 - `Settings`
-  - Update websocket endpoint and connect/disconnect
+  - Update websocket URL
+  - Paste/remove access token
+  - Connect/disconnect
+  - Switch language
 
-### 6. Connection Behavior
+### 6. Gateway and Security Notes
 
-- Heartbeat checks websocket regularly.
-- On disconnect/heartbeat loss, client retries with exponential backoff.
-- Session list and active session state are reloaded after reconnect.
+- The built-in mobile-web server is only an HTTP host for the frontend. Real task control still goes through the websocket gateway.
+- `LAN only` binds all interfaces but only accepts private-network IPv4 clients.
+- `Custom IP ranges` binds all interfaces but only accepts clients inside the configured CIDR allowlist.
+- Even with access tokens, prefer `localhost`, private LAN, or VPN over direct public-internet exposure.
 
 ### 7. Troubleshooting
 
+- `Gateway Not Accessible`
+  - Desktop gateway exposure is still `Localhost only` or `Disabled`.
+- `missing access token` / `invalid access token`
+  - Create a new token in desktop `Settings -> Gateway` and paste it into mobile-web `Settings`.
 - `No terminal is available on backend.`
   - Backend has no terminal tab. Start backend with terminal bootstrap enabled, or create one in desktop first.
 - `Gateway is disconnected` / timeout
-  - Check desktop websocket access mode and port.
+  - Check desktop websocket exposure mode and port.
   - Verify firewall and network route.
 - `SSH connection not found. Please configure it in desktop settings first.`
-  - Mobile-web reads SSH definitions from backend settings; create SSH connection in desktop settings first.
+  - Mobile-web reads SSH definitions from backend settings; create the SSH connection in desktop settings first.
 
 ---
 
@@ -92,16 +127,32 @@ Notes:
 ### 1. 它是什么
 
 - 面向手机浏览器的 GyShell 远程会话控制端。
+- 现在有两种使用方式：
+  - 终端用户推荐直接使用桌面端内置的 Mobile Web 服务（`Settings -> Gateway`）
+  - 贡献者可继续使用独立开发/预览构建（`npm run dev:mobile-web`、`npm run start:mobile-web`）
 - 支持会话浏览/搜索、发送消息、权限回复、回滚、工具开关、技能开关、终端标签管理。
-- 不直接渲染终端屏幕输出。
+- 不直接渲染终端实时屏幕内容。
 
-### 2. 前置条件
+### 2. 推荐用户路径：桌面端内置 Mobile Web
 
-- 需要一个可访问的 GyShell backend websocket 地址。
-- backend 需要至少有一个可用 terminal tab。
-- 如果手机和 backend 不在同一设备，backend 需要开放到局域网/VPN，且系统防火墙允许对应端口。
+1. 打开桌面 App。
+2. 进入 `Settings -> Gateway`。
+3. 将 `WebSocket Gateway Exposure` 设为以下之一：
+   - `LAN only`
+   - `Custom IP ranges`
+   - `Internet`
+4. 可选：调整 `WebSocket Gateway Port`。
+5. 打开 `Mobile Web Server`。
+6. 选择 `Auto` 或 `Manual` 的 Mobile Web 端口策略。
+7. 复制生成的 `Access Links`，在手机或浏览器中打开。
 
-### 3. 启动 Mobile-Web
+说明：
+
+- 只有当 websocket 网关对网络可访问时，桌面内置 Mobile Web 才能工作。`Localhost only` 和 `Disabled` 不足以让手机或其他设备连接。
+- 生成的访问链接会自动带上 `?gateway=ws://...` 参数，所以移动端页面通常会预填网关地址。
+- 如果不是本机 `localhost` 访问，请在同一页 `Gateway` 设置里创建访问令牌，并在移动端 `Settings` 里粘贴一次。
+
+### 3. 独立 / 开发模式 Mobile Web
 
 在仓库根目录执行：
 
@@ -122,20 +173,31 @@ npm run start:mobile-web
 
 ### 4. 连接 Backend
 
+桌面内置方式：
+
+1. 打开从桌面端复制的 `Access Link`。
+2. 进入移动端 `Settings` 面板。
+3. 确认预填好的 gateway URL。
+4. 如果不是 localhost 访问，粘贴访问令牌。
+5. 点击 `Connect`。
+
+手动方式（独立页面或自定义部署）：
+
 1. 浏览器打开 mobile-web。
-2. 进入 `Settings` 标签页。
+2. 进入 `Settings`。
 3. 填写 Gateway URL，例如：
 
 ```text
 ws://192.168.1.8:17888
 ```
 
-4. 点击 `Connect`。
+4. 如果通过局域网/VPN/公网网卡接入，请同时填写访问令牌。
+5. 点击 `Connect`。
 
 说明：
 
-- 如果 mobile-web 与 backend 在同一台机器，默认 URL 通常可直接使用（`ws://<页面主机>:17888`）。
 - `Connect` 会启用自动重连；`Disconnect` 会关闭自动重连。
+- 本机 localhost 开发场景通常可以不填 token。
 
 ### 5. 核心使用流程
 
@@ -154,16 +216,24 @@ ws://192.168.1.8:17888
 - `Tools`
   - 切换 MCP 服务器与内置工具启用状态
 - `Settings`
-  - 修改 websocket 地址并连接/断开
+  - 修改 websocket 地址
+  - 粘贴/清除访问令牌
+  - 连接/断开
+  - 切换语言
 
-### 6. 连接行为
+### 6. 网关与安全说明
 
-- 客户端会定期进行 websocket 心跳检查。
-- 断连或心跳丢失时，会指数退避自动重连。
-- 重连成功后会重新加载会话列表和当前会话状态。
+- 桌面端内置 Mobile Web 服务只是前端页面的 HTTP 托管层，真正的任务控制仍然走 websocket 网关。
+- `LAN only` 会绑定所有网卡，但只允许私网 IPv4 地址接入。
+- `Custom IP ranges` 会绑定所有网卡，但只允许配置好的 CIDR 白名单来源接入。
+- 即使有访问令牌，也依然更建议使用 `localhost`、私有局域网或 VPN，而不是直接暴露到公网。
 
 ### 7. 常见问题
 
+- `Gateway Not Accessible`
+  - 桌面端网关暴露范围仍是 `Localhost only` 或 `Disabled`。
+- `missing access token` / `invalid access token`
+  - 请在桌面端 `Settings -> Gateway` 中重新创建访问令牌，再粘贴到移动端 `Settings`。
 - `No terminal is available on backend.`
   - backend 没有 terminal tab。请先启用 bootstrap terminal，或先在桌面端创建 tab。
 - `Gateway is disconnected` / timeout

@@ -1,3 +1,5 @@
+import type { PanelTabDisplayModePreference } from '@gyshell/shared'
+
 export type AppLanguage = 'en' | 'zh-CN'
 
 export interface TerminalUiSettings {
@@ -10,9 +12,14 @@ export interface TerminalUiSettings {
   rightClickToPaste: boolean
 }
 
+export interface PanelTabsUiSettings {
+  displayMode: PanelTabDisplayModePreference
+}
+
 export interface UiSettings {
   uiSchemaVersion: 1
   language: AppLanguage
   themeId: string
   terminal: TerminalUiSettings
+  panelTabs: PanelTabsUiSettings
 }

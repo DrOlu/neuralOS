@@ -21,15 +21,22 @@ import {
 import { ConfirmDialog } from '../Common/ConfirmDialog'
 import { renderPanelByKind } from './panelRenderRegistry'
 import { PanelTypeRail } from './PanelTypeRail'
+import {
+  resolveCompactMenuTabReorderHint,
+  resolveHorizontalTabBarReorderHint,
+} from './tabDropTargets'
 import { getPanelKindAdapter } from '../../stores/panelKindAdapters'
 import {
   WINDOW_CONTEXT,
   buildDetachedLayoutTree,
+  clearTabDragState,
   clearPanelDragState,
   createWindowingChannel,
   normalizeWindowingTerminalTabSnapshot,
   openDetachedWindowState,
+  readTabDragState,
   readPanelDragState,
+  stashTabDragState,
   syncDetachedWindowState,
   stashPanelDragState,
   type DetachedWindowState,
@@ -82,6 +89,7 @@ interface PendingTerminalCloseRequest {
 
 interface CrossWindowTabDragPayload extends TabDragPayload {
   sourceClientId: string
+  stateToken?: string
   terminalTab?: WindowingTerminalTabSnapshot
 }
 
@@ -135,6 +143,7 @@ const parseCrossWindowTabDragPayload = (
     const sourceClientId = typeof parsed.sourceClientId === 'string' ? parsed.sourceClientId.trim() : ''
     const tabId = typeof parsed.tabId === 'string' ? parsed.tabId.trim() : ''
     const sourcePanelId = typeof parsed.sourcePanelId === 'string' ? parsed.sourcePanelId.trim() : ''
+    const stateToken = typeof (parsed as any).stateToken === 'string' ? (parsed as any).stateToken.trim() : ''
     const kind = parsed.kind
     if (!sourceClientId || !tabId || !sourcePanelId) return null
     if (kind !== 'chat' && kind !== 'terminal' && kind !== 'filesystem' && kind !== 'fileEditor' && kind !== 'monitor') {
@@ -146,6 +155,7 @@ const parseCrossWindowTabDragPayload = (
       tabId,
       sourcePanelId,
       kind,
+      ...(stateToken ? { stateToken } : {}),
       ...(terminalTab ? { terminalTab } : {})
     }
   } catch {
@@ -442,8 +452,13 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
   const isDetachHoverRef = React.useRef(false)
   const externalSourceClientIdRef = React.useRef<string | null>(null)
   const externalPanelDragPayloadRef = React.useRef<WindowingPanelDragPayload | null>(null)
+  const localTabDragStateTokenRef = React.useRef<string | null>(null)
   const localPanelDragStateTokenRef = React.useRef<string | null>(null)
   const pendingLocalPanelDragRef = React.useRef<LocalPanelDragPayload | null>(null)
+  const pendingLocalTabDragRef = React.useRef<TabDragPayload | null>(null)
+  const pendingNativeDragIntentTargetRef = React.useRef<EventTarget | null>(null)
+  const pendingNativeDragIntentTimeRef = React.useRef(0)
+  const nativeDragStartHandledRef = React.useRef(false)
   const skipDetachedClosingRef = React.useRef(false)
   const detachedStateSyncTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const windowingChannelRef = React.useRef<WindowingChannel | null>(null)
@@ -547,6 +562,15 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
     localPanelDragStateTokenRef.current = null
   }, [])
 
+  const clearLocalTabDragState = React.useCallback(() => {
+    const token = localTabDragStateTokenRef.current
+    if (!token) {
+      return
+    }
+    clearTabDragState(token)
+    localTabDragStateTokenRef.current = null
+  }, [])
+
   const resetDragUi = React.useCallback((options?: { preserveCrossWindowDrag?: boolean }) => {
     setSelectionSuppressed(false)
     setTrashHover(false)
@@ -555,9 +579,13 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
     externalSourceClientIdRef.current = null
     externalPanelDragPayloadRef.current = null
     pendingLocalPanelDragRef.current = null
+    pendingLocalTabDragRef.current = null
     if (!options?.preserveCrossWindowDrag) {
       crossWindowDragRef.current = null
     }
+    pendingNativeDragIntentTargetRef.current = null
+    pendingNativeDragIntentTimeRef.current = 0
+    nativeDragStartHandledRef.current = false
   }, [clearTabInsertIndicator, setDetachHover, setSelectionSuppressed, setTrashHover])
 
   const rollbackExternalTabDrag = React.useCallback(
@@ -1027,7 +1055,11 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
       indicatorRect: LayoutRect
     } | null => {
       const tabElements = Array.from(tabBarElement.querySelectorAll<HTMLElement>('[data-layout-tab-id]'))
-        .filter((element) => element.getAttribute('data-layout-tab-panel-id') === targetPanelId)
+        .filter(
+          (element) =>
+            element.getAttribute('data-layout-tab-panel-id') === targetPanelId &&
+            element.getAttribute('data-layout-tab-menu-item') !== 'true'
+        )
         .map((element) => {
           const tabId = element.getAttribute('data-layout-tab-id')
           if (!tabId || tabId === draggingTabId) return null
@@ -1037,60 +1069,13 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
           }
         })
         .filter((entry): entry is { tabId: string; rect: DOMRect } => !!entry)
-        .sort((a, b) => a.rect.left - b.rect.left)
 
-      const tabBarRect = tabBarElement.getBoundingClientRect()
-      const indicatorTop = tabBarRect.top + 4
-      const indicatorHeight = Math.max(16, tabBarRect.height - 8)
-      const buildIndicatorRect = (left: number): LayoutRect => ({
-        left: Math.round(left - 1),
-        top: Math.round(indicatorTop),
-        width: 2,
-        height: Math.round(indicatorHeight)
-      })
-
-      if (tabElements.length === 0) {
-        return {
-          anchorTabId: null,
-          position: 'after',
-          indicatorRect: buildIndicatorRect(tabBarRect.left + 8)
-        }
-      }
-
-      const firstTab = tabElements[0]
-      const firstTabMidX = firstTab.rect.left + firstTab.rect.width / 2
-      if (clientX <= firstTabMidX) {
-        return {
-          anchorTabId: firstTab.tabId,
-          position: 'before',
-          indicatorRect: buildIndicatorRect(firstTab.rect.left)
-        }
-      }
-
-      const lastTab = tabElements[tabElements.length - 1]
-      const lastTabMidX = lastTab.rect.left + lastTab.rect.width / 2
-      if (clientX >= lastTabMidX) {
-        return {
-          anchorTabId: lastTab.tabId,
-          position: 'after',
-          indicatorRect: buildIndicatorRect(lastTab.rect.right)
-        }
-      }
-
-      const beforeTarget = tabElements.find((entry) => clientX < entry.rect.left + entry.rect.width / 2)
-      if (!beforeTarget) {
-        return {
-          anchorTabId: lastTab.tabId,
-          position: 'after',
-          indicatorRect: buildIndicatorRect(lastTab.rect.right)
-        }
-      }
-
-      return {
-        anchorTabId: beforeTarget.tabId,
-        position: 'before',
-        indicatorRect: buildIndicatorRect(beforeTarget.rect.left)
-      }
+      return resolveHorizontalTabBarReorderHint(
+        tabBarElement.getBoundingClientRect(),
+        tabElements,
+        draggingTabId,
+        clientX,
+      )
     },
     []
   )
@@ -1103,6 +1088,49 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
 
       if (store.layout.dragType === 'tab') {
         const draggingTab = store.layout.draggingTab
+        const compactMenuTabElement = targetElement?.closest?.(
+          '[data-layout-tab-menu-item="true"]'
+        ) as HTMLElement | null
+        const compactMenuTabId = compactMenuTabElement?.getAttribute('data-layout-tab-id') || null
+        const compactMenuPanelId =
+          compactMenuTabElement?.getAttribute('data-layout-tab-panel-id') || null
+        const compactMenuKind =
+          compactMenuTabElement?.getAttribute('data-layout-tab-kind') as PanelKind | null
+
+        if (
+          draggingTab &&
+          compactMenuTabElement &&
+          compactMenuTabId &&
+          compactMenuPanelId &&
+          compactMenuKind === draggingTab.kind
+        ) {
+          if (compactMenuTabId === draggingTab.tabId) {
+            clearTabInsertIndicator()
+            store.layout.clearTabReorderTarget()
+            store.layout.setDropTarget(null, null)
+            return
+          }
+
+          const reorderHint = resolveCompactMenuTabReorderHint(
+            {
+              tabId: compactMenuTabId,
+              rect: compactMenuTabElement.getBoundingClientRect(),
+            },
+            draggingTab.tabId,
+            clientY,
+          )
+          if (reorderHint) {
+            store.layout.setTabReorderTarget(
+              compactMenuPanelId,
+              reorderHint.anchorTabId,
+              reorderHint.position
+            )
+            store.layout.setDropTarget(compactMenuPanelId, 'center')
+            setTabInsertIndicatorRect(reorderHint.indicatorRect)
+            return
+          }
+        }
+
         const tabBarElement = targetElement?.closest?.('[data-layout-tab-bar="true"]') as HTMLElement | null
         const tabBarPanelId = tabBarElement?.getAttribute('data-layout-tab-panel-id') || null
         const tabBarKind = tabBarElement?.getAttribute('data-layout-tab-kind') as PanelKind | null
@@ -1131,7 +1159,13 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
         return
       }
 
-      const tabHost = (targetElement?.closest?.('[data-layout-tab-id]') as HTMLElement | null) || null
+      const rawTabHost =
+        (targetElement?.closest?.('[data-layout-tab-id]') as HTMLElement | null) ||
+        null
+      const tabHost =
+        rawTabHost?.getAttribute('data-layout-tab-menu-item') === 'true'
+          ? null
+          : rawTabHost
       if (store.layout.dragType === 'tab') {
         const draggingTab = store.layout.draggingTab
         if (!draggingTab || !targetPanelKind || targetPanelKind !== draggingTab.kind) {
@@ -1212,6 +1246,30 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
       return {
         ...stashedPayload,
         sourceClientId: payload.sourceClientId,
+        sourcePanelId: payload.sourcePanelId,
+        kind: payload.kind,
+        stateToken: token
+      }
+    }
+
+    const resolveTabDragPayload = (
+      payload: CrossWindowTabDragPayload | null
+    ): CrossWindowTabDragPayload | null => {
+      if (!payload) {
+        return null
+      }
+      const token = String(payload.stateToken || '').trim()
+      if (!token) {
+        return payload
+      }
+      const stashedPayload = readTabDragState(token)
+      if (!stashedPayload) {
+        return payload
+      }
+      return {
+        ...stashedPayload,
+        sourceClientId: payload.sourceClientId,
+        tabId: payload.tabId,
         sourcePanelId: payload.sourcePanelId,
         kind: payload.kind,
         stateToken: token
@@ -1310,6 +1368,26 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
         ...payload,
         sourceClientId: store.windowClientId,
         ...(terminalTab ? { terminalTab } : {})
+      }
+    }
+
+    const createTabTransportPayload = (
+      payload: TabDragPayload
+    ): CrossWindowTabDragPayload => {
+      clearLocalTabDragState()
+      const fullPayload = toCrossWindowTabDragPayload(payload)
+      const stateToken = `tab-drag-${makeLayoutId('state')}`
+      const hasStashedState = stashTabDragState(stateToken, fullPayload)
+      if (!hasStashedState) {
+        return fullPayload
+      }
+      localTabDragStateTokenRef.current = stateToken
+      return {
+        sourceClientId: fullPayload.sourceClientId,
+        tabId: fullPayload.tabId,
+        sourcePanelId: fullPayload.sourcePanelId,
+        kind: fullPayload.kind,
+        stateToken
       }
     }
 
@@ -1437,41 +1515,62 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
         }
       }
 
+      const pendingLocalTabDrag = pendingLocalTabDragRef.current
+      if (pendingLocalTabDrag) {
+        // Mirror panel dragging: keep native dragstart lightweight so Chromium /
+        // Electron can preserve the cross-window drag session before layout
+        // state changes trigger any renderer work.
+        store.layout.startTabDragging(pendingLocalTabDrag, event.clientX, event.clientY)
+        pendingLocalTabDragRef.current = null
+        return {
+          payload: pendingLocalTabDrag,
+          externalSourceClientId: null
+        }
+      }
+
       // Try DataTransfer first (works for intra-window drags)
       const crossWindowPayload = parseCrossWindowTabDragPayload(event.dataTransfer)
-      if (crossWindowPayload && crossWindowPayload.sourceClientId !== store.windowClientId) {
+      const resolvedCrossWindowPayload =
+        crossWindowPayload && crossWindowPayload.sourceClientId !== store.windowClientId
+          ? resolveTabDragPayload(crossWindowPayload)
+          : null
+      if (resolvedCrossWindowPayload && resolvedCrossWindowPayload.sourceClientId !== store.windowClientId) {
         const payload: TabDragPayload = {
-          tabId: crossWindowPayload.tabId,
-          kind: crossWindowPayload.kind,
-          sourcePanelId: crossWindowPayload.sourcePanelId
+          tabId: resolvedCrossWindowPayload.tabId,
+          kind: resolvedCrossWindowPayload.kind,
+          sourcePanelId: resolvedCrossWindowPayload.sourcePanelId
         }
         store.materializeTransferredTabs(payload.kind, [payload.tabId], {
-          terminalTabs: crossWindowPayload.terminalTab ? [crossWindowPayload.terminalTab] : []
+          terminalTabs: resolvedCrossWindowPayload.terminalTab ? [resolvedCrossWindowPayload.terminalTab] : []
         })
         store.unsuppressTabs(payload.kind, [payload.tabId], { syncLayout: false })
         store.layout.startTabDragging(payload, event.clientX, event.clientY)
-        externalSourceClientIdRef.current = crossWindowPayload.sourceClientId
+        externalSourceClientIdRef.current = resolvedCrossWindowPayload.sourceClientId
         return {
           payload,
-          externalSourceClientId: crossWindowPayload.sourceClientId
+          externalSourceClientId: resolvedCrossWindowPayload.sourceClientId
         }
       }
 
       // Fallback: use windowing channel payload (for cross-window drags where
       // DataTransfer.getData() returns empty during dragover)
       const broadcastDrag = crossWindowDragRef.current
+      const resolvedBroadcastPayload =
+        broadcastDrag?.dragKind === 'tab' && broadcastDrag.tabPayload
+          ? resolveTabDragPayload(broadcastDrag.tabPayload)
+          : null
       if (
         broadcastDrag?.dragKind === 'tab' &&
-        broadcastDrag.tabPayload &&
+        resolvedBroadcastPayload &&
         broadcastDrag.sourceClientId !== store.windowClientId
       ) {
         const payload: TabDragPayload = {
-          tabId: broadcastDrag.tabPayload.tabId,
-          kind: broadcastDrag.tabPayload.kind,
-          sourcePanelId: broadcastDrag.tabPayload.sourcePanelId
+          tabId: resolvedBroadcastPayload.tabId,
+          kind: resolvedBroadcastPayload.kind,
+          sourcePanelId: resolvedBroadcastPayload.sourcePanelId
         }
         store.materializeTransferredTabs(payload.kind, [payload.tabId], {
-          terminalTabs: broadcastDrag.tabPayload.terminalTab ? [broadcastDrag.tabPayload.terminalTab] : []
+          terminalTabs: resolvedBroadcastPayload.terminalTab ? [resolvedBroadcastPayload.terminalTab] : []
         })
         store.unsuppressTabs(payload.kind, [payload.tabId], { syncLayout: false })
         store.layout.startTabDragging(payload, event.clientX, event.clientY)
@@ -1486,9 +1585,18 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
     }
 
     const handleDragStart = (event: DragEvent) => {
-      const tabPayload = readTabPayload(event.target)
+      if (nativeDragStartHandledRef.current) {
+        return
+      }
+
+      const recentIntentTarget =
+        Date.now() - pendingNativeDragIntentTimeRef.current <= 1200
+          ? pendingNativeDragIntentTargetRef.current
+          : null
+      const tabPayload = readTabPayload(event.target) || readTabPayload(recentIntentTarget)
       if (tabPayload) {
-        const crossPayload = toCrossWindowTabDragPayload(tabPayload)
+        nativeDragStartHandledRef.current = true
+        const crossPayload = createTabTransportPayload(tabPayload)
         if (event.dataTransfer) {
           event.dataTransfer.effectAllowed = 'move'
           const encoded = encodeCrossWindowTabDragPayload(crossPayload)
@@ -1497,7 +1605,7 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
         }
         setSelectionSuppressed(true)
         clearTabInsertIndicator()
-        store.layout.startTabDragging(tabPayload, event.clientX, event.clientY)
+        pendingLocalTabDragRef.current = tabPayload
         externalSourceClientIdRef.current = null
         // Broadcast to other windows so they can accept the drop
         postWindowingMessage({
@@ -1509,8 +1617,9 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
         return
       }
 
-      const panelPayload = readPanelPayload(event.target)
+      const panelPayload = readPanelPayload(event.target) || readPanelPayload(recentIntentTarget)
       if (panelPayload) {
+        nativeDragStartHandledRef.current = true
         const crossPayload = createPanelTransportPayload(panelPayload)
         if (event.dataTransfer) {
           event.dataTransfer.effectAllowed = 'move'
@@ -1815,8 +1924,10 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
     const handleDragEnd = () => {
       const hasActiveLayoutDrag =
         (store.layout.isDragging && (store.layout.dragType === 'tab' || store.layout.dragType === 'panel'))
+        || !!pendingLocalTabDragRef.current
         || !!pendingLocalPanelDragRef.current
       if (!hasActiveLayoutDrag) {
+        clearLocalTabDragState()
         clearLocalPanelDragState()
         return
       }
@@ -1833,7 +1944,23 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
         sourceClientId: store.windowClientId
       })
       crossWindowDragRef.current = null
+      clearLocalTabDragState()
       clearLocalPanelDragState()
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      pendingNativeDragIntentTargetRef.current = event.target
+      pendingNativeDragIntentTimeRef.current = Date.now()
+      nativeDragStartHandledRef.current = false
+    }
+
+    const handlePointerUp = () => {
+      if (store.layout.isDragging || pendingLocalPanelDragRef.current) {
+        return
+      }
+      pendingNativeDragIntentTargetRef.current = null
+      pendingNativeDragIntentTimeRef.current = 0
+      nativeDragStartHandledRef.current = false
     }
 
     const handleWindowDragOver = (event: DragEvent) => {
@@ -1879,6 +2006,8 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
 
     // Use capture so the workspace sees cross-window drags before nested
     // editors, terminals, or inputs claim the native drag session.
+    host.addEventListener('mousedown', handlePointerDown, true)
+    window.addEventListener('mouseup', handlePointerUp, true)
     host.addEventListener('dragstart', handleDragStart, true)
     host.addEventListener('dragenter', handleDragEnter, true)
     host.addEventListener('dragover', handleDragOver, true)
@@ -1889,6 +2018,8 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
     window.addEventListener('drop', handleWindowDrop, true)
 
     return () => {
+      host.removeEventListener('mousedown', handlePointerDown, true)
+      window.removeEventListener('mouseup', handlePointerUp, true)
       host.removeEventListener('dragstart', handleDragStart, true)
       host.removeEventListener('dragenter', handleDragEnter, true)
       host.removeEventListener('dragover', handleDragOver, true)
@@ -1897,10 +2028,12 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
       host.removeEventListener('dragend', handleDragEnd, true)
       window.removeEventListener('dragover', handleWindowDragOver, true)
       window.removeEventListener('drop', handleWindowDrop, true)
+      clearLocalTabDragState()
       clearLocalPanelDragState()
     }
   }, [
     cancelExternalTabAdoption,
+    clearLocalTabDragState,
     clearLocalPanelDragState,
     clearDropPreview,
     clearTabInsertIndicator,
@@ -2157,6 +2290,7 @@ export const LayoutWorkspace: React.FC<LayoutWorkspaceProps> = observer(({ store
             style={{
               left: tabInsertIndicatorRect.left,
               top: tabInsertIndicatorRect.top,
+              width: tabInsertIndicatorRect.width,
               height: tabInsertIndicatorRect.height
             }}
           />

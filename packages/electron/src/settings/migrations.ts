@@ -1,3 +1,7 @@
+import {
+  DEFAULT_PANEL_TAB_DISPLAY_MODE,
+  isPanelTabDisplayModePreference,
+} from '@gyshell/shared'
 import type { UiSettings } from './types'
 import { deepMerge, isObject } from './objectMerge'
 
@@ -15,6 +19,9 @@ export const DEFAULT_UI_SETTINGS: UiSettings = {
     cursorBlink: true,
     copyOnSelect: true,
     rightClickToPaste: true
+  },
+  panelTabs: {
+    displayMode: DEFAULT_PANEL_TAB_DISPLAY_MODE,
   }
 }
 
@@ -24,7 +31,8 @@ function pickUiSnapshot(raw: unknown): Partial<UiSettings> {
     uiSchemaVersion: raw.uiSchemaVersion,
     language: raw.language,
     themeId: raw.themeId,
-    terminal: raw.terminal
+    terminal: raw.terminal,
+    panelTabs: raw.panelTabs,
   } as Partial<UiSettings>
 }
 
@@ -38,6 +46,9 @@ function normalizeUiSettings(settings: UiSettings): UiSettings {
   }
   if (typeof next.terminal.scrollback !== 'number' || next.terminal.scrollback < 0) {
     next.terminal.scrollback = 5000
+  }
+  if (!isPanelTabDisplayModePreference(next.panelTabs.displayMode)) {
+    next.panelTabs.displayMode = DEFAULT_PANEL_TAB_DISPLAY_MODE
   }
   next.uiSchemaVersion = UI_SETTINGS_SCHEMA_VERSION
   return next

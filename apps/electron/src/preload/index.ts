@@ -118,6 +118,9 @@ interface UiSettings {
     copyOnSelect: boolean
     rightClickToPaste: boolean
   }
+  panelTabs: {
+    displayMode: 'auto' | 'expanded' | 'select'
+  }
 }
 
 type TerminalRecoveryReason = 'resume' | 'unlock-screen' | 'display-metrics-changed'

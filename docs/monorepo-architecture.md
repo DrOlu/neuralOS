@@ -3,7 +3,7 @@
 GyShell uses strict layering:
 
 - `packages/*` owns implementation and runtime logic.
-- `apps/*` owns composition/bootstrap/build wrappers only.
+- `apps/*` owns composition, bootstrap, packaging, and thin runtime wrappers only.
 
 Frontend implementation must not be placed under `packages/backend`.
 
@@ -29,7 +29,7 @@ GyShell/
 │   ├── mobile-web/         # mobile-web UI implementation
 │   ├── tui/                # tui UI implementation
 │   ├── ui/                 # desktop renderer UI implementation
-│   └── shared/             # shared modules across surfaces
+│   └── shared/             # shared cross-surface models/utilities
 ├── docs/
 │   ├── monorepo-architecture.md
 │   └── build-commands.md
@@ -41,11 +41,11 @@ GyShell/
 ### `packages/backend`
 
 - Owns transport-agnostic runtime core.
-- `GatewayService` is the session orchestrator and event source-of-truth.
-- `AgentService_v2`, `TerminalService`, `UIHistoryService`, MCP/skills/policy services live here.
+- `GatewayService` is the session orchestrator and event source of truth.
+- `AgentService_v2`, `TerminalService`, `UIHistoryService`, MCP/skills/policy services, and `ResourceMonitorService` live here.
 - Websocket transport implementation is in backend:
-  - `WebSocketGatewayAdapter` (RPC transport adapter)
-  - `WebSocketGatewayControlService` (access policy + lifecycle)
+  - `WebSocketGatewayAdapter`
+  - `WebSocketGatewayControlService`
 - Standalone bootstrap entry:
   - `packages/backend/src/runtimes/gybackend/startGyBackend.ts`
 
@@ -54,17 +54,23 @@ GyShell/
 - Owns Electron-only runtime implementation.
 - Main process composition root:
   - `startElectronMain`
-- Electron IPC adapter and window transport:
+- Electron transport and desktop bridge:
   - `ElectronGatewayIpcAdapter`
   - `ElectronWindowTransport`
+- Desktop-only companion services:
+  - `MobileWebServerService` for serving bundled mobile-web assets
+  - `MonitorWindowRegistry` for monitor snapshot fan-out across desktop windows
+  - platform window chrome adapters (`platform/*/windowChrome.ts`)
 - Electron settings/theme migration and stores:
-  - `settings/*`, `theme/*`
+  - `settings/*`
+  - `theme/*`
 
 ### `packages/ui`
 
 - Desktop renderer React app.
-- UI stores/components consume gateway updates and runtime snapshots.
-- Handles profile-lock/readiness sync in chat state.
+- Owns the workspace layout system, detachable sub-window behavior, cross-window drag/drop, file editor, and monitor panel.
+- UI stores consume gateway updates, terminal inventory, and monitor snapshot streams.
+- Handles gateway/mobile-web settings state and profile-lock/readiness sync in chat state.
 
 ### `packages/tui`
 
@@ -72,7 +78,7 @@ GyShell/
   - session state
   - composer/input workflows
   - gateway client integration
-- Mirrors profile-lock and readiness events from gateway updates.
+- Mirrors profile-lock/readiness events from gateway updates.
 
 ### `packages/mobile-web`
 
@@ -80,15 +86,16 @@ GyShell/
 - Main controller:
   - `useMobileController`
 - Includes chat/session/tools/skills/terminal/settings panels.
-- Supports tool management via gateway RPC (`tools:*`, `skills:*`, `terminal:*`).
+- Supports access-token-aware gateway connection and gateway RPC access for tools, skills, terminals, and settings.
 
 ### `packages/shared`
 
-- Shared cross-surface modules (currently theme-centric shared models).
+- Shared cross-surface models and utilities.
+- Currently includes shared theme definitions and terminal connection capability models used by backend, desktop UI, and packaging flows.
 
 ### `apps/*`
 
-- Must stay thin wrappers with no business logic duplication.
+- Must stay thin wrappers with no business-logic duplication.
 - Any reusable runtime logic must be implemented in `packages/*`.
 
 ## Runtime Boot Flow (Desktop)
@@ -97,11 +104,12 @@ The desktop runtime chain is intentionally layered:
 
 1. `apps/electron/src/main/index.ts`
 2. `packages/electron/src/main/startElectronMain.ts`
-3. `GatewayService` instance creation
+3. Create core services (`GatewayService`, terminal/filesystem/history/theme/settings, access-token service)
 4. Register `ElectronWindowTransport` for desktop renderer bridge
-5. Create `WebSocketGatewayControlService`
-6. Apply websocket policy and start `WebSocketGatewayAdapter` if enabled
-7. TUI/mobile-web connect through websocket RPC surface
+5. Create `WebSocketGatewayControlService` and apply websocket policy
+6. Create `MobileWebServerService` for bundled mobile-web hosting
+7. Create `ResourceMonitorService` + `MonitorWindowRegistry`
+8. Desktop renderer windows, TUI, and mobile-web connect through the shared gateway semantics
 
 ## Gateway and Session Invariants
 
@@ -111,6 +119,7 @@ The desktop runtime chain is intentionally layered:
   - `SESSION_PROFILE_LOCKED`
   - `SESSION_READY`
 - Terminal tab operations are exposed through transport bridges (`terminal:list`, `terminal:createTab`, `terminal:kill`, etc.).
+- Monitor snapshots are produced in backend and published to interested desktop windows; the renderer only subscribes, stores, and presents them.
 
 ## WebSocket Access Policy
 
@@ -118,6 +127,8 @@ Policy values:
 
 - `disabled`
 - `localhost` (host resolves to `127.0.0.1`)
+- `lan` (host resolves to `0.0.0.0`, but accepts only private-network IPv4 clients)
+- `custom` (host resolves to `0.0.0.0`, but accepts only configured CIDR allowlists)
 - `internet` (host resolves to `0.0.0.0`)
 
 Policy is controlled by:
@@ -138,10 +149,23 @@ Policy is controlled by:
 
 This reduces "command not found" and unstable cwd behavior for MCP servers.
 
-## Packaging / Signing Constraint
+## Packaging Constraints
 
-`dist:mac` chain must keep the signature workaround sequence:
+### macOS
+
+`dist:mac` must keep the signature workaround sequence:
 
 1. `electron-builder --mac --dir`
 2. `apps/electron/scripts/fix-mac-signatures.sh`
 3. `electron-builder --mac --prepackaged ...`
+
+### Linux
+
+Linux desktop packaging is driven by `apps/electron/electron-builder.yml` and depends on:
+
+- `apps/electron/scripts/after-pack-linux.mjs`
+- `apps/electron/scripts/normalize-linux-artifact-name.mjs`
+- `apps/electron/scripts/postinstall-linux.sh`
+- icon resources under `apps/electron/materials/icons`
+
+Desktop Linux packages also carry the bundled CLI runtime and bundled mobile-web frontend as extra resources.

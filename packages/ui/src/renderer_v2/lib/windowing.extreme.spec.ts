@@ -7,12 +7,15 @@ import type {
 } from './windowing'
 import {
   buildDetachedLayoutTree,
+  clearTabDragState,
   clearPanelDragState,
   createWindowingChannel,
   readPanelDragState,
+  readTabDragState,
   readDetachedWindowState,
   syncDetachedWindowState,
   stashDetachedWindowState,
+  stashTabDragState,
   stashPanelDragState,
   WINDOWING_STORAGE_CHANNEL_KEY
 } from './windowing'
@@ -130,6 +133,53 @@ runCase('stashed panel drag state round-trips through localStorage by token', ()
     assertDeepEqual(readPanelDragState(token), payload, 'panel drag state should be restored intact')
     clearPanelDragState(token)
     assertEqual(readPanelDragState(token), null, 'cleared panel drag state should not be readable')
+  } finally {
+    ;(globalThis as any).window = originalWindow
+  }
+})
+
+runCase('stashed tab drag state round-trips through localStorage by token', () => {
+  const originalWindow = (globalThis as any).window
+  const storage = new Map<string, string>()
+
+  ;(globalThis as any).window = {
+    localStorage: {
+      getItem(key: string) {
+        return storage.has(key) ? storage.get(key)! : null
+      },
+      setItem(key: string, value: string) {
+        storage.set(key, value)
+      },
+      removeItem(key: string) {
+        storage.delete(key)
+      }
+    }
+  }
+
+  try {
+    const token = 'tab-drag-token'
+    const payload = {
+      sourceClientId: 'win-abc',
+      tabId: 'term-1',
+      sourcePanelId: 'panel-term-1',
+      kind: 'terminal' as const,
+      terminalTab: {
+        id: 'term-1',
+        title: 'LOCAL',
+        config: {
+          type: 'local' as const,
+          id: 'term-1',
+          title: 'LOCAL',
+          cols: 80,
+          rows: 24
+        }
+      }
+    }
+
+    assertEqual(stashTabDragState(token, payload), true, 'tab drag state should be stashed')
+    assertDeepEqual(readTabDragState(token), payload, 'tab drag state should be restored intact')
+    clearTabDragState(token)
+    assertEqual(readTabDragState(token), null, 'cleared tab drag state should not be readable')
   } finally {
     ;(globalThis as any).window = originalWindow
   }

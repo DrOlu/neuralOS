@@ -43,6 +43,7 @@ export const zh = {
     accessTokens: '网关',
     version: '版本',
     language: '语言',
+    tabDisplayMode: 'Tab 显示模式',
     fontSize: '字体大小',
     lineHeight: '行高',
     scrollback: '历史回滚行数',
@@ -65,6 +66,11 @@ export const zh = {
       block: '方块',
       underline: '下划线',
       bar: '竖线'
+    },
+    tabDisplayModes: {
+      auto: '自动',
+      expanded: '展开',
+      select: 'Select'
     },
     baseModels: '基础模型',
     profiles: '模型配置 (Profiles)',
@@ -174,6 +180,8 @@ export const zh = {
     // New tooltips for other sections
     tooltips: {
       language: '切换界面的显示语言。目前支持简体中文和英文。',
+      tabDisplayMode:
+        '控制 terminal、chat、filesystem、monitor 这些 panel 的 tab 显示方式。\n- 自动：仅在 panel header 过窄时切到紧凑 select 模式。\n- 展开：始终保持横向 tab strip。\n- Select：始终使用单 tab 堆叠选择模式。',
       fontSize: '设置终端字符的显示大小（单位：像素）。',
       lineHeight: '设置终端行与行之间的间距倍数。',
       scrollback: '终端在内存中保留的历史行数。超过此限制的旧输出将被丢弃。',

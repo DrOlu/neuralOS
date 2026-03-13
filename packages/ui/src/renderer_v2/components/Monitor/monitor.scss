@@ -19,12 +19,13 @@
 }
 
 .monitor-tabs-container {
-  height: 32px;
+  min-height: var(--panel-tab-header-height);
   display: flex;
   align-items: center;
   padding-left: 4px;
   background: color-mix(in srgb, var(--fg) 3%, transparent);
   border-bottom: 1px solid var(--border);
+  min-width: 0;
 }
 
 .monitor-tabs-container.is-draggable {
@@ -38,7 +39,8 @@
 
 .monitor-tabs-bar {
   flex: 1;
-  height: 32px;
+  min-width: 0;
+  height: var(--panel-tab-header-height);
   display: flex;
   align-items: center;
   overflow-x: auto;
@@ -51,14 +53,14 @@
 }
 
 .monitor-tab {
-  height: 32px;
-  padding: 0 8px;
+  height: var(--panel-tab-header-height);
+  padding: 0 7px;
   border-right: 1px solid var(--border);
   color: var(--fg-muted);
   font-family: var(--font-mono);
-  font-size: var(--monitor-font-size);
+  font-size: var(--panel-tab-font-size);
   font-weight: 600;
-  letter-spacing: 0.48px;
+  letter-spacing: 0.42px;
   text-transform: uppercase;
   display: inline-flex;
   align-items: center;
@@ -86,10 +88,16 @@
 }
 
 .monitor-tab-title {
-  max-width: 180px;
+  max-width: 140px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.monitor-tabs-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .monitor-panel-body {

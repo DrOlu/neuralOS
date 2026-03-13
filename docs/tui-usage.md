@@ -16,6 +16,7 @@ gyll run "Run tests and summarize"
 gyll hook "wake up and continue"
 gyll --sessionid "<session-id>"
 gyll --url 127.0.0.1:17888
+gyll --url 192.168.1.8:17888 --token "<access_token>"
 ```
 
 Mode semantics:
@@ -34,6 +35,12 @@ If `--url` is not provided, TUI probes local endpoints first:
 
 It also considers env ports (`GYSHELL_WS_PORT`, `GYBACKEND_WS_PORT`).
 If probes fail and terminal is interactive, TUI prompts for manual websocket URL.
+
+Token rule:
+
+- `localhost` connections usually do not need `--token`.
+- Non-local websocket gateways should be used with `--token <access_token>`.
+- Desktop users can issue tokens from `Settings -> Gateway`.
 
 ### 4. Safety Note for `run` Mode
 
@@ -64,12 +71,14 @@ Notes:
 
 ### 7. Troubleshooting
 
+- `missing access token` / `invalid access token`
+  - Add `--token <access_token>` when connecting to a non-local websocket gateway.
 - `No terminal is available on backend...`
   - Backend has zero terminal tabs. Enable bootstrap terminal or create one first.
 - `Unable to find platform binary package for gyll ...`
   - Reinstall desktop runtime / CLI package, or set `GYLL_BIN_PATH` to an existing binary.
 - Connection timeout
-  - Verify backend websocket access and port; try explicit `--url`.
+  - Verify backend websocket exposure and port; try explicit `--url`.
 
 ---
 
@@ -89,6 +98,7 @@ gyll run "Run tests and summarize"
 gyll hook "wake up and continue"
 gyll --sessionid "<session-id>"
 gyll --url 127.0.0.1:17888
+gyll --url 192.168.1.8:17888 --token "<access_token>"
 ```
 
 模式语义：
@@ -107,6 +117,12 @@ gyll --url 127.0.0.1:17888
 
 同时会读取环境变量端口（`GYSHELL_WS_PORT`、`GYBACKEND_WS_PORT`）。
 如果探测失败且当前终端可交互，TUI 会提示手动输入 websocket 地址。
+
+Token 规则：
+
+- `localhost` 连接通常不需要 `--token`。
+- 非本机 websocket 网关建议使用 `--token <access_token>`。
+- 桌面端用户可在 `Settings -> Gateway` 中创建访问令牌。
 
 ### 4. `run` 模式安全说明
 
@@ -137,6 +153,8 @@ npm run start:tui
 
 ### 7. 常见问题
 
+- `missing access token` / `invalid access token`
+  - 连接非本机 websocket 网关时，请附带 `--token <access_token>`。
 - `No terminal is available on backend...`
   - backend 没有 terminal tab。请先启用 bootstrap terminal，或先创建 tab。
 - `Unable to find platform binary package for gyll ...`

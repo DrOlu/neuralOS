@@ -11,29 +11,41 @@ It is currently supported as:
 2. Repository development runtime (`apps/gybackend`) for contributors
 
 > [!WARNING]
-> GyBackend is still in experimental development. Client authentication based on authorization/encryption is **not implemented yet**.
-> Runtime behavior is already validated as usable, but do **not** expose it directly to the public internet.
-> Recommended deployment right now: `localhost only` or private network access via VPN.
+> GyBackend is still in experimental development. Non-local websocket clients should use access tokens, but the transport is still plain websocket unless you place it behind your own trusted network layer.
+> Do **not** expose it directly to the public internet.
+> Recommended deployment right now: `localhost only`, private LAN, or VPN.
 
 ### 1. Recommended User Path (Desktop Built-In Backend)
 
 Open desktop app settings:
 
-- `Settings` -> `General` -> `WebSocket Gateway Access`
-- `Settings` -> `General` -> `WebSocket Gateway Port`
+- `Settings` -> `Gateway` -> `WebSocket Gateway Exposure`
+- `Settings` -> `Gateway` -> `WebSocket Gateway Port`
+
+Desktop settings also expose:
+
+- `Settings` -> `Gateway` -> `Allowed IP Ranges (CIDR)` when using `Custom IP ranges`
+- `Settings` -> `Gateway` -> `Mobile Web Server`
 
 Access mode mapping:
 
 - `localhost`: bind `127.0.0.1` (local machine only)
+- `lan`: bind `0.0.0.0`, but accept private-network IPv4 clients only
+- `custom`: bind `0.0.0.0`, but accept only configured CIDR allowlist clients
 - `internet`: bind `0.0.0.0` (LAN/public interfaces, still subject to firewall)
 - `disabled`: do not start websocket listener
 
-Default port is `17888`.
+Notes:
+
+- Default port is `17888`.
+- Desktop built-in mobile-web serving requires `lan`, `custom`, or `internet`.
+- Desktop users can issue access tokens in the same `Gateway` settings page for non-local clients.
 
 ### 2. Connect Clients
 
-- TUI `gyll`: auto-probes local websocket if `--url` is omitted.
-- mobile-web: configure websocket URL in mobile settings panel.
+- TUI `gyll`: auto-probes local websocket if `--url` is omitted; use `--token <access_token>` for non-local gateways.
+- mobile-web: use desktop-generated access links or configure websocket URL manually in mobile settings.
+- Remote clients outside localhost should also provide an access token.
 
 ### 3. Repository Development Runtime
 
@@ -73,7 +85,8 @@ Gateway exposure policy changes should be done through desktop settings (or runt
 ### 6. Security Checklist
 
 - Prefer `localhost` unless remote access is truly required.
-- If remote access is needed, prefer VPN/private network.
+- If remote access is needed, prefer `lan` / `custom` plus VPN or private network routing.
+- Issue access tokens for non-local clients and rotate them if a device is lost.
 - Avoid direct public internet exposure.
 - Restrict host firewall inbound rules to trusted sources.
 
@@ -90,29 +103,41 @@ Gateway exposure policy changes should be done through desktop settings (or runt
 2. 仓库内开发运行时（`apps/gybackend`，面向贡献者）
 
 > [!WARNING]
-> GyBackend 仍处于实验开发阶段，目前**尚未实现**基于授权加密的客户端认证。
-> 已确认当前版本可用，但**不建议**直接暴露到公网。
-> 当前建议：仅本机开放，或通过 VPN 私网接入。
+> GyBackend 仍处于实验开发阶段。非本机 websocket 客户端应配合访问令牌使用，但传输层本身仍是明文 websocket，除非你自己再套一层可信网络。
+> **不建议**直接暴露到公网。
+> 当前建议：仅本机开放，或通过局域网 / VPN 私网接入。
 
 ### 1. 推荐用户路径（桌面内置 Backend）
 
 桌面端设置入口：
 
-- `Settings` -> `General` -> `WebSocket Gateway Access`
-- `Settings` -> `General` -> `WebSocket Gateway Port`
+- `Settings` -> `Gateway` -> `WebSocket Gateway Exposure`
+- `Settings` -> `Gateway` -> `WebSocket Gateway Port`
+
+桌面设置里还会看到：
+
+- `Settings` -> `Gateway` -> `Allowed IP Ranges (CIDR)`（当使用 `Custom IP ranges` 时）
+- `Settings` -> `Gateway` -> `Mobile Web Server`
 
 模式映射：
 
 - `localhost`：绑定 `127.0.0.1`（仅本机）
+- `lan`：绑定 `0.0.0.0`，但只接受私网 IPv4 设备
+- `custom`：绑定 `0.0.0.0`，但只接受配置好的 CIDR 白名单来源
 - `internet`：绑定 `0.0.0.0`（局域网/公网网卡，仍受防火墙限制）
 - `disabled`：不启动 websocket 监听
 
-默认端口是 `17888`。
+说明：
+
+- 默认端口是 `17888`。
+- 桌面端内置 Mobile Web 服务要求使用 `lan`、`custom` 或 `internet`。
+- 桌面端可在同一个 `Gateway` 设置页中为非本机客户端创建访问令牌。
 
 ### 2. 客户端连接
 
-- TUI `gyll`：未传 `--url` 时会自动探测本地 websocket。
-- mobile-web：在移动端 Settings 面板中填写 websocket 地址。
+- TUI `gyll`：未传 `--url` 时会自动探测本地 websocket；连接非本机网关时请使用 `--token <access_token>`。
+- mobile-web：可直接使用桌面端生成的访问链接，或在移动端 Settings 面板中手动填写 websocket 地址。
+- 非 localhost 远程客户端还应同时提供访问令牌。
 
 ### 3. 仓库开发运行时
 
@@ -152,6 +177,7 @@ npm --workspace @gyshell/gybackend run start
 ### 6. 安全建议清单
 
 - 除非确有需要，优先使用 `localhost`。
-- 需要远程访问时，优先走 VPN/私网。
+- 需要远程访问时，优先使用 `lan` / `custom`，并配合 VPN 或私网。
+- 为非本机客户端签发访问令牌，设备丢失时及时轮换。
 - 避免直接公网暴露。
 - 通过主机防火墙限制可访问来源。

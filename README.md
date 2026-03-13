@@ -7,7 +7,7 @@
 [![Shell](https://img.shields.io/badge/Shell-Zsh%20%7C%20Bash%20%7C%20PowerShell-orange)](#key-capabilities)
 
 English README | [中文 README](./README.zh-CN.md)  
-Latest release notes: [`changelogs/v1.1.0.md`](./changelogs/v1.1.0.md)
+Latest release notes: [`changelogs/v1.2.0.md`](./changelogs/v1.2.0.md)
 
 If you have any suggestions or questions, please feel free to submit them in [GitHub Discussions](https://github.com/MrOrangeJJ/GyShell/discussions).
 
@@ -18,6 +18,7 @@ Usage guides:
 
 > [!TIP]
 > **Recommended Models**:
+>
 > - **Cost-Performance**: Thinking-GLM 5 + Action/Global-Minimax2.5
 > - **Best Performance**: Thinking-Gemini 3.1 Pro + Action/Global-Gemini 3 Flash
 > - **Local (Mac Studio)**: Qwen3.5 / Minimax2.5
@@ -44,8 +45,11 @@ GyShell is built for **persistent execution in your real terminal runtime**:
 - **Human-in-the-loop by design**: intervene anytime without breaking flow.
 - **Multi-tab orchestration**: compile, inspect logs, and run fixes in parallel tabs.
 - **Workspace persistence**: terminal tabs and panel layout can survive restarts and restore quickly.
+- **Detachable multi-window workspace**: peel panels into sub-windows and move tabs or whole panels across windows.
 - **Integrated file management**: browse, edit, copy, and transfer files across local and SSH sessions without leaving the workspace.
+- **Live resource visibility**: inspect CPU, memory, disks, network, processes, sockets, and GPU from local or SSH sessions.
 - **OpenClawd-style remote conversation control**: keep the runtime core on your own computer and steer it from anywhere through chat.
+- **Built-in mobile-web delivery**: desktop can publish the mobile-web companion directly over your LAN with copyable access links.
 - **Cross-surface runtime model**: desktop, TUI, and mobile-web share one gateway semantics.
 - **Profile lock safety**: busy sessions pin active model profile for consistency.
 - **Long-horizon context quality**: memory.md + compaction summary pipeline keeps long sessions useful.
@@ -59,31 +63,23 @@ GyShell is built for **persistent execution in your real terminal runtime**:
 - **For multi-device flow**: desktop + TUI + mobile-web with shared gateway semantics.
 - **For multimodal workflows**: text and image inputs can be combined in one execution turn.
 
-## v1.1.x Key Highlights
+## v1.2.0 Key Highlights
 
-- **Desktop file panel + built-in editor** *(new)*
-  - visual file browser as a first-class workspace panel — open, create, rename, delete, copy/move files
-  - cross-terminal file transfers with real-time progress and cancellation (including SSH↔local via SFTP)
-  - inline text preview; double-click to open in the built-in text editor panel
-  - adaptive SFTP transfer tuner auto-optimizes chunk size and concurrency per server
-- **Multimodal input for real tasks**
-  - attach images via drag/drop/paste on desktop and mobile-web
-  - send text + images in one prompt to supported models
-- **Global persistent memory (`memory.md`)**
-  - durable project rules and facts across sessions
-  - memory can be toggled/injected from settings
-- **Smarter long-session context handling**
-  - dynamic history compaction with model-generated summaries
-  - explicit compaction activity banners in desktop/mobile-web/TUI
-- **Desktop workspace overhaul**
-  - splitter layout for all chat/terminal/file panels with persistence
-  - panel rail + drag/drop reorder/split + close-to-trash workflows
-- **Terminal restoration and replay resilience**
-  - terminal tabs persist across backend restarts
-  - offset-based buffer delta sync enables lossless output catch-up when terminal views remount/reconnect within the same backend runtime
-- **Mobile-web UX polish**
-  - swipe-to-delete sessions
-  - cleaner image chip interactions in composer
+- **Detachable multi-window workspace**
+  - detach chat, terminal, file, editor, and monitor panels into sub-windows
+  - move tabs and full panels across windows with drag and drop
+  - detached windows now preserve transferred state more reliably
+- **Built-in mobile-web server**
+  - start the mobile-web companion directly from desktop settings
+  - copy ready-to-open LAN links with the gateway URL prefilled
+  - new gateway exposure modes: `LAN only` and `Custom IP ranges`
+- **Resource monitor panel**
+  - first-class workspace panel for CPU, memory, disk, network, process, socket, and GPU visibility
+  - available for both local terminals and SSH-backed terminals
+- **Linux desktop support**
+  - packaged Linux desktop builds for `x64` and `arm64`
+  - AppImage, deb, pacman, and rpm outputs
+  - Linux-specific window chrome and bundled CLI runtime polish
 
 ---
 
@@ -110,6 +106,12 @@ GyShell is built for **persistent execution in your real terminal runtime**:
 - **Cross-session file transfer** (copy/move) with real-time progress, cancellation, and adaptive SFTP tuning.
 - **Built-in text editor panel** for editing files directly in the workspace.
 
+### Workspace + Monitoring
+
+- Detach panels into dedicated sub-windows and move tabs or whole panels across windows.
+- Open a resource monitor panel for local and SSH terminals from the workspace rail.
+- Monitor panel surfaces CPU, memory, disk, network, process, socket, and GPU telemetry when available.
+
 ### Skills + MCP + Tools
 
 - Folder-based skills workflow compatible with agentskills-style structure.
@@ -120,11 +122,13 @@ GyShell is built for **persistent execution in your real terminal runtime**:
 ### Mobile-Web Companion
 
 - Mobile-first remote client for active session tracking and steering.
+- Desktop can serve the mobile-web companion directly and expose copyable access links from settings.
 - OpenClawd-style conversational control from anywhere while your core runtime stays on your own machine.
 - Session list with search and status hints.
 - Swipe-to-delete session flow for faster mobile cleanup.
 - Detailed turn event inspection from phone browser.
 - Tool/skill/terminal/settings access through gateway RPC.
+- Gateway exposure can now be limited to localhost, LAN-only, custom CIDR ranges, or all interfaces.
 
 ---
 
@@ -195,7 +199,9 @@ If `--url` is not provided, CLI will try the local desktop backend (`127.0.0.1:1
 ```bash
 gyll --help
 gyll --url ip:port
+gyll --url ip:port --token <access_token>
 gyll --url ip:port "Hello"
+gyll --url ip:port --token <access_token> "Hello"
 gyll run --url ip:port "Run task"
 gyll hook --url ip:port "Send and exit"
 ```
@@ -215,6 +221,8 @@ Modes:
 - `gyll "message"`: create session, send immediately, then enter TUI.
 - `gyll run "message"`: create session, stream output in terminal, no TUI entry.
 - `gyll hook "message"`: create session, send once, then exit.
+
+Use `--token <access_token>` when connecting to a non-local websocket gateway.
 
 You can also resume a target session:
 
@@ -262,7 +270,7 @@ See:
 
 ## Read More
 
-- Release notes: `changelogs/v1.1.0.md`
+- Release notes: `changelogs/v1.2.0.md`
 - Build matrix and packaging: `docs/build-commands.md`
 - Monorepo boundaries and runtime flow: `docs/monorepo-architecture.md`
 
@@ -277,6 +285,9 @@ See:
 - `npm run dist`
 - `npm run dist:mac`
 - `npm run dist:win`
+- `npm run dist:linux`
+- `npm run dist:linux-arm64`
+- `./build.sh --help`
 
 For the full command matrix and packaging notes, see `docs/build-commands.md`.
 
@@ -290,4 +301,4 @@ Special acknowledgment: inspirations and references from [Tabby](https://github.
 
 ---
 
-**GyShell** - *The shell that thinks with you.*
+**GyShell** - _The shell that thinks with you._

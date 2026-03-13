@@ -6,15 +6,18 @@
   position: relative;
   display: flex;
   flex-direction: column;
+  container-type: inline-size;
+  container-name: filesystem-panel;
 }
 
 .filesystem-tabs-container {
-  height: 32px;
+  min-height: var(--panel-tab-header-height);
   display: flex;
   align-items: center;
   padding-left: 4px;
   background: color-mix(in srgb, var(--fg) 3%, transparent);
   border-bottom: 1px solid var(--border);
+  min-width: 0;
 }
 
 .filesystem-tabs-container.is-draggable {
@@ -28,7 +31,8 @@
 
 .filesystem-tabs-bar {
   flex: 1;
-  height: 32px;
+  min-width: 0;
+  height: var(--panel-tab-header-height);
   display: flex;
   align-items: center;
   overflow-x: auto;
@@ -41,14 +45,14 @@
 }
 
 .filesystem-tab {
-  height: 32px;
-  padding: 0 8px;
+  height: var(--panel-tab-header-height);
+  padding: 0 7px;
   border-right: 1px solid var(--border);
   color: var(--fg-muted);
   font-family: var(--font-mono);
-  font-size: var(--filesystem-font-size-sm);
+  font-size: var(--panel-tab-font-size);
   font-weight: 600;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.42px;
   text-transform: uppercase;
   display: inline-flex;
   align-items: center;
@@ -76,7 +80,7 @@
 }
 
 .filesystem-tab-title {
-  max-width: 180px;
+  max-width: 140px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -86,10 +90,41 @@
   min-height: 30px;
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px 8px;
+  gap: 6px;
+  padding: 4px 8px;
   border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg) 82%, var(--fg) 2%);
+}
+
+.filesystem-toolbar-main,
+.filesystem-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.filesystem-toolbar-main {
+  flex: 1;
+}
+
+.filesystem-toolbar-actions {
+  flex: 0 0 auto;
+}
+
+.filesystem-toolbar.is-stacked {
+  align-items: stretch;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.filesystem-toolbar.is-stacked .filesystem-toolbar-main,
+.filesystem-toolbar.is-stacked .filesystem-toolbar-actions {
+  width: 100%;
+}
+
+.filesystem-toolbar.is-stacked .filesystem-toolbar-actions {
+  flex-wrap: wrap;
 }
 
 .filesystem-toolbar .icon-btn-sm {
@@ -109,8 +144,18 @@
   outline: none;
 }
 
+.filesystem-toolbar.is-stacked .filesystem-path-input {
+  min-width: 0;
+}
+
 .filesystem-path-input:focus {
   border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+}
+
+.filesystem-tabs-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .filesystem-status-bar {

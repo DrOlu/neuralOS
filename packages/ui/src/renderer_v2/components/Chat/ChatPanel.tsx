@@ -10,6 +10,8 @@ import { Select } from '../../platform/Select'
 import type { SelectHandle } from '../../platform/windows/WindowsSelect'
 import { QueueManager } from './Queue/QueueManager'
 import { QueueModeSwitch } from './Queue/QueueModeSwitch'
+import { CompactPanelTabSelect } from '../Layout/CompactPanelTabSelect'
+import { resolvePanelTabBarMode } from '../Layout/panelHeaderPresentation'
 import type { QueueItem } from '../../stores/ChatQueueStore'
 import { RichInput, type RichInputHandle } from './RichInput'
 import { CHAT_PANEL_SESSION_TITLE_CHAR_LIMIT, formatChatPanelSessionTitle } from '../../lib/sessionTitleDisplay'
@@ -125,9 +127,17 @@ export const ChatPanel: React.FC<ChatPanelProps> = observer(({
   const exportMenuRef = useRef<HTMLDivElement>(null)
   const t = store.i18n.t
   const contextMenuId = React.useMemo(() => `chat-panel-${panelId}`, [panelId])
+  const panelRect = store.layout.getPanelRect(panelId)
+  const tabBarMode = resolvePanelTabBarMode(
+    'chat',
+    panelRect?.width || 0,
+    sessionIds.length,
+    store.panelTabDisplayMode,
+  )
   
   // Get active session
   const activeSession = store.chat.getSessionById(activeSessionId)
+  const activeHeaderSession = activeSession || store.chat.getSessionById(sessionIds[0] || '')
   const isOverlayOpen = store.view !== 'main'
   const messageIds = activeSession?.messageIds || []
   const isThinking = activeSession?.isThinking || false
@@ -505,69 +515,114 @@ export const ChatPanel: React.FC<ChatPanelProps> = observer(({
         >
           <GripVertical size={12} strokeWidth={2.4} />
         </div>
-        <div
-          className="chat-tabs"
-          data-layout-tab-bar="true"
-          data-layout-tab-panel-id={panelId}
-          data-layout-tab-kind="chat"
-        >
-          {sessionIds.map((sessionId, index) => {
-            const session = store.chat.getSessionById(sessionId)
-            if (!session) return null
-            return (
-              <div
-                key={session.id}
-                className={`chat-tab ${session.id === activeSessionId ? 'active' : ''}`}
-                style={{ maxWidth: `${CHAT_PANEL_SESSION_TITLE_CHAR_LIMIT + 8}ch` }}
-                onClick={() => onSelectSession(session.id)}
-                draggable
-                data-layout-tab-draggable="true"
-                data-layout-tab-id={session.id}
-                data-layout-tab-kind="chat"
-                data-layout-tab-panel-id={panelId}
-                data-layout-tab-index={index}
-              >
-                <span className="chat-tab-title">{formatChatPanelSessionTitle(session.title)}</span>
+        {tabBarMode === 'select' ? (
+          <CompactPanelTabSelect
+            className="chat-tabs-select"
+            panelId={panelId}
+            panelKind="chat"
+            value={activeHeaderSession?.id || null}
+            options={sessionIds
+              .map((sessionId) => store.chat.getSessionById(sessionId))
+              .filter((session): session is NonNullable<typeof session> => !!session)
+              .map((session) => ({
+                value: session.id,
+                label: formatChatPanelSessionTitle(session.title),
+                onClose: () => {
+                  if (onRequestCloseTabs) {
+                    onRequestCloseTabs([session.id])
+                    return
+                  }
+                  store.chat.closeSession(session.id)
+                },
+                closeTitle: t.common.close
+              }))}
+            onChange={onSelectSession}
+            actions={
+              activeHeaderSession ? (
                 <button
-                  className="chat-tab-close"
+                  className="gyshell-compact-tab-select-action"
                   onClick={(event) => {
                     event.stopPropagation()
                     if (onRequestCloseTabs) {
-                      onRequestCloseTabs([session.id])
+                      onRequestCloseTabs([activeHeaderSession.id])
                       return
                     }
-                    store.chat.closeSession(session.id)
+                    store.chat.closeSession(activeHeaderSession.id)
                   }}
+                  title={t.common.close}
                 >
                   <X size={12} />
                 </button>
-              </div>
-            )
-          })}
+              ) : null
+            }
+          />
+        ) : (
+          <div
+            className="chat-tabs"
+            data-layout-tab-bar="true"
+            data-layout-tab-panel-id={panelId}
+            data-layout-tab-kind="chat"
+          >
+            {sessionIds.map((sessionId, index) => {
+              const session = store.chat.getSessionById(sessionId)
+              if (!session) return null
+              return (
+                <div
+                  key={session.id}
+                  className={`chat-tab ${session.id === activeSessionId ? 'active' : ''}`}
+                  style={{ maxWidth: `${CHAT_PANEL_SESSION_TITLE_CHAR_LIMIT + 8}ch` }}
+                  onClick={() => onSelectSession(session.id)}
+                  draggable
+                  data-layout-tab-draggable="true"
+                  data-layout-tab-id={session.id}
+                  data-layout-tab-kind="chat"
+                  data-layout-tab-panel-id={panelId}
+                  data-layout-tab-index={index}
+                >
+                  <span className="chat-tab-title">{formatChatPanelSessionTitle(session.title)}</span>
+                  <button
+                    className="chat-tab-close"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      if (onRequestCloseTabs) {
+                        onRequestCloseTabs([session.id])
+                        return
+                      }
+                      store.chat.closeSession(session.id)
+                    }}
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        )}
+        <div className="chat-tabs-actions">
+          <button
+            className="chat-tab-add"
+            onClick={() => {
+              const sessionId = store.chat.createSession()
+              store.layout.attachTabToPanel('chat', sessionId, panelId)
+            }}
+          >
+            <Plus size={14} />
+          </button>
+          <button className="chat-tab-history" onClick={() => setShowHistory(true)}>
+            <History size={14} />
+          </button>
+          <button
+            ref={exportMenuButtonRef}
+            className="chat-tab-history-menu"
+            onClick={toggleExportMenu}
+            title={t.chat.history.exportMenuTitle}
+            aria-label={t.chat.history.exportMenuTitle}
+            aria-haspopup="menu"
+            aria-expanded={showExportMenu}
+          >
+            <MoreVertical size={14} />
+          </button>
         </div>
-        <button
-          className="chat-tab-add"
-          onClick={() => {
-            const sessionId = store.chat.createSession()
-            store.layout.attachTabToPanel('chat', sessionId, panelId)
-          }}
-        >
-          <Plus size={14} />
-        </button>
-        <button className="chat-tab-history" onClick={() => setShowHistory(true)}>
-          <History size={14} />
-        </button>
-        <button
-          ref={exportMenuButtonRef}
-          className="chat-tab-history-menu"
-          onClick={toggleExportMenu}
-          title={t.chat.history.exportMenuTitle}
-          aria-label={t.chat.history.exportMenuTitle}
-          aria-haspopup="menu"
-          aria-expanded={showExportMenu}
-        >
-          <MoreVertical size={14} />
-        </button>
       </div>
 
       {showExportMenu && createPortal(

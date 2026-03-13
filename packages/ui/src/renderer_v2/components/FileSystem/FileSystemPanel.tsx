@@ -26,6 +26,11 @@ import {
   parseFileSystemPanelDragPayload
 } from '../../lib/filesystemDragDrop'
 import { ConfirmDialog } from '../Common/ConfirmDialog'
+import { CompactPanelTabSelect } from '../Layout/CompactPanelTabSelect'
+import {
+  resolveFilesystemToolbarMode,
+  resolvePanelTabBarMode
+} from '../Layout/panelHeaderPresentation'
 import './filesystem.scss'
 
 interface FileSystemPanelProps {
@@ -1201,6 +1206,14 @@ export const FileSystemPanel: React.FC<FileSystemPanelProps> = observer(({
   }, [clipboard, handlePasteClipboard])
 
   const isLayoutDragSource = store.layout.isDragging && store.layout.draggingPanelId === panelId
+  const panelRect = store.layout.getPanelRect(panelId)
+  const tabBarMode = resolvePanelTabBarMode(
+    'filesystem',
+    panelRect?.width || 0,
+    tabs.length,
+    store.panelTabDisplayMode,
+  )
+  const filesystemToolbarMode = resolveFilesystemToolbarMode(panelRect?.width || 0)
   const terminalFontSize = React.useMemo(() => {
     const raw = store.settings?.terminal?.fontSize
     if (!Number.isFinite(raw)) return 14
@@ -1334,102 +1347,144 @@ export const FileSystemPanel: React.FC<FileSystemPanelProps> = observer(({
         >
           <GripVertical size={12} strokeWidth={2.4} />
         </div>
-        <div
-          className="filesystem-tabs-bar"
-          data-layout-tab-bar="true"
-          data-layout-tab-panel-id={panelId}
-          data-layout-tab-kind="filesystem"
-        >
-          {tabs.map((tab, index) => {
-            const isActive = tab.id === activeTerminalId
-            const runtimeState = tab.runtimeState || 'initializing'
-            const runtimeIndicatorState = runtimeState === 'ready' ? 'ready' : 'inactive'
-            return (
-              <div
-                key={tab.id}
-                className={isActive ? 'filesystem-tab is-active' : 'filesystem-tab'}
-                onClick={() => onSelectTab(tab.id)}
-                role="button"
-                tabIndex={0}
-                draggable
-                data-layout-tab-draggable="true"
-                data-layout-tab-id={tab.id}
-                data-layout-tab-kind="filesystem"
-                data-layout-tab-panel-id={panelId}
-                data-layout-tab-index={index}
-              >
+        {tabBarMode === 'select' ? (
+          <CompactPanelTabSelect
+            className="filesystem-tabs-select"
+            panelId={panelId}
+            panelKind="filesystem"
+            value={activeTerminalId}
+            options={tabs.map((tab) => ({
+              value: tab.id,
+              label: tab.title,
+              leading: (
                 <span className="filesystem-tab-icon">
                   <Folder size={14} strokeWidth={2} />
                 </span>
-                <span className="filesystem-tab-title">{tab.title}</span>
-                <span className={`tab-runtime-state tab-runtime-state-${runtimeIndicatorState}`} title={runtimeState} />
-              </div>
-            )
-          })}
-        </div>
+              ),
+              trailing: (
+                <span
+                  className={`tab-runtime-state tab-runtime-state-${(tab.runtimeState || 'initializing') === 'ready' ? 'ready' : 'inactive'}`}
+                  title={tab.runtimeState || 'initializing'}
+                />
+              )
+            }))}
+            onChange={onSelectTab}
+            leading={
+              <span className="filesystem-tab-icon">
+                <Folder size={14} strokeWidth={2} />
+              </span>
+            }
+            trailing={
+              activeTab ? (
+                <span
+                  className={`tab-runtime-state tab-runtime-state-${(activeTab.runtimeState || 'initializing') === 'ready' ? 'ready' : 'inactive'}`}
+                  title={activeTab.runtimeState || 'initializing'}
+                />
+              ) : null
+            }
+          />
+        ) : (
+          <div
+            className="filesystem-tabs-bar"
+            data-layout-tab-bar="true"
+            data-layout-tab-panel-id={panelId}
+            data-layout-tab-kind="filesystem"
+          >
+            {tabs.map((tab, index) => {
+              const isActive = tab.id === activeTerminalId
+              const runtimeState = tab.runtimeState || 'initializing'
+              const runtimeIndicatorState = runtimeState === 'ready' ? 'ready' : 'inactive'
+              return (
+                <div
+                  key={tab.id}
+                  className={isActive ? 'filesystem-tab is-active' : 'filesystem-tab'}
+                  onClick={() => onSelectTab(tab.id)}
+                  role="button"
+                  tabIndex={0}
+                  draggable
+                  data-layout-tab-draggable="true"
+                  data-layout-tab-id={tab.id}
+                  data-layout-tab-kind="filesystem"
+                  data-layout-tab-panel-id={panelId}
+                  data-layout-tab-index={index}
+                >
+                  <span className="filesystem-tab-icon">
+                    <Folder size={14} strokeWidth={2} />
+                  </span>
+                  <span className="filesystem-tab-title">{tab.title}</span>
+                  <span className={`tab-runtime-state tab-runtime-state-${runtimeIndicatorState}`} title={runtimeState} />
+                </div>
+              )
+            })}
+          </div>
+        )}
       </div>
 
-      <div className="filesystem-toolbar">
-        <button
-          className="icon-btn-sm"
-          title={t.filesystem.openParent}
-          onClick={handleOpenParent}
-          disabled={isBusy || !activeState.currentPath || activeState.currentPath === '/'}
-        >
-          <ArrowUp size={14} strokeWidth={2} />
-        </button>
-        <button className="icon-btn-sm" title={t.common.refresh} onClick={() => navigateDirectory(activeState.currentPath)} disabled={isBusy}>
-          <RefreshCw size={14} strokeWidth={2} />
-        </button>
-        <input
-          className="filesystem-path-input"
-          value={activeState.pathInput}
-          onChange={(event) => {
-            if (!activeTerminalId) return
-            const value = event.target.value
-            updateTabState(activeTerminalId, (current) => ({
-              ...current,
-              pathInput: value
-            }))
-          }}
-          onKeyDown={(event) => {
-            if (event.key !== 'Enter') return
-            navigateDirectory(activeState.pathInput)
-          }}
-          placeholder={t.filesystem.pathPlaceholder}
-          disabled={isBusy}
-        />
-        <button className="icon-btn-sm" title={t.filesystem.createDirectory} onClick={handleCreateDirectory} disabled={isBusy}>
-          <FolderPlus size={14} strokeWidth={2} />
-        </button>
-        <button className="icon-btn-sm" title={t.filesystem.createFile} onClick={handleCreateFile} disabled={isBusy}>
-          <FileText size={14} strokeWidth={2} />
-        </button>
-        <button className="icon-btn-sm" title={t.filesystem.renamePath} onClick={handleRename} disabled={isBusy || !singleSelectedEntry}>
-          <Pencil size={14} strokeWidth={2} />
-        </button>
-        <button className="icon-btn-sm danger" title={t.common.delete} onClick={handleDelete} disabled={isBusy || selectedCount <= 0}>
-          <Trash2 size={14} strokeWidth={2} />
-        </button>
-        {clipboard ? (
-          <>
-            <button className="icon-btn-sm primary" title={t.filesystem.pastePath} onClick={() => handlePasteClipboard()} disabled={isBusy}>
-              <Check size={14} strokeWidth={2.2} />
-            </button>
-            <button className="icon-btn-sm" title={t.filesystem.cancelClipboard} onClick={clearClipboard} disabled={isBusy}>
-              <X size={14} strokeWidth={2.2} />
-            </button>
-          </>
-        ) : (
-          <>
-            <button className="icon-btn-sm" title={t.filesystem.copyPath} onClick={() => setClipboardFromSelection('copy')} disabled={isBusy || selectedCount <= 0}>
-              <Copy size={14} strokeWidth={2} />
-            </button>
-            <button className="icon-btn-sm" title={t.filesystem.cutPath} onClick={() => setClipboardFromSelection('move')} disabled={isBusy || selectedCount <= 0}>
-              <Scissors size={14} strokeWidth={2} />
-            </button>
-          </>
-        )}
+      <div className={`filesystem-toolbar ${filesystemToolbarMode === 'stacked' ? 'is-stacked' : ''}`}>
+        <div className="filesystem-toolbar-main">
+          <button
+            className="icon-btn-sm"
+            title={t.filesystem.openParent}
+            onClick={handleOpenParent}
+            disabled={isBusy || !activeState.currentPath || activeState.currentPath === '/'}
+          >
+            <ArrowUp size={14} strokeWidth={2} />
+          </button>
+          <button className="icon-btn-sm" title={t.common.refresh} onClick={() => navigateDirectory(activeState.currentPath)} disabled={isBusy}>
+            <RefreshCw size={14} strokeWidth={2} />
+          </button>
+          <input
+            className="filesystem-path-input"
+            value={activeState.pathInput}
+            onChange={(event) => {
+              if (!activeTerminalId) return
+              const value = event.target.value
+              updateTabState(activeTerminalId, (current) => ({
+                ...current,
+                pathInput: value
+              }))
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter') return
+              navigateDirectory(activeState.pathInput)
+            }}
+            placeholder={t.filesystem.pathPlaceholder}
+            disabled={isBusy}
+          />
+        </div>
+        <div className="filesystem-toolbar-actions">
+          <button className="icon-btn-sm" title={t.filesystem.createDirectory} onClick={handleCreateDirectory} disabled={isBusy}>
+            <FolderPlus size={14} strokeWidth={2} />
+          </button>
+          <button className="icon-btn-sm" title={t.filesystem.createFile} onClick={handleCreateFile} disabled={isBusy}>
+            <FileText size={14} strokeWidth={2} />
+          </button>
+          <button className="icon-btn-sm" title={t.filesystem.renamePath} onClick={handleRename} disabled={isBusy || !singleSelectedEntry}>
+            <Pencil size={14} strokeWidth={2} />
+          </button>
+          <button className="icon-btn-sm danger" title={t.common.delete} onClick={handleDelete} disabled={isBusy || selectedCount <= 0}>
+            <Trash2 size={14} strokeWidth={2} />
+          </button>
+          {clipboard ? (
+            <>
+              <button className="icon-btn-sm primary" title={t.filesystem.pastePath} onClick={() => handlePasteClipboard()} disabled={isBusy}>
+                <Check size={14} strokeWidth={2.2} />
+              </button>
+              <button className="icon-btn-sm" title={t.filesystem.cancelClipboard} onClick={clearClipboard} disabled={isBusy}>
+                <X size={14} strokeWidth={2.2} />
+              </button>
+            </>
+          ) : (
+            <>
+              <button className="icon-btn-sm" title={t.filesystem.copyPath} onClick={() => setClipboardFromSelection('copy')} disabled={isBusy || selectedCount <= 0}>
+                <Copy size={14} strokeWidth={2} />
+              </button>
+              <button className="icon-btn-sm" title={t.filesystem.cutPath} onClick={() => setClipboardFromSelection('move')} disabled={isBusy || selectedCount <= 0}>
+                <Scissors size={14} strokeWidth={2} />
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {inlinePathAction ? (

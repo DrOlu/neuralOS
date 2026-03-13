@@ -15,6 +15,7 @@ export type RendererWindowRole = 'main' | 'detached'
 
 const DETACHED_STATE_KEY_PREFIX = 'gyshell.detachedState.'
 const DETACHED_STATE_SESSION_KEY_PREFIX = 'gyshell.detachedStateSession.'
+const TAB_DRAG_STATE_KEY_PREFIX = 'gyshell.tabDragState.'
 const PANEL_DRAG_STATE_KEY_PREFIX = 'gyshell.panelDragState.'
 const WINDOW_CLIENT_ID_KEY = 'gyshell.windowClientId'
 export const WINDOWING_BROADCAST_CHANNEL = 'gyshell-windowing-v1'
@@ -93,6 +94,7 @@ export interface WindowingTabDragPayload {
   tabId: string
   kind: PanelKind
   sourcePanelId: string
+  stateToken?: string
   terminalTab?: WindowingTerminalTabSnapshot
 }
 
@@ -432,6 +434,88 @@ const normalizePanelDragState = (value: unknown): WindowingPanelDragPayload | nu
     ...(tabBinding ? { tabBinding } : {}),
     ...(terminalTabs && terminalTabs.length > 0 ? { terminalTabs } : {}),
     ...(fileEditorSnapshot ? { fileEditorSnapshot } : {})
+  }
+}
+
+const normalizeTabDragState = (value: unknown): WindowingTabDragPayload | null => {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+  const parsed = value as Partial<WindowingTabDragPayload>
+  const sourceClientId = typeof parsed.sourceClientId === 'string' ? parsed.sourceClientId.trim() : ''
+  const tabId = typeof parsed.tabId === 'string' ? parsed.tabId.trim() : ''
+  const sourcePanelId = typeof parsed.sourcePanelId === 'string' ? parsed.sourcePanelId.trim() : ''
+  const kind = parsed.kind
+  const stateToken = typeof parsed.stateToken === 'string' ? parsed.stateToken.trim() : ''
+  if (!sourceClientId || !tabId || !sourcePanelId) {
+    return null
+  }
+  if (kind !== 'chat' && kind !== 'terminal' && kind !== 'filesystem' && kind !== 'fileEditor' && kind !== 'monitor') {
+    return null
+  }
+  const terminalTab = normalizeWindowingTerminalTabSnapshot(parsed.terminalTab)
+  return {
+    sourceClientId,
+    tabId,
+    sourcePanelId,
+    kind,
+    ...(stateToken ? { stateToken } : {}),
+    ...(terminalTab ? { terminalTab } : {})
+  }
+}
+
+const getTabDragStateStorageKey = (token: string): string | null => {
+  const normalizedToken = String(token || '').trim()
+  if (!normalizedToken) {
+    return null
+  }
+  return `${TAB_DRAG_STATE_KEY_PREFIX}${normalizedToken}`
+}
+
+/**
+ * Tab drags cross BrowserWindows much more reliably when the native payload
+ * stays lightweight. Mirror the panel strategy and stash the full tab snapshot
+ * in localStorage behind a token.
+ */
+export const stashTabDragState = (token: string, payload: WindowingTabDragPayload): boolean => {
+  const key = getTabDragStateStorageKey(token)
+  const storage = readLocalStorage()
+  const normalizedPayload = normalizeTabDragState(payload)
+  if (!key || !storage || !normalizedPayload) {
+    return false
+  }
+  try {
+    storage.setItem(key, JSON.stringify(normalizedPayload))
+    return true
+  } catch {
+    return false
+  }
+}
+
+export const readTabDragState = (token: string): WindowingTabDragPayload | null => {
+  const key = getTabDragStateStorageKey(token)
+  const storage = readLocalStorage()
+  if (!key || !storage) {
+    return null
+  }
+  try {
+    const raw = storage.getItem(key)
+    return normalizeTabDragState(raw ? JSON.parse(raw) : null)
+  } catch {
+    return null
+  }
+}
+
+export const clearTabDragState = (token: string): void => {
+  const key = getTabDragStateStorageKey(token)
+  const storage = readLocalStorage()
+  if (!key || !storage) {
+    return
+  }
+  try {
+    storage.removeItem(key)
+  } catch {
+    // ignore cleanup failures
   }
 }
 

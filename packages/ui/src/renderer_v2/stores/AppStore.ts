@@ -8,6 +8,10 @@ import {
 } from 'mobx'
 import { v4 as uuidv4 } from 'uuid'
 import type { ITheme } from '@xterm/xterm'
+import {
+  DEFAULT_PANEL_TAB_DISPLAY_MODE,
+  type PanelTabDisplayModePreference,
+} from '@gyshell/shared'
 import type {
   AppSettings,
   TerminalConfig,
@@ -257,6 +261,7 @@ export class AppStore {
       activeTerminal: computed,
       fileSystemTabs: computed,
       monitorTabs: computed,
+      panelTabDisplayMode: computed,
       openSettings: action,
       closeSettings: action,
       toggleSettings: action,
@@ -276,6 +281,7 @@ export class AppStore {
       setThemeId: action,
       setLanguage: action,
       setTerminalSettings: action,
+      setPanelTabDisplayMode: action,
       saveModel: action,
       deleteModel: action,
       saveProfile: action,
@@ -957,6 +963,12 @@ export class AppStore {
     )
   }
 
+  get panelTabDisplayMode(): PanelTabDisplayModePreference {
+    return (
+      this.settings?.panelTabs?.displayMode ?? DEFAULT_PANEL_TAB_DISPLAY_MODE
+    )
+  }
+
   private collectPersistedChatInventoryState(
     layout: AppSettings['layout'] | undefined,
   ): {
@@ -1285,6 +1297,20 @@ export class AppStore {
     if (nextTerminal) {
       await window.gyshell.uiSettings.set({ terminal: nextTerminal })
     }
+  }
+
+  async setPanelTabDisplayMode(
+    displayMode: PanelTabDisplayModePreference,
+  ): Promise<void> {
+    const nextPanelTabs = { displayMode }
+    runInAction(() => {
+      if (!this.settings) return
+      this.settings = {
+        ...this.settings,
+        panelTabs: nextPanelTabs,
+      }
+    })
+    await window.gyshell.uiSettings.set({ panelTabs: nextPanelTabs })
   }
 
   async setThemeId(themeId: string): Promise<void> {

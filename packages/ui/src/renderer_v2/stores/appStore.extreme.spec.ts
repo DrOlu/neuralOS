@@ -1726,6 +1726,54 @@ const run = async (): Promise<void> => {
   );
 
   await runCase(
+    "setPanelTabDisplayMode updates local settings and persists through uiSettings IPC",
+    async () => {
+      const originalWindow = (globalThis as any).window;
+      const uiSettingsSetCalls: any[] = [];
+
+      try {
+        (globalThis as any).window = {
+          gyshell: {
+            uiSettings: {
+              set: async (payload: any) => {
+                uiSettingsSetCalls.push(payload);
+              },
+            },
+          },
+        };
+
+        const store = new AppStore();
+        (store as any).settings = {
+          panelTabs: {
+            displayMode: "auto",
+          },
+        };
+
+        await store.setPanelTabDisplayMode("select");
+
+        assertEqual(
+          store.panelTabDisplayMode,
+          "select",
+          "panel tab display mode getter should reflect the latest UI preference",
+        );
+        assertEqual(
+          JSON.stringify(uiSettingsSetCalls),
+          JSON.stringify([
+            {
+              panelTabs: {
+                displayMode: "select",
+              },
+            },
+          ]),
+          "panel tab display mode should persist through the uiSettings IPC channel",
+        );
+      } finally {
+        (globalThis as any).window = originalWindow;
+      }
+    },
+  );
+
+  await runCase(
     "openDetachedFileEditorForPath stashes a loading editor snapshot for the new window",
     async () => {
       const originalWindow = (globalThis as any).window;

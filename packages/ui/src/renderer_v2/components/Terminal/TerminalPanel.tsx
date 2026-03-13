@@ -1,5 +1,5 @@
 import React from 'react'
-import { GripVertical, Laptop, Plus, Server, SquareTerminal, X } from 'lucide-react'
+import { GripVertical, Laptop, Plus, Server, X } from 'lucide-react'
 import { observer } from 'mobx-react-lite'
 import type { AppStore, TerminalTabModel } from '../../stores/AppStore'
 import './terminal.scss'
@@ -8,6 +8,9 @@ import {
   getTerminalConnectionIconKind,
   resolveTerminalRuntimeIndicatorState,
 } from '../../lib/terminalConnectionModel'
+import { CompactPanelTabSelect } from '../Layout/CompactPanelTabSelect'
+import { resolvePanelTabBarMode } from '../Layout/panelHeaderPresentation'
+import { resolveTerminalTabIcon } from './terminalTabIcons'
 
 interface TerminalPanelProps {
   store: AppStore
@@ -35,6 +38,23 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = observer(({
   const isLayoutDragSource = store.layout.isDragging && store.layout.draggingPanelId === panelId
   const panelRect = store.layout.getPanelRect(panelId)
   const layoutSignature = `${Math.round(panelRect?.width || 0)}x${Math.round(panelRect?.height || 0)}`
+  const tabBarMode = resolvePanelTabBarMode(
+    'terminal',
+    panelRect?.width || 0,
+    tabs.length,
+    store.panelTabDisplayMode,
+  )
+  const activeTab = tabs.find((tab) => tab.id === activeTabId) || tabs[0] || null
+  const activeIconKind = activeTab
+    ? getTerminalConnectionIconKind(activeTab.config.type)
+    : 'generic'
+  const ActiveIcon = resolveTerminalTabIcon(activeIconKind)
+  const activeRuntimeIndicatorState = activeTab
+    ? resolveTerminalRuntimeIndicatorState(
+        activeTab.config.type,
+        activeTab.runtimeState || 'initializing'
+      )
+    : 'inactive'
 
   React.useEffect(() => {
     if (!menuOpen) return
@@ -75,71 +95,147 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = observer(({
         >
           <GripVertical size={12} strokeWidth={2.4} />
         </div>
-        <div
-          className="terminal-tabs-bar"
-          data-layout-tab-bar="true"
-          data-layout-tab-panel-id={panelId}
-          data-layout-tab-kind="terminal"
-        >
-          {tabs.map((tab, index) => {
-            const isActive = tab.id === activeTabId
-            const runtimeState = tab.runtimeState || 'initializing'
-            const iconKind = getTerminalConnectionIconKind(tab.config.type)
-            const Icon =
-              iconKind === 'remote'
-                ? Server
-                : iconKind === 'local'
-                  ? Laptop
-                  : SquareTerminal
-            const runtimeIndicatorState = resolveTerminalRuntimeIndicatorState(
-              tab.config.type,
-              runtimeState,
-            )
-
-            return (
-              <div
-                key={tab.id}
-                className={isActive ? 'tab is-active' : 'tab'}
-                onClick={() => onSelectTab(tab.id)}
-                role="button"
-                tabIndex={0}
-                draggable
-                data-layout-tab-draggable="true"
-                data-layout-tab-id={tab.id}
-                data-layout-tab-kind="terminal"
-                data-layout-tab-panel-id={panelId}
-                data-layout-tab-index={index}
-              >
+        {tabBarMode === 'select' ? (
+          <CompactPanelTabSelect
+            className="terminal-tabs-select"
+            panelId={panelId}
+            panelKind="terminal"
+            value={activeTab?.id || null}
+            options={tabs.map((tab) => {
+              const iconKind = getTerminalConnectionIconKind(tab.config.type)
+              const Icon = resolveTerminalTabIcon(iconKind)
+              const runtimeIndicatorState = resolveTerminalRuntimeIndicatorState(
+                tab.config.type,
+                tab.runtimeState || 'initializing'
+              )
+              return {
+                value: tab.id,
+                label: tab.title,
+                measureKey: tab.title,
+                leading: (
+                  <span className="tab-icon">
+                    <Icon size={14} strokeWidth={2} />
+                  </span>
+                ),
+                leadingMeasureKey: iconKind,
+                trailing: (
+                  <span
+                    className={`tab-runtime-state tab-runtime-state-${runtimeIndicatorState}`}
+                    title={tab.runtimeState || 'initializing'}
+                  />
+                ),
+                trailingMeasureKey: runtimeIndicatorState,
+                onClose: () => {
+                  if (onRequestCloseTabs) {
+                    onRequestCloseTabs([tab.id])
+                    return
+                  }
+                  void store.closeTab(tab.id)
+                },
+                closeTitle: t.common.close
+              }
+            })}
+            onChange={onSelectTab}
+            leading={
+              activeTab ? (
                 <span className="tab-icon">
-                  <Icon size={14} strokeWidth={2} />
+                  <ActiveIcon size={14} strokeWidth={2} />
                 </span>
-                <span className="tab-title">{tab.title}</span>
+              ) : null
+            }
+            leadingMeasureKey={activeIconKind}
+            trailing={
+              activeTab ? (
                 <span
-                  className={`tab-runtime-state tab-runtime-state-${runtimeIndicatorState}`}
-                  title={runtimeState}
+                  className={`tab-runtime-state tab-runtime-state-${activeRuntimeIndicatorState}`}
+                  title={activeTab.runtimeState || 'initializing'}
                 />
+              ) : null
+            }
+            trailingMeasureKey={activeRuntimeIndicatorState}
+            actions={
+              activeTab ? (
                 <button
-                  className="tab-close"
+                  className="gyshell-compact-tab-select-action"
                   title={t.common.close}
                   onClick={(event) => {
                     event.stopPropagation()
                     if (onRequestCloseTabs) {
-                      onRequestCloseTabs([tab.id])
+                      onRequestCloseTabs([activeTab.id])
                       return
                     }
-                    void store.closeTab(tab.id)
+                    void store.closeTab(activeTab.id)
                   }}
                 >
                   <X size={14} strokeWidth={2} />
                 </button>
-              </div>
-            )
-          })}
-        </div>
+              ) : null
+            }
+          />
+        ) : (
+          <div
+            className="terminal-tabs-bar"
+            data-layout-tab-bar="true"
+            data-layout-tab-panel-id={panelId}
+            data-layout-tab-kind="terminal"
+          >
+            {tabs.map((tab, index) => {
+              const isActive = tab.id === activeTabId
+              const runtimeState = tab.runtimeState || 'initializing'
+              const iconKind = getTerminalConnectionIconKind(tab.config.type)
+              const Icon = resolveTerminalTabIcon(iconKind)
+              const runtimeIndicatorState = resolveTerminalRuntimeIndicatorState(
+                tab.config.type,
+                runtimeState,
+              )
 
-        <button className="icon-btn-sm tab-add-btn" title={t.terminal.newTab} onClick={() => setMenuOpen((v) => !v)}>
-          <Plus size={14} strokeWidth={2} />
-        </button>
+              return (
+                <div
+                  key={tab.id}
+                  className={isActive ? 'tab is-active' : 'tab'}
+                  onClick={() => onSelectTab(tab.id)}
+                  role="button"
+                  tabIndex={0}
+                  draggable
+                  data-layout-tab-draggable="true"
+                  data-layout-tab-id={tab.id}
+                  data-layout-tab-kind="terminal"
+                  data-layout-tab-panel-id={panelId}
+                  data-layout-tab-index={index}
+                >
+                  <span className="tab-icon">
+                    <Icon size={14} strokeWidth={2} />
+                  </span>
+                  <span className="tab-title">{tab.title}</span>
+                  <span
+                    className={`tab-runtime-state tab-runtime-state-${runtimeIndicatorState}`}
+                    title={runtimeState}
+                  />
+                  <button
+                    className="tab-close"
+                    title={t.common.close}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      if (onRequestCloseTabs) {
+                        onRequestCloseTabs([tab.id])
+                        return
+                      }
+                      void store.closeTab(tab.id)
+                    }}
+                  >
+                    <X size={14} strokeWidth={2} />
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        <div className="terminal-tabs-actions">
+          <button className="icon-btn-sm tab-add-btn" title={t.terminal.newTab} onClick={() => setMenuOpen((v) => !v)}>
+            <Plus size={14} strokeWidth={2} />
+          </button>
+        </div>
         {menuOpen ? (
           <div className="tab-menu" role="menu" ref={menuRef}>
             <button

@@ -14,23 +14,13 @@
 }
 
 .panel-header-minimal {
-  height: 32px; /* Unified height with terminal tabs */
+  min-height: var(--panel-tab-header-height);
   display: flex;
   align-items: center;
   padding: 0 4px;
   background: color-mix(in srgb, var(--fg) 3%, transparent); /* Match terminal tab bar background */
   border-bottom: 1px solid var(--border);
-}
-
-.panel-tab-drag-handle {
-  width: 14px;
-  height: 32px;
-  flex: 0 0 14px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--fg-faint);
-  margin-right: 4px;
+  min-width: 0;
 }
 
 .panel-header-minimal.is-draggable {
@@ -53,7 +43,8 @@ body.chat-drag-selection-suppressed * {
   align-items: center;
   gap: 0; 
   flex: 1;
-  height: 32px;
+  min-width: 0;
+  height: var(--panel-tab-header-height);
   overflow-x: auto;
   scrollbar-width: none; /* Firefox */
   -ms-overflow-style: none; /* IE and Edge */
@@ -64,8 +55,8 @@ body.chat-drag-selection-suppressed * {
 }
 
 .chat-tab {
-  height: 32px; 
-  padding: 0 6px; /* Reduced further */
+  height: var(--panel-tab-header-height);
+  padding: 0 5px; /* Reduced further */
   border-radius: 0; 
   background: transparent;
   color: var(--fg-muted);
@@ -74,10 +65,10 @@ body.chat-drag-selection-suppressed * {
   gap: 4px; /* Reduced further */
   cursor: pointer;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--panel-tab-font-size);
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.42px;
   border: none;
   border-right: 1px solid var(--border);
   transition: all 0.1s;
@@ -136,8 +127,8 @@ body.chat-drag-selection-suppressed * {
 .chat-tab-history,
 .chat-tab-add,
 .chat-tab-history-menu {
-  height: 24px;
-  width: 24px;
+  height: 22px;
+  width: 22px;
   border-radius: 4px;
   border: none;
   background: transparent;
@@ -148,7 +139,6 @@ body.chat-drag-selection-suppressed * {
   line-height: 0;
   padding: 0;
   margin: 0;
-  margin-left: 4px;
 }
 
 .chat-tab-history:hover,
@@ -156,6 +146,20 @@ body.chat-drag-selection-suppressed * {
 .chat-tab-history-menu:hover {
   background: color-mix(in srgb, var(--fg) 10%, transparent);
   color: var(--fg);
+}
+
+.chat-tabs-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding-right: 4px;
+}
+
+.chat-tabs-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .chat-export-menu {

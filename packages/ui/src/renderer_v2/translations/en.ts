@@ -43,6 +43,7 @@ export const en = {
     accessTokens: 'Gateway',
     version: 'Version',
     language: 'Language',
+    tabDisplayMode: 'Tab Display Mode',
     fontSize: 'Font Size',
     lineHeight: 'Line Height',
     scrollback: 'Scrollback Lines',
@@ -65,6 +66,11 @@ export const en = {
       block: 'Block',
       underline: 'Underline',
       bar: 'Bar'
+    },
+    tabDisplayModes: {
+      auto: 'Auto',
+      expanded: 'Expanded',
+      select: 'Select'
     },
     baseModels: 'Base Models',
     profiles: 'Profiles',
@@ -176,6 +182,8 @@ export const en = {
     // New tooltips for other sections
     tooltips: {
       language: 'Change the display language of the application interface.',
+      tabDisplayMode:
+        'Control how terminal, chat, filesystem, and monitor panel tabs are rendered.\n- Auto: switch to compact select mode only on narrow headers.\n- Expanded: always keep the horizontal tab strip.\n- Select: always use the single-tab stack selector.',
       fontSize: 'Adjust the size of characters in the terminal (in pixels).',
       lineHeight: 'Adjust the vertical spacing between lines in the terminal.',
       scrollback: 'The number of output lines to keep in memory. Older lines are discarded when this limit is reached.',
