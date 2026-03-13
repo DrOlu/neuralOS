@@ -46,6 +46,7 @@ GyShell is built for **persistent execution in your real terminal runtime**:
 - **Multi-tab orchestration**: compile, inspect logs, and run fixes in parallel tabs.
 - **Workspace persistence**: terminal tabs and panel layout can survive restarts and restore quickly.
 - **Detachable multi-window workspace**: peel panels into sub-windows and move tabs or whole panels across windows.
+- **Adaptive panel tab display**: keep full tab strips or switch to a compact selector for narrow panel headers.
 - **Integrated file management**: browse, edit, copy, and transfer files across local and SSH sessions without leaving the workspace.
 - **Live resource visibility**: inspect CPU, memory, disks, network, processes, sockets, and GPU from local or SSH sessions.
 - **OpenClawd-style remote conversation control**: keep the runtime core on your own computer and steer it from anywhere through chat.
@@ -69,6 +70,9 @@ GyShell is built for **persistent execution in your real terminal runtime**:
   - detach chat, terminal, file, editor, and monitor panels into sub-windows
   - move tabs and full panels across windows with drag and drop
   - detached windows now preserve transferred state more reliably
+- **Adaptive panel tab display modes**
+  - choose `Auto`, `Expanded`, or `Select` from desktop settings
+  - auto mode collapses chat, terminal, filesystem, and monitor tabs into a compact selector on narrow headers
 - **Built-in mobile-web server**
   - start the mobile-web companion directly from desktop settings
   - copy ready-to-open LAN links with the gateway URL prefilled
@@ -109,6 +113,7 @@ GyShell is built for **persistent execution in your real terminal runtime**:
 ### Workspace + Monitoring
 
 - Detach panels into dedicated sub-windows and move tabs or whole panels across windows.
+- Choose `Auto`, `Expanded`, or `Select` panel tab display modes based on how much header space your workspace has.
 - Open a resource monitor panel for local and SSH terminals from the workspace rail.
 - Monitor panel surfaces CPU, memory, disk, network, process, socket, and GPU telemetry when available.
 
