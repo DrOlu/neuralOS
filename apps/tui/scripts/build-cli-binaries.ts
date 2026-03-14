@@ -25,6 +25,8 @@ const TARGETS: Target[] = [
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const workspaceRoot = path.resolve(__dirname, '..')
+const repoRoot = path.resolve(workspaceRoot, '../..')
+const corePackageRoot = path.join(repoRoot, 'packages', 'tui')
 
 type Layout = 'npm' | 'electron'
 
@@ -93,13 +95,77 @@ function toPosixPath(input: string): string {
 }
 
 function resolveParserWorker(): string {
-  const direct = path.join(workspaceRoot, 'node_modules', '@opentui', 'core', 'parser.worker.js')
-  if (fs.existsSync(direct)) return fs.realpathSync(direct)
+  const candidates = [
+    path.join(workspaceRoot, 'node_modules', '@opentui', 'core', 'parser.worker.js'),
+    path.join(corePackageRoot, 'node_modules', '@opentui', 'core', 'parser.worker.js'),
+    path.join(repoRoot, 'node_modules', '@opentui', 'core', 'parser.worker.js'),
+    path.join(workspaceRoot, 'node_modules', '@opentui', 'solid', 'node_modules', '@opentui', 'core', 'parser.worker.js'),
+    path.join(corePackageRoot, 'node_modules', '@opentui', 'solid', 'node_modules', '@opentui', 'core', 'parser.worker.js'),
+    path.join(repoRoot, 'node_modules', '@opentui', 'solid', 'node_modules', '@opentui', 'core', 'parser.worker.js'),
+  ]
 
-  const nested = path.join(workspaceRoot, 'node_modules', '@opentui', 'solid', 'node_modules', '@opentui', 'core', 'parser.worker.js')
-  if (fs.existsSync(nested)) return fs.realpathSync(nested)
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return fs.realpathSync(candidate)
+  }
 
   throw new Error('Cannot locate @opentui/core/parser.worker.js. Run install step first.')
+}
+
+type BuildDiagnostic = {
+  level?: string
+  message?: string
+  position?: {
+    file?: string
+    line?: number
+    column?: number
+    lineText?: string
+  }
+}
+
+function asBuildDiagnostic(value: unknown): BuildDiagnostic | null {
+  if (!value || typeof value !== 'object') return null
+  if (!('message' in value)) return null
+  return value as BuildDiagnostic
+}
+
+function formatBuildDiagnostic(diagnostic: BuildDiagnostic): string {
+  const file = diagnostic.position?.file
+  const line = diagnostic.position?.line
+  const column = diagnostic.position?.column
+  const location =
+    typeof file === 'string' && typeof line === 'number' && typeof column === 'number'
+      ? `${file}:${line + 1}:${column + 1}`
+      : typeof file === 'string'
+        ? file
+        : ''
+  const level = diagnostic.level ? `${diagnostic.level}: ` : ''
+  const message = diagnostic.message || 'Unknown build error'
+  const lineText = diagnostic.position?.lineText ? `\n  ${diagnostic.position.lineText}` : ''
+  return `${location ? `${location}: ` : ''}${level}${message}${lineText}`
+}
+
+function collectBuildFailureDetails(error: unknown): string[] {
+  if (error && typeof error === 'object' && 'logs' in error && Array.isArray((error as { logs?: unknown[] }).logs)) {
+    const diagnostics = ((error as { logs?: unknown[] }).logs ?? [])
+      .map((item) => asBuildDiagnostic(item))
+      .filter((item): item is BuildDiagnostic => item !== null)
+      .map((item) => formatBuildDiagnostic(item))
+    if (diagnostics.length > 0) return diagnostics
+  }
+
+  if (error instanceof AggregateError) {
+    const diagnostics = error.errors
+      .map((item) => asBuildDiagnostic(item))
+      .filter((item): item is BuildDiagnostic => item !== null)
+      .map((item) => formatBuildDiagnostic(item))
+    if (diagnostics.length > 0) return diagnostics
+  }
+
+  if (error instanceof Error && error.message) {
+    return [error.message]
+  }
+
+  return [String(error)]
 }
 
 async function ensureCrossPlatformOpenTui(withInstall: boolean): Promise<void> {
@@ -123,21 +189,31 @@ async function compileTarget(target: Target, options: BuildOptions, parserWorker
   const workerRelativePath = toPosixPath(path.relative(workspaceRoot, parserWorker))
   const bunfsRoot = target.platform === 'win32' ? 'B:/~BUN/root/' : '/$bunfs/root/'
 
-  await Bun.build({
-    conditions: ['browser'],
-    tsconfig: path.join(workspaceRoot, 'tsconfig.json'),
-    plugins: [solidPlugin],
-    sourcemap: 'external',
-    compile: {
-      target: target.bunTarget as any,
-      outfile: outputFile,
-      windows: {},
-    },
-    entrypoints: [path.join(workspaceRoot, 'src', 'index.tsx'), parserWorker],
-    define: {
-      OTUI_TREE_SITTER_WORKER_PATH: `'${bunfsRoot + workerRelativePath}'`,
-    },
-  })
+  try {
+    const result = await Bun.build({
+      conditions: ['browser'],
+      tsconfig: path.join(workspaceRoot, 'tsconfig.json'),
+      plugins: [solidPlugin],
+      sourcemap: 'external',
+      compile: {
+        target: target.bunTarget as any,
+        outfile: outputFile,
+        windows: {},
+      },
+      entrypoints: [path.join(workspaceRoot, 'src', 'index.tsx'), parserWorker],
+      define: {
+        OTUI_TREE_SITTER_WORKER_PATH: `'${bunfsRoot + workerRelativePath}'`,
+      },
+    })
+
+    if (!result.success) {
+      const diagnostics = result.logs.map((item) => formatBuildDiagnostic(item))
+      throw new Error(diagnostics.join('\n'))
+    }
+  } catch (error) {
+    const details = collectBuildFailureDetails(error)
+    throw new Error(`Failed to compile CLI target "${target.id}".\n${details.join('\n')}`)
+  }
 
   if (options.layout === 'npm') {
     const packageDir = path.join(options.outputRoot, getPackageName(target))
@@ -197,7 +273,7 @@ async function main(): Promise<void> {
 }
 
 void main().catch((error) => {
-  const message = error instanceof Error ? error.message : String(error)
+  const message = collectBuildFailureDetails(error).join('\n')
   console.error(`[build-cli-binaries] failed: ${message}`)
   process.exit(1)
 })

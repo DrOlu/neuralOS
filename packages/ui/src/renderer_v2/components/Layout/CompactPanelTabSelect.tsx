@@ -3,7 +3,10 @@ import clsx from "clsx";
 import { X } from "lucide-react";
 import type { PanelKind } from "../../layout";
 import { resolveAnchoredBelowMenuMaxHeight } from "../../lib/menuPlacement";
-import { buildCompactPanelTabMeasureSignature } from "./compactPanelTabMeasure";
+import {
+  buildCompactPanelTabMeasureSignature,
+  resolveCompactPanelTabMenuScrollbarCompensation,
+} from "./compactPanelTabMeasure";
 import "./compactPanelTabSelect.scss";
 
 export interface CompactPanelTabOption {
@@ -89,10 +92,20 @@ export const CompactPanelTabSelect: React.FC<CompactPanelTabSelectProps> = ({
   const [menuMaxHeightPx, setMenuMaxHeightPx] = React.useState<number | null>(
     null,
   );
+  const [menuScrollbarCompensationPx, setMenuScrollbarCompensationPx] =
+    React.useState(0);
   const rootRef = React.useRef<HTMLDivElement | null>(null);
   const shellRef = React.useRef<HTMLDivElement | null>(null);
+  const menuRef = React.useRef<HTMLDivElement | null>(null);
   const measureRef = React.useRef<HTMLDivElement | null>(null);
   const lastDragStartedAtRef = React.useRef(0);
+  const pendingMenuMeasureFrameRef = React.useRef<number | null>(null);
+
+  const cancelPendingMenuMeasurement = React.useCallback(() => {
+    if (pendingMenuMeasureFrameRef.current === null) return;
+    window.cancelAnimationFrame(pendingMenuMeasureFrameRef.current);
+    pendingMenuMeasureFrameRef.current = null;
+  }, []);
 
   const recomputeMenuMaxHeight = React.useCallback(() => {
     const root = rootRef.current;
@@ -113,6 +126,38 @@ export const CompactPanelTabSelect: React.FC<CompactPanelTabSelectProps> = ({
     );
   }, []);
 
+  const recomputeMenuScrollbarCompensation = React.useCallback(() => {
+    const menu = menuRef.current;
+    if (!menu) return;
+
+    const menuStyles = window.getComputedStyle(menu);
+    const nextCompensation = resolveCompactPanelTabMenuScrollbarCompensation({
+      clientWidth: menu.clientWidth,
+      offsetWidth: menu.offsetWidth,
+      clientHeight: menu.clientHeight,
+      scrollHeight: menu.scrollHeight,
+      borderLeftWidth: parseFloat(menuStyles.borderLeftWidth || "0"),
+      borderRightWidth: parseFloat(menuStyles.borderRightWidth || "0"),
+    });
+
+    setMenuScrollbarCompensationPx((current) =>
+      current === nextCompensation ? current : nextCompensation,
+    );
+  }, []);
+
+  const scheduleMenuScrollbarCompensation = React.useCallback(() => {
+    cancelPendingMenuMeasurement();
+    pendingMenuMeasureFrameRef.current = window.requestAnimationFrame(() => {
+      pendingMenuMeasureFrameRef.current = null;
+      recomputeMenuScrollbarCompensation();
+    });
+  }, [cancelPendingMenuMeasurement, recomputeMenuScrollbarCompensation]);
+
+  const recomputeOpenMenuLayout = React.useCallback(() => {
+    recomputeMenuMaxHeight();
+    scheduleMenuScrollbarCompensation();
+  }, [recomputeMenuMaxHeight, scheduleMenuScrollbarCompensation]);
+
   React.useEffect(() => {
     if (!open) return;
 
@@ -129,26 +174,37 @@ export const CompactPanelTabSelect: React.FC<CompactPanelTabSelectProps> = ({
     };
 
     const handleReflow = () => {
-      recomputeMenuMaxHeight();
+      recomputeOpenMenuLayout();
     };
 
     window.addEventListener("mousedown", handlePointerDown);
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("resize", handleReflow);
     window.addEventListener("scroll", handleReflow, true);
-    recomputeMenuMaxHeight();
+    recomputeOpenMenuLayout();
     return () => {
       window.removeEventListener("mousedown", handlePointerDown);
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("resize", handleReflow);
       window.removeEventListener("scroll", handleReflow, true);
     };
-  }, [open, recomputeMenuMaxHeight]);
+  }, [open, recomputeOpenMenuLayout]);
 
   React.useLayoutEffect(() => {
     if (!open) return;
-    recomputeMenuMaxHeight();
-  }, [open, recomputeMenuMaxHeight]);
+    recomputeOpenMenuLayout();
+  }, [open, recomputeOpenMenuLayout]);
+
+  React.useEffect(() => {
+    if (open) return;
+    cancelPendingMenuMeasurement();
+    setMenuScrollbarCompensationPx(0);
+  }, [open, cancelPendingMenuMeasurement]);
+
+  React.useEffect(
+    () => cancelPendingMenuMeasurement,
+    [cancelPendingMenuMeasurement],
+  );
 
   const measureShellWidth = React.useCallback(() => {
     const shell = shellRef.current;
@@ -182,14 +238,14 @@ export const CompactPanelTabSelect: React.FC<CompactPanelTabSelectProps> = ({
     const observer = new ResizeObserver(() => {
       measureShellWidth();
       if (open) {
-        recomputeMenuMaxHeight();
+        recomputeOpenMenuLayout();
       }
     });
     observer.observe(rootRef.current);
     return () => {
       observer.disconnect();
     };
-  }, [measureShellWidth, open, recomputeMenuMaxHeight]);
+  }, [measureShellWidth, open, recomputeOpenMenuLayout]);
 
   const toggleMenu = React.useCallback(() => {
     if (disabled || options.length <= 1) return;
@@ -214,11 +270,21 @@ export const CompactPanelTabSelect: React.FC<CompactPanelTabSelectProps> = ({
   }, [shellWidthPx]);
 
   const menuStyle = React.useMemo<React.CSSProperties | undefined>(() => {
-    if (menuMaxHeightPx === null) return undefined;
-    return {
-      maxHeight: `${menuMaxHeightPx}px`,
-    };
-  }, [menuMaxHeightPx]);
+    const style: React.CSSProperties = {};
+
+    if (menuMaxHeightPx !== null) {
+      style.maxHeight = `${menuMaxHeightPx}px`;
+    }
+
+    if (menuScrollbarCompensationPx > 0) {
+      const expandedWidth = `calc(100% + ${menuScrollbarCompensationPx}px)`;
+      style.width = expandedWidth;
+      style.minWidth = expandedWidth;
+      style.maxWidth = expandedWidth;
+    }
+
+    return Object.keys(style).length > 0 ? style : undefined;
+  }, [menuMaxHeightPx, menuScrollbarCompensationPx]);
 
   return (
     <div
@@ -330,6 +396,7 @@ export const CompactPanelTabSelect: React.FC<CompactPanelTabSelectProps> = ({
         </div>
         {open && options.length > 1 ? (
           <div
+            ref={menuRef}
             className="gyshell-compact-tab-menu"
             role="listbox"
             style={menuStyle}

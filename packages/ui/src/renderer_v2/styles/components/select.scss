@@ -53,6 +53,7 @@
   min-width: 0;
   max-width: 320px;
   overflow: auto;
+  overscroll-behavior: contain;
   padding: 4px;
   border-radius: 4px;
   background: var(--panel-bg);

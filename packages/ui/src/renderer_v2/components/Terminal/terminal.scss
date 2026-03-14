@@ -65,7 +65,7 @@
   outline: none;
 }
 
-.tab[draggable='true'] {
+.tab[draggable="true"] {
   cursor: move;
 }
 
@@ -171,16 +171,11 @@
 
 /* Tab add dropdown */
 .tab-menu {
-  position: absolute;
-  top: calc(var(--panel-tab-header-height) + 2px);
-  left: 8px;
   min-width: 220px;
+  max-width: min(320px, calc(100vw - 16px));
   border-radius: 2px; /* Sharper */
-  border: 1px solid var(--border-strong);
-  background: var(--panel-bg);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
-  padding: 4px;
-  z-index: 30;
+  overscroll-behavior: contain;
 }
 
 .tab-menu-item {

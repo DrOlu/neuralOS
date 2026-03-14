@@ -60,8 +60,8 @@ runCase(
     );
     assertEqual(
       placement.top,
-      216,
-      "upward placement should keep the menu bottom aligned above the trigger gap",
+      296,
+      "upward placement should use the rendered menu height when aligning above the trigger gap",
     );
     assertEqual(
       placement.maxHeight,
@@ -109,6 +109,32 @@ runCase(
       maxHeight,
       61,
       "tab menus should stay attached below the header and scroll within the remaining viewport space",
+    );
+  },
+);
+
+runCase(
+  "pointer-anchored menus flip above when opened near the viewport bottom",
+  () => {
+    const placement = resolveFloatingMenuPlacement({
+      anchorRect: { left: 420, top: 668, width: 0, height: 0 },
+      menuWidth: 220,
+      menuHeight: 196,
+      viewportWidth: 900,
+      viewportHeight: 700,
+      gap: 2,
+      preferredMaxHeight: 320,
+    });
+
+    assertEqual(
+      placement.direction,
+      "above",
+      "context-style menus should flip upward when there is no usable lower space",
+    );
+    assertEqual(
+      placement.top,
+      470,
+      "pointer-anchored menus should keep their bottom edge above the anchor gap when flipped",
     );
   },
 );

@@ -93,17 +93,21 @@ export const resolveFloatingMenuPlacement = ({
     resolvedPreferredMaxHeight,
     direction === "below" ? availableBelow : availableAbove,
   );
+  const renderedHeight = Math.min(
+    desiredMenuHeight,
+    direction === "below" ? availableBelow : availableAbove,
+  );
   const top =
     direction === "below"
       ? clamp(
           anchorBottom + resolvedGap,
           resolvedMargin,
-          resolvedViewportHeight - resolvedMargin - maxHeight,
+          resolvedViewportHeight - resolvedMargin - renderedHeight,
         )
       : clamp(
-          anchorRect.top - resolvedGap - maxHeight,
+          anchorRect.top - resolvedGap - renderedHeight,
           resolvedMargin,
-          resolvedViewportHeight - resolvedMargin - maxHeight,
+          resolvedViewportHeight - resolvedMargin - renderedHeight,
         );
   const left = clamp(
     anchorRect.left,

@@ -6,6 +6,12 @@
   "exports": {
     ".": "./src/index.tsx"
   },
+  "dependencies": {
+    "@opentui/core": "0.1.73",
+    "@opentui/solid": "0.1.73",
+    "solid-js": "1.9.9",
+    "ws": "^8.19.0"
+  },
   "scripts": {
     "build": "echo \"tui-core: built by app wrapper\"",
     "typecheck": "echo \"tui-core: checked by workspace consumers\""
