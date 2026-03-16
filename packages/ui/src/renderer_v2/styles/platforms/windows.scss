@@ -1,21 +1,4 @@
 .platform-windows {
-  // 1. Adjust Custom Banner Position
-  // On Windows, we use titleBarOverlay, so the traffic lights are handled by the system (Electron).
-  // We don't need to push content to the right to avoid Mac's traffic lights.
-  .panel-header-minimal {
-    // Keep padding small for Windows as traffic lights are on the right
-    padding-left: 12px !important;
-    -webkit-app-region: drag; // Ensure the header area is draggable
-
-    // Make interactive elements non-draggable so they can be clicked
-    .chat-tab-add,
-    .chat-tab-history,
-    .chat-tab-history-menu,
-    .chat-tabs {
-      -webkit-app-region: no-drag;
-    }
-  }
-
   // TopBar Layout Adjustments
   .topbar {
     // Make TopBar visually identical to the native titleBarOverlay background
