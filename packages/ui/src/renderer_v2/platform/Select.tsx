@@ -11,6 +11,8 @@ export interface SelectProps {
   className?: string
   /** Hide the chevron indicator (useful when original mac design has no visible arrow) */
   hideArrow?: boolean
+  menuClassName?: string
+  menuZIndex?: number
 }
 
 export const Select = forwardRef<SelectHandle, SelectProps>(({
@@ -20,7 +22,9 @@ export const Select = forwardRef<SelectHandle, SelectProps>(({
   disabled,
   widthCh,
   className,
-  hideArrow
+  hideArrow,
+  menuClassName,
+  menuZIndex
 }, ref) => {
   // Note: Native <select> cannot separate trigger styling from the OS popup.
   // We use a single custom Select implementation across all platforms for consistent UI.
@@ -34,6 +38,10 @@ export const Select = forwardRef<SelectHandle, SelectProps>(({
       widthCh={widthCh}
       className={className}
       hideArrow={hideArrow}
+      menuClassName={menuClassName}
+      menuZIndex={menuZIndex}
     />
   )
 })
+
+export type { SelectHandle }

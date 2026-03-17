@@ -1,3 +1,9 @@
+.xterm-shell {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
 .xterm-host {
   height: 100%;
   width: 100%;
@@ -30,4 +36,60 @@
 .xterm-host.is-scrollbar-visible .xterm-scrollable-element > .scrollbar {
   opacity: 1;
   pointer-events: auto;
+}
+
+.xterm-command-draft-status {
+  position: absolute;
+  top: 12px;
+  right: 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 9px;
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border));
+  border-radius: 2px;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(var(--accent-rgb), 0.06) 0%,
+      rgba(var(--accent-rgb), 0.015) 100%
+    ),
+    rgba(5, 8, 12, 0.88);
+  box-shadow:
+    0 8px 22px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.45px;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  pointer-events: none;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.xterm-command-draft-status.is-error {
+  border-color: color-mix(in srgb, var(--danger) 36%, var(--border));
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--danger) 18%, transparent) 0%,
+      rgba(255, 255, 255, 0.01) 100%
+    ),
+    rgba(18, 8, 10, 0.92);
+}
+
+.xterm-command-draft-status.is-error .xterm-command-draft-status-frame {
+  color: var(--danger);
+}
+
+.xterm-command-draft-status-frame {
+  color: var(--accent);
+  font-weight: 700;
+  min-width: 24px;
+  text-align: center;
+}
+
+.xterm-command-draft-status-text {
+  color: var(--fg);
 }

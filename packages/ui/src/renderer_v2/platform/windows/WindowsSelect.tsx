@@ -23,11 +23,23 @@ interface WindowsSelectProps {
   widthCh?: number;
   className?: string;
   hideArrow?: boolean;
+  menuClassName?: string;
+  menuZIndex?: number;
 }
 
 export const WindowsSelect = forwardRef<SelectHandle, WindowsSelectProps>(
   (
-    { value, options, onChange, disabled, widthCh, className, hideArrow },
+    {
+      value,
+      options,
+      onChange,
+      disabled,
+      widthCh,
+      className,
+      hideArrow,
+      menuClassName,
+      menuZIndex,
+    },
     ref,
   ) => {
     const [open, setOpen] = React.useState(false);
@@ -167,11 +179,15 @@ export const WindowsSelect = forwardRef<SelectHandle, WindowsSelectProps>(
               ref={menuRef}
               className={
                 platformMenuClassName
-                  ? `win-select-menu ${platformMenuClassName}`
-                  : "win-select-menu"
+                  ? `win-select-menu ${platformMenuClassName}${menuClassName ? ` ${menuClassName}` : ""}`
+                  : `win-select-menu${menuClassName ? ` ${menuClassName}` : ""}`
               }
               role="listbox"
-              style={menuStyle}
+              style={
+                menuZIndex
+                  ? { ...menuStyle, zIndex: menuZIndex }
+                  : menuStyle
+              }
             >
               {options.map((o) => (
                 <button

@@ -18,10 +18,14 @@ export const DEFAULT_UI_SETTINGS: UiSettings = {
     cursorStyle: 'block',
     cursorBlink: true,
     copyOnSelect: true,
-    rightClickToPaste: true
+    rightClickToPaste: true,
+    commandDraftShortcut: 'Mod+O'
   },
   panelTabs: {
     displayMode: DEFAULT_PANEL_TAB_DISPLAY_MODE,
+  },
+  commandDraft: {
+    profileId: '',
   }
 }
 
@@ -33,6 +37,7 @@ function pickUiSnapshot(raw: unknown): Partial<UiSettings> {
     themeId: raw.themeId,
     terminal: raw.terminal,
     panelTabs: raw.panelTabs,
+    commandDraft: raw.commandDraft,
   } as Partial<UiSettings>
 }
 
@@ -47,8 +52,14 @@ function normalizeUiSettings(settings: UiSettings): UiSettings {
   if (typeof next.terminal.scrollback !== 'number' || next.terminal.scrollback < 0) {
     next.terminal.scrollback = 5000
   }
+  if (typeof next.terminal.commandDraftShortcut !== 'string') {
+    next.terminal.commandDraftShortcut = 'Mod+O'
+  }
   if (!isPanelTabDisplayModePreference(next.panelTabs.displayMode)) {
     next.panelTabs.displayMode = DEFAULT_PANEL_TAB_DISPLAY_MODE
+  }
+  if (typeof next.commandDraft.profileId !== 'string') {
+    next.commandDraft.profileId = ''
   }
   next.uiSchemaVersion = UI_SETTINGS_SCHEMA_VERSION
   return next

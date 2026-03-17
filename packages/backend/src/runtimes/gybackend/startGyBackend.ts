@@ -27,6 +27,7 @@ import {
 import { ImageAttachmentService } from '../../services/ImageAttachmentService'
 import { TerminalStateStore } from '../../services/terminal/TerminalStateStore'
 import { createAutoTerminalConfig } from '../../services/terminal/terminalConnectionSupport'
+import { TerminalCommandDraftService } from '../../services/TerminalCommandDraftService'
 
 function boolFromEnv(name: string, fallback: boolean): boolean {
   const raw = process.env[name]
@@ -115,6 +116,7 @@ export async function startGyBackend(): Promise<void> {
     settingsService,
     mcpToolService
   )
+  const terminalCommandDraftService = new TerminalCommandDraftService(terminalService, settingsService)
 
   const terminalRestoreResult = await terminalService.restorePersistedTerminals()
   if (terminalRestoreResult.restored.length > 0 || terminalRestoreResult.failed.length > 0) {
@@ -203,6 +205,13 @@ export async function startGyBackend(): Promise<void> {
             const data = terminalService.getBufferDelta(terminalId, fromOffset)
             const offset = terminalService.getCurrentOffset(terminalId)
             return { data, offset }
+          },
+          generateCommandDraft: async (terminalId, prompt, profileId) => {
+            return await terminalCommandDraftService.generateCommandDraft({
+              terminalId,
+              prompt,
+              profileId
+            })
           }
         },
         filesystemBridge: {

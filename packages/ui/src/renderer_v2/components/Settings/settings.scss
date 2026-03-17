@@ -328,6 +328,35 @@
   color: var(--fg-muted);
 }
 
+.settings-shortcut-control {
+  display: flex;
+  align-items: flex-end;
+  min-width: 0;
+}
+
+.settings-shortcut-button {
+  width: 164px;
+  max-width: 100%;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 2px;
+  font-size: 12px;
+  letter-spacing: 0.2px;
+  line-height: 1;
+  text-align: center;
+  justify-content: center;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings-shortcut-button.is-listening {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+}
+
 .settings-memory-panel {
   margin-top: 12px;
   border: 1px solid var(--border);

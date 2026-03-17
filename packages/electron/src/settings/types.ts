@@ -10,10 +10,15 @@ export interface TerminalUiSettings {
   cursorBlink: boolean
   copyOnSelect: boolean
   rightClickToPaste: boolean
+  commandDraftShortcut: string
 }
 
 export interface PanelTabsUiSettings {
   displayMode: PanelTabDisplayModePreference
+}
+
+export interface CommandDraftUiSettings {
+  profileId: string
 }
 
 export interface UiSettings {
@@ -22,4 +27,5 @@ export interface UiSettings {
   themeId: string
   terminal: TerminalUiSettings
   panelTabs: PanelTabsUiSettings
+  commandDraft: CommandDraftUiSettings
 }

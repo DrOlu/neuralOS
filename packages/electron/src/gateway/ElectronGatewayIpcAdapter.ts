@@ -24,6 +24,7 @@ import type { SettingsService } from "../../../backend/src/services/SettingsServ
 import type { ModelCapabilityService } from "../../../backend/src/services/ModelCapabilityService";
 import type { McpToolService } from "../../../backend/src/services/McpToolService";
 import type { VersionService } from "../../../backend/src/services/VersionService";
+import type { TerminalCommandDraftService } from "../../../backend/src/services/TerminalCommandDraftService";
 import type { WsGatewayAccess } from "../../../backend/src/types";
 import {
   buildBuiltInToolStatusSummary,
@@ -48,6 +49,7 @@ export class ElectronGatewayIpcAdapter {
   constructor(
     private gateway: IGatewayRuntime,
     private terminalService: TerminalService,
+    private terminalCommandDraftService: TerminalCommandDraftService,
     private agentService: AgentService_v2,
     private uiHistoryService: UIHistoryService,
     private commandPolicyService: CommandPolicyService,
@@ -611,6 +613,17 @@ export class ElectronGatewayIpcAdapter {
           data,
           offset,
         };
+      },
+    );
+
+    ipcMain.handle(
+      "terminal:generateCommandDraft",
+      async (_: any, terminalId: string, prompt: string, profileId: string) => {
+        return await this.terminalCommandDraftService.generateCommandDraft({
+          terminalId,
+          prompt,
+          profileId,
+        });
       },
     );
 

@@ -26,6 +26,7 @@ import { TempFileService } from '../../../backend/src/services/TempFileService'
 import { ImageAttachmentService } from '../../../backend/src/services/ImageAttachmentService'
 import { VersionService } from '../../../backend/src/services/VersionService'
 import { AccessTokenService } from '../../../backend/src/services/AccessToken/AccessTokenService'
+import { TerminalCommandDraftService } from '../../../backend/src/services/TerminalCommandDraftService'
 import { ElectronAppSettingsMigration } from '../settings/ElectronAppSettingsMigration'
 import { installCliLaunchers } from './CliInstallService'
 import {
@@ -56,6 +57,7 @@ let tempFileService: TempFileService
 let imageAttachmentService: ImageAttachmentService
 let versionService: VersionService
 let accessTokenService: AccessTokenService
+let terminalCommandDraftService: TerminalCommandDraftService
 let webSocketGatewayControlService: WebSocketGatewayControlService | null = null
 let mobileWebServerService: MobileWebServerService | null = null
 let resourceMonitorService: ResourceMonitorService
@@ -268,6 +270,7 @@ export async function startElectronMain(): Promise<void> {
   imageAttachmentService = new ImageAttachmentService(app.getPath('userData'))
   versionService = new VersionService()
   accessTokenService = new AccessTokenService()
+  terminalCommandDraftService = new TerminalCommandDraftService(terminalService, settingsService)
 
   await themeStore.loadCustomThemes()
   
@@ -361,6 +364,13 @@ export async function startElectronMain(): Promise<void> {
             const data = terminalService.getBufferDelta(terminalId, fromOffset)
             const offset = terminalService.getCurrentOffset(terminalId)
             return { data, offset }
+          },
+          generateCommandDraft: async (terminalId, prompt, profileId) => {
+            return await terminalCommandDraftService.generateCommandDraft({
+              terminalId,
+              prompt,
+              profileId
+            })
           }
         },
         filesystemBridge: {
@@ -619,6 +629,7 @@ export async function startElectronMain(): Promise<void> {
   const ipcAdapter = new ElectronGatewayIpcAdapter(
     gatewayService,
     terminalService,
+    terminalCommandDraftService,
     agentService,
     uiHistoryService,
     commandPolicyService,

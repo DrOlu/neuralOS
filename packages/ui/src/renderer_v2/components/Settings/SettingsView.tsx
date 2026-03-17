@@ -32,6 +32,8 @@ import { ConfirmDialog } from "../Common/ConfirmDialog";
 import { NumericInput } from "../Common/NumericInput";
 import { InfoTooltip } from "../Common/InfoTooltip";
 import { Select } from "../../platform/Select";
+import { ShortcutRecorder } from "./ShortcutRecorder";
+import { getDefaultCommandDraftShortcut } from "../../lib/commandDraftShortcut";
 
 function ThemeTile(props: {
   active?: boolean;
@@ -1138,6 +1140,25 @@ export const SettingsView: React.FC<{ store: AppStore }> = observer(
                     />
                     <span className="switch-slider" />
                   </label>
+                </div>
+                <div className="settings-row">
+                  <div className="settings-row-label-with-info">
+                    <label>{t.settings.commandDraftShortcut}</label>
+                    <InfoTooltip content={t.settings.tooltips.commandDraftShortcut} />
+                  </div>
+                  <ShortcutRecorder
+                    value={
+                      store.settings?.terminal?.commandDraftShortcut ??
+                      getDefaultCommandDraftShortcut()
+                    }
+                    disabledLabel={t.settings.shortcutDisabled}
+                    listeningLabel={t.settings.shortcutListening}
+                    onChange={(value) =>
+                      store.setTerminalSettings({
+                        commandDraftShortcut: value,
+                      })
+                    }
+                  />
                 </div>
               </div>
             </>

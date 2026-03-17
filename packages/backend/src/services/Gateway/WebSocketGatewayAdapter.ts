@@ -20,6 +20,7 @@ type WebSocketRpcMethod =
   | 'terminal:kill'
   | 'terminal:setSelection'
   | 'terminal:getBufferDelta'
+  | 'terminal:generateCommandDraft'
   | 'filesystem:list'
   | 'filesystem:readTextFile'
   | 'filesystem:readFileBase64'
@@ -114,6 +115,11 @@ export interface WebSocketGatewayAdapterOptions {
     kill?: (terminalId: string) => void | Promise<void>;
     setSelection?: (terminalId: string, selectionText: string) => void | Promise<void>;
     getBufferDelta?: (terminalId: string, fromOffset: number) => { data: string; offset: number } | Promise<{ data: string; offset: number }>;
+    generateCommandDraft?: (
+      terminalId: string,
+      prompt: string,
+      profileId: string
+    ) => { command: string } | Promise<{ command: string }>;
   };
   filesystemBridge?: {
     listDirectory?: (
@@ -727,6 +733,19 @@ export class WebSocketGatewayAdapter {
         const terminalId = this.readStringParam(params, 'terminalId');
         const fromOffset = this.readIntegerParam(params, 'fromOffset', 0, Number.MAX_SAFE_INTEGER);
         return await bridge.getBufferDelta(terminalId, fromOffset);
+      }
+      case 'terminal:generateCommandDraft': {
+        const bridge = this.options.terminalBridge;
+        if (!bridge?.generateCommandDraft) {
+          throw new WebSocketRpcError(
+            'METHOD_NOT_FOUND',
+            'terminal:generateCommandDraft is not available on this websocket gateway.'
+          );
+        }
+        const terminalId = this.readStringParam(params, 'terminalId');
+        const prompt = this.readStringParam(params, 'prompt');
+        const profileId = this.readStringParam(params, 'profileId');
+        return await bridge.generateCommandDraft(terminalId, prompt, profileId);
       }
       case 'filesystem:list': {
         const bridge = this.options.filesystemBridge;

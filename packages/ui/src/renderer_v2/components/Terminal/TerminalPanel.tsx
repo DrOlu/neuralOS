@@ -1,6 +1,6 @@
 import React from "react";
 import { createPortal } from "react-dom";
-import { GripVertical, Laptop, Plus, Server, X } from "lucide-react";
+import { GripVertical, Laptop, MoreVertical, Plus, Server, X } from "lucide-react";
 import { observer } from "mobx-react-lite";
 import type { AppStore, TerminalTabModel } from "../../stores/AppStore";
 import "./terminal.scss";
@@ -14,6 +14,11 @@ import { isLinux, isWindows } from "../../platform/platform";
 import { CompactPanelTabSelect } from "../Layout/CompactPanelTabSelect";
 import { resolvePanelTabBarMode } from "../Layout/panelHeaderPresentation";
 import { resolveTerminalTabIcon } from "./terminalTabIcons";
+import {
+  formatCommandDraftShortcut,
+  getDefaultCommandDraftShortcut,
+  resolveCommandDraftShortcut
+} from "../../lib/commandDraftShortcut";
 
 interface TerminalPanelProps {
   store: AppStore;
@@ -35,10 +40,17 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = observer(
     onRequestCloseTabs,
     onLayoutHeaderContextMenu,
   }) => {
-    const [menuOpen, setMenuOpen] = React.useState(false);
+    const [openMenu, setOpenMenu] = React.useState<"add" | "more" | null>(null);
+    const [commandDraftOpenRequest, setCommandDraftOpenRequest] = React.useState<{
+      id: number;
+      placement: "center" | "pointer";
+      terminalId: string;
+    } | null>(null);
     const rootRef = React.useRef<HTMLDivElement | null>(null);
-    const menuButtonRef = React.useRef<HTMLButtonElement | null>(null);
-    const menuRef = React.useRef<HTMLDivElement | null>(null);
+    const addMenuButtonRef = React.useRef<HTMLButtonElement | null>(null);
+    const addMenuRef = React.useRef<HTMLDivElement | null>(null);
+    const moreMenuButtonRef = React.useRef<HTMLButtonElement | null>(null);
+    const moreMenuRef = React.useRef<HTMLDivElement | null>(null);
     const [menuStyle, setMenuStyle] = React.useState<
       React.CSSProperties | undefined
     >(undefined);
@@ -65,6 +77,16 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = observer(
           activeTab.runtimeState || "initializing",
         )
       : "inactive";
+    const resolvedCommandDraftShortcut = resolveCommandDraftShortcut(
+      store.settings?.terminal?.commandDraftShortcut ?? getDefaultCommandDraftShortcut(),
+    );
+    const commandDraftShortcutLabel = formatCommandDraftShortcut(
+      resolvedCommandDraftShortcut,
+      t.settings.shortcutDisabled,
+    );
+    const commandDraftShortcutHint = resolvedCommandDraftShortcut
+      ? t.terminal.commandDraftShortcutHint(commandDraftShortcutLabel)
+      : t.terminal.commandDraftShortcutDisabledHint;
     const menuPlatformClassName = React.useMemo(() => {
       if (isWindows()) return "is-platform-windows";
       if (isLinux()) return "is-platform-linux";
@@ -72,8 +94,9 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = observer(
     }, []);
 
     const recomputeMenuPosition = React.useCallback(() => {
-      const trigger = menuButtonRef.current;
-      const menu = menuRef.current;
+      const trigger =
+        openMenu === "more" ? moreMenuButtonRef.current : addMenuButtonRef.current;
+      const menu = openMenu === "more" ? moreMenuRef.current : addMenuRef.current;
       if (!trigger || !menu) return;
 
       const rect = trigger.getBoundingClientRect();
@@ -101,25 +124,25 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = observer(
         maxHeight: placement.maxHeight,
         maxWidth: placement.maxWidth,
       });
-    }, []);
+    }, [openMenu]);
 
     React.useEffect(() => {
-      if (!menuOpen) return;
+      if (!openMenu) return;
 
       const onMouseDown = (event: MouseEvent) => {
         const target = event.target as Node | null;
         if (!target) return;
-        if (menuRef.current?.contains(target)) return;
-        if (
-          rootRef.current?.contains(target) &&
-          (target as HTMLElement).closest(".tab-add-btn")
-        )
+        if (addMenuRef.current?.contains(target) || moreMenuRef.current?.contains(target)) {
           return;
-        setMenuOpen(false);
+        }
+        if (addMenuButtonRef.current?.contains(target) || moreMenuButtonRef.current?.contains(target)) {
+          return;
+        }
+        setOpenMenu(null);
       };
 
       const onKeyDown = (event: KeyboardEvent) => {
-        if (event.key === "Escape") setMenuOpen(false);
+        if (event.key === "Escape") setOpenMenu(null);
       };
 
       const onReflow = () => {
@@ -136,12 +159,12 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = observer(
         window.removeEventListener("resize", onReflow);
         window.removeEventListener("scroll", onReflow, true);
       };
-    }, [menuOpen, recomputeMenuPosition]);
+    }, [openMenu, recomputeMenuPosition]);
 
     React.useLayoutEffect(() => {
-      if (!menuOpen) return;
+      if (!openMenu) return;
       recomputeMenuPosition();
-    }, [menuOpen, recomputeMenuPosition]);
+    }, [openMenu, recomputeMenuPosition]);
 
     return (
       <div
@@ -299,15 +322,26 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = observer(
 
           <div className="terminal-tabs-actions">
             <button
-              ref={menuButtonRef}
-              className="icon-btn-sm tab-add-btn"
+              ref={addMenuButtonRef}
+              className="tab-add-btn"
               title={t.terminal.newTab}
-              onClick={() => setMenuOpen((v) => !v)}
+              onClick={() => setOpenMenu((current) => (current === "add" ? null : "add"))}
             >
               <Plus size={14} strokeWidth={2} />
             </button>
+            <button
+              ref={moreMenuButtonRef}
+              className="tab-more-btn"
+              title={t.common.showMore}
+              aria-label={t.common.showMore}
+              aria-haspopup="menu"
+              aria-expanded={openMenu === "more"}
+              onClick={() => setOpenMenu((current) => (current === "more" ? null : "more"))}
+            >
+              <MoreVertical size={14} strokeWidth={2} />
+            </button>
           </div>
-          {menuOpen
+          {openMenu === "add"
             ? createPortal(
                 <div
                   className={
@@ -316,14 +350,14 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = observer(
                       : "win-select-menu tab-menu"
                   }
                   role="menu"
-                  ref={menuRef}
+                  ref={addMenuRef}
                   style={menuStyle}
                 >
                   <button
                     className="tab-menu-item"
                     onClick={() => {
                       store.createLocalTab(panelId);
-                      setMenuOpen(false);
+                      setOpenMenu(null);
                     }}
                   >
                     <Laptop size={14} strokeWidth={2} />
@@ -340,7 +374,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = observer(
                       className="tab-menu-item"
                       onClick={() => {
                         store.createSshTab(entry.id, panelId);
-                        setMenuOpen(false);
+                        setOpenMenu(null);
                       }}
                     >
                       <Server size={14} strokeWidth={2} />
@@ -355,11 +389,46 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = observer(
                     className="tab-menu-item"
                     onClick={() => {
                       store.openConnections();
-                      setMenuOpen(false);
+                      setOpenMenu(null);
                     }}
                   >
                     <Server size={14} strokeWidth={2} />
                     <span>{t.connections.manage}</span>
+                  </button>
+                </div>,
+                document.body,
+              )
+            : null}
+          {openMenu === "more"
+            ? createPortal(
+                <div
+                  className={
+                    menuPlatformClassName
+                      ? `win-select-menu terminal-more-menu ${menuPlatformClassName}`
+                      : "win-select-menu terminal-more-menu"
+                  }
+                  role="menu"
+                  ref={moreMenuRef}
+                  style={menuStyle}
+                >
+                  <button
+                    className="win-select-option"
+                    type="button"
+                    role="menuitem"
+                    disabled={!activeTab}
+                    onClick={() => {
+                      if (!activeTab) {
+                        return;
+                      }
+                      setCommandDraftOpenRequest((current) => ({
+                        id: (current?.id || 0) + 1,
+                        placement: "center",
+                        terminalId: activeTab.id,
+                      }));
+                      setOpenMenu(null);
+                    }}
+                  >
+                    {t.terminal.commandDraftTitle}
                   </button>
                 </div>,
                 document.body,
@@ -383,6 +452,39 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = observer(
                       config={tab.config}
                       theme={store.xtermTheme}
                       terminalSettings={store.settings?.terminal}
+                      commandDraftLabels={{
+                        title: t.terminal.commandDraftTitle,
+                        placeholder: t.terminal.commandDraftPlaceholder,
+                        send: t.terminal.commandDraftSend,
+                        shortcutHint: commandDraftShortcutHint,
+                        pending: t.terminal.commandDraftPending,
+                        failed: t.terminal.commandDraftFailed,
+                        noProfile: t.terminal.commandDraftNoProfile,
+                      }}
+                      commandDraftShortcut={resolvedCommandDraftShortcut}
+                      commandDraftProfileId={store.commandDraftProfileId}
+                      commandDraftProfileOptions={
+                        (store.settings?.models.profiles || []).map((profile) => ({
+                          id: profile.id,
+                          name: profile.name,
+                        }))
+                      }
+                      onCommandDraftProfileChange={(profileId) => {
+                        void store.setCommandDraftProfileId(profileId)
+                      }}
+                      commandDraftOpenRequest={commandDraftOpenRequest}
+                      onCommandDraftOpenRequestHandled={(requestId, terminalId) => {
+                        setCommandDraftOpenRequest((current) => {
+                          if (
+                            !current ||
+                            current.id !== requestId ||
+                            current.terminalId !== terminalId
+                          ) {
+                            return current;
+                          }
+                          return null;
+                        });
+                      }}
                       remoteOs={tab.remoteOs}
                       systemInfo={tab.systemInfo}
                       isOwnedByUi={() =>

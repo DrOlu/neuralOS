@@ -117,9 +117,13 @@ interface UiSettings {
     cursorBlink: boolean
     copyOnSelect: boolean
     rightClickToPaste: boolean
+    commandDraftShortcut: string
   }
   panelTabs: {
     displayMode: 'auto' | 'expanded' | 'select'
+  }
+  commandDraft: {
+    profileId: string
   }
 }
 
@@ -404,6 +408,7 @@ export interface GyShellAPI {
     kill: (terminalId: string) => Promise<void>
     setSelection: (terminalId: string, selectionText: string) => Promise<void>
     getBufferDelta: (terminalId: string, fromOffset: number) => Promise<{ data: string; offset: number }>
+    generateCommandDraft: (terminalId: string, prompt: string, profileId: string) => Promise<{ command: string }>
     onData: (callback: (data: { terminalId: string; data: string; offset?: number }) => void) => () => void
     onExit: (callback: (data: { terminalId: string; code: number }) => void) => () => void
     onTabsUpdated: (
@@ -626,6 +631,8 @@ const api: GyShellAPI = {
       ipcRenderer.invoke('terminal:setSelection', terminalId, selectionText),
     getBufferDelta: (terminalId, fromOffset) =>
       ipcRenderer.invoke('terminal:getBufferDelta', terminalId, fromOffset),
+    generateCommandDraft: (terminalId, prompt, profileId) =>
+      ipcRenderer.invoke('terminal:generateCommandDraft', terminalId, prompt, profileId),
     onData: (callback) => {
       const handler = (_: IpcRendererEvent, data: { terminalId: string; data: string; offset?: number }) =>
         callback(data)

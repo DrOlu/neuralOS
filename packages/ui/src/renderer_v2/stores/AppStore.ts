@@ -265,6 +265,7 @@ export class AppStore {
       fileSystemTabs: computed,
       monitorTabs: computed,
       panelTabDisplayMode: computed,
+      commandDraftProfileId: computed,
       openSettings: action,
       closeSettings: action,
       toggleSettings: action,
@@ -285,6 +286,7 @@ export class AppStore {
       setLanguage: action,
       setTerminalSettings: action,
       setPanelTabDisplayMode: action,
+      setCommandDraftProfileId: action,
       saveModel: action,
       deleteModel: action,
       saveProfile: action,
@@ -973,6 +975,15 @@ export class AppStore {
     )
   }
 
+  get commandDraftProfileId(): string {
+    const profiles = this.settings?.models?.profiles ?? []
+    const storedId = String(this.settings?.commandDraft?.profileId || '').trim()
+    if (storedId && profiles.some((profile) => profile.id === storedId)) {
+      return storedId
+    }
+    return profiles[0]?.id || ''
+  }
+
   private collectPersistedChatInventoryState(
     layout: AppSettings['layout'] | undefined,
   ): {
@@ -1319,6 +1330,20 @@ export class AppStore {
       }
     })
     await window.gyshell.uiSettings.set({ panelTabs: nextPanelTabs })
+  }
+
+  async setCommandDraftProfileId(profileId: string): Promise<void> {
+    const nextCommandDraft = {
+      profileId,
+    }
+    runInAction(() => {
+      if (!this.settings) return
+      this.settings = {
+        ...this.settings,
+        commandDraft: nextCommandDraft,
+      }
+    })
+    await window.gyshell.uiSettings.set({ commandDraft: nextCommandDraft })
   }
 
   async setThemeId(themeId: string): Promise<void> {
@@ -2331,6 +2356,9 @@ export class AppStore {
     const profiles = removeById(current.models.profiles, id).map((x) =>
       toJS(x),
     )
+    const currentCommandDraftProfileId = String(
+      current.commandDraft?.profileId || '',
+    ).trim()
     // If active profile is deleted, reset to first available or default
     let activeProfileId = current.models.activeProfileId
     if (activeProfileId === id) {
@@ -2338,13 +2366,27 @@ export class AppStore {
     }
 
     const nextModels = { ...toJS(current.models), profiles, activeProfileId }
+    const nextCommandDraftProfileId =
+      currentCommandDraftProfileId === id
+        ? profiles[0]?.id || ''
+        : currentCommandDraftProfileId
 
     runInAction(() => {
       if (this.settings) {
         this.settings.models = nextModels as any
+        this.settings.commandDraft = {
+          profileId: nextCommandDraftProfileId,
+        }
       }
     })
-    await window.gyshell.settings.set({ models: nextModels })
+    await Promise.all([
+      window.gyshell.settings.set({ models: nextModels }),
+      window.gyshell.uiSettings.set({
+        commandDraft: {
+          profileId: nextCommandDraftProfileId,
+        },
+      }),
+    ])
   }
 
   async setActiveProfile(id: string): Promise<void> {

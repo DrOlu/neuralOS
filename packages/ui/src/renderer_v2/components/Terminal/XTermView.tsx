@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import type { ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -6,6 +6,11 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
 import './xtermView.scss'
 import type { TerminalConfig } from '../../lib/ipcTypes'
+import { TerminalCommandDraft, type TerminalCommandDraftLabels } from './TerminalCommandDraft'
+import {
+  getDefaultCommandDraftShortcut,
+  matchesCommandDraftShortcut
+} from '../../lib/commandDraftShortcut'
 import { isTerminalTrackedByBackend } from './runtimeRetention'
 import { resolveTerminalSize } from './terminalDimensions'
 import {
@@ -32,6 +37,14 @@ import {
 
 const SCROLLBAR_HIDE_DELAY = 2000 // ms
 const RUNTIME_RELEASE_DELAY = 4000 // ms
+const COMMAND_DRAFT_SPINNER_FRAMES = ['|', '/', '-', '\\']
+const COMMAND_DRAFT_FAILURE_VISIBILITY_MS = 1000
+
+type CommandDraftOpenRequest = {
+  id: number
+  placement: 'center' | 'pointer'
+  terminalId: string
+}
 
 type TerminalSettings = {
   fontSize?: number
@@ -41,6 +54,7 @@ type TerminalSettings = {
   cursorBlink?: boolean
   copyOnSelect?: boolean
   rightClickToPaste?: boolean
+  commandDraftShortcut?: string
 }
 
 interface TerminalRuntime {
@@ -535,6 +549,13 @@ export function XTermView(props: {
   config: TerminalConfig
   theme: ITheme
   terminalSettings?: TerminalSettings
+  commandDraftLabels?: TerminalCommandDraftLabels
+  commandDraftShortcut?: string
+  commandDraftProfileId?: string
+  commandDraftProfileOptions?: Array<{ id: string; name: string }>
+  onCommandDraftProfileChange?: (profileId: string) => void
+  commandDraftOpenRequest?: CommandDraftOpenRequest | null
+  onCommandDraftOpenRequestHandled?: (requestId: number, terminalId: string) => void
   remoteOs?: TerminalRemoteOs
   systemInfo?: TerminalSystemInfoLike
   isOwnedByUi?: () => boolean
@@ -544,6 +565,177 @@ export function XTermView(props: {
 }): React.ReactElement {
   const hostRef = useRef<HTMLDivElement>(null)
   const runtimeRef = useRef<TerminalRuntime | null>(null)
+  const aliveRef = useRef(true)
+  const isActiveRef = useRef(props.isActive !== false)
+  const commandDraftFailureTimerRef = useRef<number | null>(null)
+  const lastHandledDraftRequestIdRef = useRef(0)
+  const lastPointerRef = useRef<{ x: number; y: number } | null>(null)
+  const [commandDraftOpen, setCommandDraftOpen] = useState(false)
+  const [commandDraftInput, setCommandDraftInput] = useState('')
+  const [commandDraftPending, setCommandDraftPending] = useState(false)
+  const [commandDraftFailed, setCommandDraftFailed] = useState(false)
+  const [commandDraftPosition, setCommandDraftPosition] = useState<{ left: number; top: number; width?: number } | null>(null)
+  const [commandDraftSpinnerFrame, setCommandDraftSpinnerFrame] = useState(0)
+  const resolvedCommandDraftShortcut = props.commandDraftShortcut ?? getDefaultCommandDraftShortcut()
+
+  useEffect(() => {
+    aliveRef.current = true
+    return () => {
+      aliveRef.current = false
+      if (commandDraftFailureTimerRef.current !== null) {
+        window.clearTimeout(commandDraftFailureTimerRef.current)
+        commandDraftFailureTimerRef.current = null
+      }
+    }
+  }, [])
+
+  const resolveDraftPosition = useCallback((placement: 'center' | 'pointer'): { left: number; top: number; width?: number } | null => {
+    const hostEl = hostRef.current
+    if (!hostEl) return null
+    const rect = hostEl.getBoundingClientRect()
+    const preferredWidth = Math.min(460, Math.max(320, Math.floor(rect.width * 0.48)))
+    const pointer = placement === 'pointer' ? lastPointerRef.current : null
+    const leftFromPointer = pointer
+      ? pointer.x - Math.floor(preferredWidth * 0.25)
+      : rect.left + Math.round((rect.width - preferredWidth) / 2)
+    const topFromPointer = pointer ? pointer.y + 18 : rect.top + 28
+    const minLeft = 12
+    const maxLeft = Math.max(minLeft, window.innerWidth - preferredWidth - 12)
+    const left = Math.min(maxLeft, Math.max(minLeft, Math.round(leftFromPointer)))
+    const estimatedHeight = 138
+    const minTop = Math.max(8, rect.top + 8)
+    const maxTop = Math.max(minTop, Math.min(window.innerHeight - estimatedHeight - 12, rect.bottom - estimatedHeight - 8))
+    const top = Math.min(maxTop, Math.max(minTop, Math.round(topFromPointer)))
+    return {
+      left,
+      top,
+      width: preferredWidth
+    }
+  }, [])
+
+  const openCommandDraft = useCallback((placement: 'center' | 'pointer') => {
+    if (commandDraftPending) {
+      return
+    }
+    setCommandDraftInput('')
+    setCommandDraftPosition(resolveDraftPosition(placement))
+    setCommandDraftOpen(true)
+  }, [commandDraftPending, resolveDraftPosition])
+
+  const submitCommandDraft = useCallback(async () => {
+    const prompt = commandDraftInput.trim()
+    const profileId = String(props.commandDraftProfileId || '').trim()
+    if (!prompt || commandDraftPending || !profileId) return
+
+    if (commandDraftFailureTimerRef.current !== null) {
+      window.clearTimeout(commandDraftFailureTimerRef.current)
+      commandDraftFailureTimerRef.current = null
+    }
+    setCommandDraftFailed(false)
+    setCommandDraftOpen(false)
+    setCommandDraftPending(true)
+    setCommandDraftPosition(null)
+    setCommandDraftInput('')
+    const startedAt = Date.now()
+    console.debug('[TerminalCommandDraftUI] Start', {
+      terminalId: props.config.id,
+      profileId,
+      promptChars: prompt.length
+    })
+
+    try {
+      const result = await window.gyshell.terminal.generateCommandDraft(props.config.id, prompt, profileId)
+      const command = typeof result?.command === 'string' ? result.command : ''
+      const runtime = runtimeRef.current
+      if (!runtime || runtime.terminalId !== props.config.id || !command.trim()) {
+        console.debug('[TerminalCommandDraftUI] Empty result', {
+          terminalId: props.config.id,
+          profileId,
+          elapsedMs: Date.now() - startedAt
+        })
+        return
+      }
+      if (isActiveRef.current) {
+        runtime.term.focus()
+      }
+      runtime.term.paste(command)
+      console.debug('[TerminalCommandDraftUI] Finished', {
+        terminalId: props.config.id,
+        profileId,
+        elapsedMs: Date.now() - startedAt,
+        commandChars: command.length
+      })
+    } catch (error) {
+      console.warn('[TerminalCommandDraftUI] Failed', {
+        terminalId: props.config.id,
+        profileId,
+        elapsedMs: Date.now() - startedAt,
+        error: error instanceof Error ? error.message : String(error)
+      })
+      if (aliveRef.current) {
+        setCommandDraftFailed(true)
+        commandDraftFailureTimerRef.current = window.setTimeout(() => {
+          commandDraftFailureTimerRef.current = null
+          if (aliveRef.current) {
+            setCommandDraftFailed(false)
+          }
+        }, COMMAND_DRAFT_FAILURE_VISIBILITY_MS)
+      }
+    } finally {
+      if (aliveRef.current) {
+        setCommandDraftPending(false)
+      }
+    }
+  }, [commandDraftInput, commandDraftPending, props.commandDraftProfileId, props.config.id])
+
+  useEffect(() => {
+    if (!commandDraftPending) {
+      setCommandDraftSpinnerFrame(0)
+      return
+    }
+    const timer = window.setInterval(() => {
+      setCommandDraftSpinnerFrame((current) => (current + 1) % COMMAND_DRAFT_SPINNER_FRAMES.length)
+    }, 90)
+    return () => {
+      window.clearInterval(timer)
+    }
+  }, [commandDraftPending])
+
+  useEffect(() => {
+    if (props.isActive !== false) {
+      return
+    }
+    if (commandDraftFailureTimerRef.current !== null) {
+      window.clearTimeout(commandDraftFailureTimerRef.current)
+      commandDraftFailureTimerRef.current = null
+    }
+    setCommandDraftOpen(false)
+    setCommandDraftFailed(false)
+    setCommandDraftPosition(null)
+  }, [props.isActive])
+
+  useEffect(() => {
+    isActiveRef.current = props.isActive !== false
+  }, [props.isActive])
+
+  useEffect(() => {
+    const request = props.commandDraftOpenRequest
+    if (!request || request.terminalId !== props.config.id || commandDraftPending) {
+      return
+    }
+    if (request.id === lastHandledDraftRequestIdRef.current) {
+      return
+    }
+    lastHandledDraftRequestIdRef.current = request.id
+    openCommandDraft(request.placement)
+    props.onCommandDraftOpenRequestHandled?.(request.id, request.terminalId)
+  }, [
+    commandDraftPending,
+    openCommandDraft,
+    props.commandDraftOpenRequest,
+    props.config.id,
+    props.onCommandDraftOpenRequestHandled
+  ])
 
   useEffect(() => {
     const hostEl = hostRef.current
@@ -616,6 +808,35 @@ export function XTermView(props: {
       releaseRuntime(props.config.id)
     }
   }, [props.config.id])
+
+  useEffect(() => {
+    const hostEl = hostRef.current
+    if (!hostEl || !resolvedCommandDraftShortcut) return
+
+    const handleMouseMove = (event: MouseEvent) => {
+      lastPointerRef.current = { x: event.clientX, y: event.clientY }
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!props.isActive || commandDraftPending) {
+        return
+      }
+      if (event.repeat || !matchesCommandDraftShortcut(event, resolvedCommandDraftShortcut)) {
+        return
+      }
+      event.preventDefault()
+      event.stopPropagation()
+      openCommandDraft('pointer')
+    }
+
+    hostEl.addEventListener('mousemove', handleMouseMove, true)
+    hostEl.addEventListener('keydown', handleKeyDown, true)
+
+    return () => {
+      hostEl.removeEventListener('mousemove', handleMouseMove, true)
+      hostEl.removeEventListener('keydown', handleKeyDown, true)
+    }
+  }, [commandDraftPending, openCommandDraft, props.isActive, resolvedCommandDraftShortcut])
 
   useEffect(() => {
     const runtime = runtimeRef.current
@@ -723,5 +944,55 @@ export function XTermView(props: {
     })
   }, [props.isActive, props.layoutSignature, props.config.id])
 
-  return <div className="xterm-host" ref={hostRef} />
+  return (
+    <>
+      <div className="xterm-shell">
+        <div className="xterm-host" ref={hostRef} />
+        {commandDraftPending || commandDraftFailed ? (
+          <div
+            className={commandDraftFailed ? 'xterm-command-draft-status is-error' : 'xterm-command-draft-status'}
+            aria-hidden="true"
+          >
+            <span className="xterm-command-draft-status-frame">
+              {commandDraftPending ? `[${COMMAND_DRAFT_SPINNER_FRAMES[commandDraftSpinnerFrame]}]` : '[x]'}
+            </span>
+            <span className="xterm-command-draft-status-text">
+              {commandDraftPending
+                ? props.commandDraftLabels?.pending || 'drafting command'
+                : props.commandDraftLabels?.failed || 'draft failed'}
+            </span>
+          </div>
+        ) : null}
+      </div>
+      <TerminalCommandDraft
+        open={commandDraftOpen}
+        value={commandDraftInput}
+        position={commandDraftPosition}
+        profileId={props.commandDraftProfileId || ''}
+        profileOptions={props.commandDraftProfileOptions || []}
+        labels={
+          props.commandDraftLabels || {
+            title: 'Command Draft',
+            placeholder: 'Describe what command you want to generate for this terminal tab.',
+            send: 'Generate',
+            shortcutHint: 'Open with Cmd/Ctrl+O',
+            pending: 'drafting command',
+            failed: 'draft failed',
+            noProfile: 'no profile'
+          }
+        }
+        onChange={setCommandDraftInput}
+        onProfileChange={(profileId) => {
+          props.onCommandDraftProfileChange?.(profileId)
+        }}
+        onSubmit={() => {
+          void submitCommandDraft()
+        }}
+        onCancel={() => {
+          if (commandDraftPending) return
+          setCommandDraftOpen(false)
+        }}
+      />
+    </>
+  )
 }
