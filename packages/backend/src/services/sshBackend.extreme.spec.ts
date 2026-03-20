@@ -32,6 +32,25 @@ const createSession = () =>
   }) as any
 
 const run = async (): Promise<void> => {
+  await runCase('windows init script emits the OSC marker via Write-Host instead of the prompt return value', async () => {
+    const backend = new SSHBackend()
+    const encoded = (backend as any).buildWindowsPowerShellEncodedCommand() as string
+    const decoded = Buffer.from(encoded, 'base64').toString('utf16le')
+
+    assertCondition(
+      decoded.includes('Write-Host -NoNewline "$([char]27)]1337;gyshell_precmd;ec=$ec;cwd_b64=$cwd_b64;home_b64=$home_b64$([char]7)"'),
+      'windows init script should emit the precmd marker directly via Write-Host'
+    )
+    assertCondition(
+      decoded.includes('return "PS $($PWD.Path)> "'),
+      'windows init script should keep the visible prompt text separate from the OSC marker'
+    )
+    assertCondition(
+      !decoded.includes('return "$oscPS $($PWD.Path)> "'),
+      'windows init script should not smuggle the OSC marker through the prompt return value'
+    )
+  })
+
   await runCase('getSystemInfo schedules a backend retry when remote os is not ready yet', async () => {
     const backend = new SSHBackend()
     const session = createSession()
