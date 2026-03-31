@@ -72,6 +72,9 @@ GyShell is built for **persistent execution in your real terminal runtime**:
 - **Seamless Agent chat mode**
   - group consecutive commands, tool calls, file edits, and sub-tools into one compact activity banner
   - float approvals and alerts above the input area to reduce transcript clutter
+- **Unified panel search**
+  - use `Ctrl/Cmd+F` in terminal, current chat, file browser, and file editor
+  - jump between matches with one consistent find bar
 - **File browser sorting and filtering**
   - sort by name, modified time, size, or type directly in the file panel
   - show or hide dotfiles without leaving the current directory
@@ -103,15 +106,17 @@ GyShell is built for **persistent execution in your real terminal runtime**:
 - Port forwarding: local, remote, and dynamic SOCKS.
 - Agent can coordinate **multiple SSH/local terminal tabs** in parallel during one task.
 - Control-character operations for interactive terminal apps.
+- Search within the active terminal buffer without leaving the panel.
 - Terminal tab restoration after backend restart, plus lossless output catch-up for renderer remount/reconnect within the same backend runtime.
-- **Integrated file browser panel**: browse, create, rename, delete, preview, sort, and filter files across local and SSH sessions.
+- **Integrated file browser panel**: browse, create, rename, delete, preview, sort, filter, and search files across local and SSH sessions.
 - **Cross-session file transfer** (copy/move) with real-time progress, cancellation, and adaptive SFTP tuning.
-- **Built-in text editor panel** for editing, refreshing, and saving files directly in the workspace.
+- **Built-in text editor panel** for editing, refreshing, searching, and saving files directly in the workspace.
 
 ### Workspace + Monitoring
 
 - Detach panels into dedicated sub-windows and move tabs or whole panels across windows.
 - Choose `Auto`, `Expanded`, or `Select` panel tab display modes based on how much header space your workspace has.
+- `Ctrl/Cmd+F` opens a panel-local find bar in terminal, current chat, file browser, and file editor.
 - Open a resource monitor panel for local and SSH terminals from the workspace rail.
 - Monitor panel surfaces CPU, memory, disk, network, process, socket, and GPU telemetry when available.
 - Monitor collection is shared across tabs that point at the same local or SSH target, with failover if the original source tab exits.
