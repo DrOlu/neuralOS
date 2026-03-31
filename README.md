@@ -69,6 +69,9 @@ GyShell is built for **persistent execution in your real terminal runtime**:
 - **Dedicated Compaction Model**
   - assign a separate model for long-context history summarization inside each profile
   - keep live chat, action, and deep-thinking models focused on the current task
+- **Terminal command draft**
+  - open a draft box inside the current terminal tab with a configurable shortcut
+  - generate a paste-ready shell command from recent terminal context instead of starting from scratch
 - **Seamless Agent chat mode**
   - group consecutive commands, tool calls, file edits, and sub-tools into one compact activity banner
   - float approvals and alerts above the input area to reduce transcript clutter
@@ -94,6 +97,7 @@ GyShell is built for **persistent execution in your real terminal runtime**:
 - Context-aware responses from terminal state and selected resources.
 - Per-profile model routing for `Global`, `Thinking`, `Action`, and `Compaction` roles.
 - Long-session context quality with dedicated compaction models and dynamic compaction summaries.
+- AI-assisted terminal command drafting from recent tab context, with paste-before-run control.
 - Classic or Seamless chat activity display, depending on how much inline tool detail you want.
 - Persistent global memory injection via `memory.md`.
 - Multimodal user input pipeline (text + images) for compatible models.
@@ -106,6 +110,7 @@ GyShell is built for **persistent execution in your real terminal runtime**:
 - Port forwarding: local, remote, and dynamic SOCKS.
 - Agent can coordinate **multiple SSH/local terminal tabs** in parallel during one task.
 - Control-character operations for interactive terminal apps.
+- Draft a command for the current terminal tab from recent visible output, then paste it back without auto-running it.
 - Search within the active terminal buffer without leaving the panel.
 - Terminal tab restoration after backend restart, plus lossless output catch-up for renderer remount/reconnect within the same backend runtime.
 - **Integrated file browser panel**: browse, create, rename, delete, preview, sort, filter, and search files across local and SSH sessions.
