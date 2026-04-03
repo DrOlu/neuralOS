@@ -18,6 +18,11 @@ import {
   type TerminalCommandDraftLabels,
 } from "./TerminalCommandDraft";
 import {
+  getOrCreateTerminalSearchHandle,
+  type TerminalSearchResultsChangeHandler,
+  type XTermSearchHandle,
+} from "./terminalSearchHandle";
+import {
   getDefaultCommandDraftShortcut,
   matchesCommandDraftShortcut,
 } from "../../lib/commandDraftShortcut";
@@ -77,13 +82,6 @@ type TerminalSettings = {
   rightClickToPaste?: boolean;
   commandDraftShortcut?: string;
 };
-
-export interface XTermSearchHandle {
-  setSearchQuery: (query: string) => void;
-  findNext: (query: string) => void;
-  findPrevious: (query: string) => void;
-  clearSearch: () => void;
-}
 
 interface XTermViewProps {
   config: TerminalConfig;
@@ -655,6 +653,12 @@ export const XTermView = React.forwardRef<XTermSearchHandle, XTermViewProps>(
   function XTermView(props, ref): React.ReactElement {
     const hostRef = useRef<HTMLDivElement>(null);
     const runtimeRef = useRef<TerminalRuntime | null>(null);
+    const searchHandleRef = useRef<XTermSearchHandle | null>(null);
+    const onSearchResultsChangeRef = useRef<
+      TerminalSearchResultsChangeHandler | undefined
+    >(
+      props.onSearchResultsChange,
+    );
     const aliveRef = useRef(true);
     const isActiveRef = useRef(props.isActive !== false);
     const commandDraftFailureTimerRef = useRef<number | null>(null);
@@ -675,57 +679,14 @@ export const XTermView = React.forwardRef<XTermSearchHandle, XTermViewProps>(
 
     useImperativeHandle(
       ref,
-      () => ({
-        setSearchQuery: (query: string) => {
-          const runtime = runtimeRef.current;
-          const normalizedQuery = String(query || "").trim();
-          if (!runtime) {
-            return;
-          }
-          if (!normalizedQuery) {
-            runtime.searchAddon.clearDecorations();
-            runtime.term.clearSelection();
-            props.onSearchResultsChange?.({ resultCount: 0, resultIndex: -1 });
-            return;
-          }
-          runtime.searchAddon.findNext(
-            normalizedQuery,
-            TERMINAL_SEARCH_OPTIONS,
-          );
-        },
-        findNext: (query: string) => {
-          const runtime = runtimeRef.current;
-          const normalizedQuery = String(query || "").trim();
-          if (!runtime || !normalizedQuery) {
-            return;
-          }
-          runtime.searchAddon.findNext(
-            normalizedQuery,
-            TERMINAL_SEARCH_OPTIONS,
-          );
-        },
-        findPrevious: (query: string) => {
-          const runtime = runtimeRef.current;
-          const normalizedQuery = String(query || "").trim();
-          if (!runtime || !normalizedQuery) {
-            return;
-          }
-          runtime.searchAddon.findPrevious(
-            normalizedQuery,
-            TERMINAL_SEARCH_OPTIONS,
-          );
-        },
-        clearSearch: () => {
-          const runtime = runtimeRef.current;
-          if (!runtime) {
-            return;
-          }
-          runtime.searchAddon.clearDecorations();
-          runtime.term.clearSelection();
-          props.onSearchResultsChange?.({ resultCount: 0, resultIndex: -1 });
-        },
-      }),
-      [props],
+      () =>
+        getOrCreateTerminalSearchHandle(
+          searchHandleRef,
+          runtimeRef,
+          onSearchResultsChangeRef,
+          TERMINAL_SEARCH_OPTIONS,
+        ),
+      [],
     );
 
     useEffect(() => {
@@ -738,6 +699,10 @@ export const XTermView = React.forwardRef<XTermSearchHandle, XTermViewProps>(
         }
       };
     }, []);
+
+    useEffect(() => {
+      onSearchResultsChangeRef.current = props.onSearchResultsChange;
+    }, [props.onSearchResultsChange]);
 
     const resolveDraftPosition = useCallback(
       (
@@ -1053,11 +1018,11 @@ export const XTermView = React.forwardRef<XTermSearchHandle, XTermViewProps>(
 
     useEffect(() => {
       const runtime = runtimeRef.current;
-      if (!runtime || !props.onSearchResultsChange) {
+      if (!runtime) {
         return;
       }
       const disposable = runtime.searchAddon.onDidChangeResults((payload) => {
-        props.onSearchResultsChange?.({
+        onSearchResultsChangeRef.current?.({
           resultCount: payload.resultCount,
           resultIndex: payload.resultIndex,
         });
@@ -1065,7 +1030,7 @@ export const XTermView = React.forwardRef<XTermSearchHandle, XTermViewProps>(
       return () => {
         disposable.dispose();
       };
-    }, [props.config.id, props.onSearchResultsChange]);
+    }, [props.config.id]);
 
     useEffect(() => {
       const runtime = runtimeRef.current;

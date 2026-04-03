@@ -12,7 +12,8 @@ import { observer } from "mobx-react-lite";
 import type { AppStore, TerminalTabModel } from "../../stores/AppStore";
 import "./terminal.scss";
 import { PanelFindBar } from "../Common/PanelFindBar";
-import { XTermView, type XTermSearchHandle } from "./XTermView";
+import { XTermView } from "./XTermView";
+import type { XTermSearchHandle } from "./terminalSearchHandle";
 import { resolveFloatingMenuPlacement } from "../../lib/menuPlacement";
 import {
   getTerminalConnectionIconKind,
@@ -85,9 +86,6 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = observer(
     );
     const activeTab =
       tabs.find((tab) => tab.id === activeTabId) || tabs[0] || null;
-    const activeSearchHandle = activeTab
-      ? terminalViewRefs.current[activeTab.id] || null
-      : null;
     const activeIconKind = activeTab
       ? getTerminalConnectionIconKind(activeTab.config.type)
       : "generic";
@@ -229,6 +227,9 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = observer(
 
     const moveSearchResult = React.useCallback(
       (direction: "next" | "previous") => {
+        const activeSearchHandle = activeTab
+          ? terminalViewRefs.current[activeTab.id] || null
+          : null;
         if (!activeSearchHandle || !normalizedSearchQuery) {
           return;
         }
@@ -238,7 +239,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = observer(
         }
         activeSearchHandle.findNext(normalizedSearchQuery);
       },
-      [activeSearchHandle, normalizedSearchQuery],
+      [activeTab?.id, normalizedSearchQuery],
     );
 
     const handlePanelKeyDownCapture = React.useCallback(
@@ -257,13 +258,16 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = observer(
       if (!findOpen) {
         return;
       }
+      const activeSearchHandle = activeTab
+        ? terminalViewRefs.current[activeTab.id] || null
+        : null;
       if (!activeSearchHandle) {
         setSearchResultCount(0);
         setSearchResultIndex(-1);
         return;
       }
       activeSearchHandle.setSearchQuery(normalizedSearchQuery);
-    }, [activeSearchHandle, findOpen, normalizedSearchQuery]);
+    }, [activeTab?.id, findOpen, normalizedSearchQuery]);
 
     return (
       <div
