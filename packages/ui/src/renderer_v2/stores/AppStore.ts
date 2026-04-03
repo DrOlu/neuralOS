@@ -5,13 +5,13 @@ import {
   observable,
   runInAction,
   toJS,
-} from 'mobx'
-import { v4 as uuidv4 } from 'uuid'
-import type { ITheme } from '@xterm/xterm'
+} from "mobx";
+import { v4 as uuidv4 } from "uuid";
+import type { ITheme } from "@xterm/xterm";
 import {
   DEFAULT_PANEL_TAB_DISPLAY_MODE,
   type PanelTabDisplayModePreference,
-} from '@gyshell/shared'
+} from "@gyshell/shared";
 import type {
   AppSettings,
   TerminalConfig,
@@ -20,28 +20,28 @@ import type {
   MonitorSnapshot,
   ProxyEntry,
   TunnelEntry,
-} from '../lib/ipcTypes'
-import { applyAppThemeFromTerminalScheme } from '../theme/appTheme'
-import { resolveTheme } from '../theme/themes'
-import { toXtermTheme } from '../theme/xtermTheme'
-import type { TerminalColorScheme } from '../theme/terminalColorSchemes'
-import type { TerminalConnectionCapabilities } from '@gyshell/shared'
+} from "../lib/ipcTypes";
+import { applyAppThemeFromTerminalScheme } from "../theme/appTheme";
+import { resolveTheme } from "../theme/themes";
+import { toXtermTheme } from "../theme/xtermTheme";
+import type { TerminalColorScheme } from "../theme/terminalColorSchemes";
+import type { TerminalConnectionCapabilities } from "@gyshell/shared";
 import {
   createImagePreviewDataUrl,
   readFileAsDataUrl,
   type InputImageAttachment,
   type UserInputPayload,
-} from '../lib/userInput'
-import { I18nStore } from './I18nStore'
-import { ChatStore } from './ChatStore'
-import { LayoutStore } from './LayoutStore'
-import { FileEditorStore } from './FileEditorStore'
+} from "../lib/userInput";
+import { I18nStore } from "./I18nStore";
+import { ChatStore } from "./ChatStore";
+import { LayoutStore } from "./LayoutStore";
+import { FileEditorStore } from "./FileEditorStore";
 import {
   buildLayoutTree,
   listPanels,
   type LayoutTree,
   type PanelKind,
-} from '../layout'
+} from "../layout";
 import {
   buildDetachedLayoutTree,
   WINDOW_CONTEXT,
@@ -49,74 +49,77 @@ import {
   readDetachedWindowState,
   type DetachedWindowState,
   type WindowingTerminalTabSnapshot,
-} from '../lib/windowing'
-import type { FileEditorSnapshot } from '../lib/fileEditorSnapshot'
+} from "../lib/windowing";
+import type { FileEditorSnapshot } from "../lib/fileEditorSnapshot";
 import {
   resolveTerminalConnectionCapabilities,
   type TerminalConnectionRef,
-} from '../lib/terminalConnectionModel'
+} from "../lib/terminalConnectionModel";
 
 const upsertById = <T extends { id: string }>(list: T[], entry: T): T[] => {
-  const idx = list.findIndex((x) => x.id === entry.id)
-  if (idx === -1) return [...list, entry]
-  const next = list.slice()
-  next[idx] = entry
-  return next
-}
+  const idx = list.findIndex((x) => x.id === entry.id);
+  if (idx === -1) return [...list, entry];
+  const next = list.slice();
+  next[idx] = entry;
+  return next;
+};
 
 const removeById = <T extends { id: string }>(list: T[], id: string): T[] =>
-  list.filter((x) => x.id !== id)
+  list.filter((x) => x.id !== id);
 
-type WindowScopedTabKind = 'chat' | 'terminal' | 'filesystem' | 'monitor';
-const MONITOR_HISTORY_LIMIT = 64
-const MONITOR_POLL_INTERVAL_MS = 3500
+type WindowScopedTabKind = "chat" | "terminal" | "filesystem" | "monitor";
+const MONITOR_HISTORY_LIMIT = 64;
+const MONITOR_POLL_INTERVAL_MS = 3500;
 
 const resolveSuppressionKinds = (kind: PanelKind): WindowScopedTabKind[] =>
-  kind === 'chat'
-    ? ['chat']
-    : kind === 'terminal'
-      ? ['terminal']
-      : kind === 'filesystem'
-        ? ['filesystem']
-        : kind === 'monitor'
-          ? ['monitor']
-          : []
+  kind === "chat"
+    ? ["chat"]
+    : kind === "terminal"
+      ? ["terminal"]
+      : kind === "filesystem"
+        ? ["filesystem"]
+        : kind === "monitor"
+          ? ["monitor"]
+          : [];
 
-export type AppView = 'main' | 'settings' | 'connections';
+export type AppView = "main" | "settings" | "connections";
 export type SettingsSection =
-  | 'general'
-  | 'theme'
-  | 'models'
-  | 'security'
-  | 'tools'
-  | 'skills'
-  | 'memory'
-  | 'accessTokens'
-  | 'version';
+  | "general"
+  | "theme"
+  | "models"
+  | "security"
+  | "tools"
+  | "skills"
+  | "memory"
+  | "accessTokens"
+  | "version";
 
 export type McpToolSummary = Awaited<
-  ReturnType<Window['gyshell']['tools']['getMcp']>
+  ReturnType<Window["gyshell"]["tools"]["getMcp"]>
 >[number];
 export type BuiltInToolSummary = Awaited<
-  ReturnType<Window['gyshell']['tools']['getBuiltIn']>
+  ReturnType<Window["gyshell"]["tools"]["getBuiltIn"]>
 >[number];
 export type SkillSummary = Awaited<
-  ReturnType<Window['gyshell']['skills']['getAll']>
+  ReturnType<Window["gyshell"]["skills"]["getAll"]>
 >[number];
 export type SkillStatusSummary = Awaited<
-  ReturnType<Window['gyshell']['skills']['setEnabled']>
+  ReturnType<Window["gyshell"]["skills"]["setEnabled"]>
 >[number];
 export type MemorySnapshot = Awaited<
-  ReturnType<Window['gyshell']['memory']['get']>
+  ReturnType<Window["gyshell"]["memory"]["get"]>
 >;
 export type AccessTokenSummary = Awaited<
-  ReturnType<Window['gyshell']['accessTokens']['list']>
+  ReturnType<Window["gyshell"]["accessTokens"]["list"]>
 >[number];
 export type CommandPolicyLists = Awaited<
-  ReturnType<Window['gyshell']['settings']['getCommandPolicyLists']>
+  ReturnType<Window["gyshell"]["settings"]["getCommandPolicyLists"]>
 >;
 export type VersionCheckResult = Awaited<
-  ReturnType<Window['gyshell']['version']['check']>
+  ReturnType<Window["gyshell"]["version"]["check"]>
+>;
+export type HistoryMigrationSnapshot = Awaited<
+  ReturnType<Window["gyshell"]["historyMigration"]["getState"]>
 >;
 
 export interface TerminalTabModel {
@@ -125,17 +128,17 @@ export interface TerminalTabModel {
   config: TerminalConfig;
   capabilities: TerminalConnectionCapabilities;
   connectionRef?: TerminalConnectionRef;
-  runtimeState?: 'initializing' | 'ready' | 'exited';
+  runtimeState?: "initializing" | "ready" | "exited";
   lastExitCode?: number;
-  remoteOs?: TerminalListEntry['remoteOs'];
-  systemInfo?: TerminalListEntry['systemInfo'];
+  remoteOs?: TerminalListEntry["remoteOs"];
+  systemInfo?: TerminalListEntry["systemInfo"];
 }
 type TerminalListPayload = Awaited<
-  ReturnType<Window['gyshell']['terminal']['list']>
+  ReturnType<Window["gyshell"]["terminal"]["list"]>
 >;
-type TerminalListEntry = TerminalListPayload['terminals'][number];
+type TerminalListEntry = TerminalListPayload["terminals"][number];
 
-export type FileSystemClipboardMode = 'copy' | 'move';
+export type FileSystemClipboardMode = "copy" | "move";
 
 export interface FileSystemClipboardState {
   mode: FileSystemClipboardMode;
@@ -150,36 +153,37 @@ const cloneFileSystemClipboardState = (
   payload: FileSystemClipboardState | null,
 ): FileSystemClipboardState | null => {
   if (!payload) {
-    return null
+    return null;
   }
   return {
-    mode: payload.mode === 'move' ? 'move' : 'copy',
-    sourceTerminalId: String(payload.sourceTerminalId || ''),
+    mode: payload.mode === "move" ? "move" : "copy",
+    sourceTerminalId: String(payload.sourceTerminalId || ""),
     sourcePaths: Array.isArray(payload.sourcePaths)
       ? payload.sourcePaths
-          .map((path) => String(path || ''))
+          .map((path) => String(path || ""))
           .filter((path) => path.length > 0)
       : [],
     itemNames: Array.isArray(payload.itemNames)
-      ? payload.itemNames.map((name) => String(name || ''))
+      ? payload.itemNames.map((name) => String(name || ""))
       : [],
     sourceBasePath:
-      typeof payload.sourceBasePath === 'string' && payload.sourceBasePath.length > 0
+      typeof payload.sourceBasePath === "string" &&
+      payload.sourceBasePath.length > 0
         ? payload.sourceBasePath
-        : '.',
+        : ".",
     createdAt: Number.isFinite(payload.createdAt)
       ? Number(payload.createdAt)
       : Date.now(),
-  }
-}
+  };
+};
 
 export interface MonitorTerminalState {
-  snapshot: MonitorSnapshot | null
-  lastError: string | null
-  cpuHistory: number[]
-  memoryHistory: number[]
-  rxHistory: number[]
-  txHistory: number[]
+  snapshot: MonitorSnapshot | null;
+  lastError: string | null;
+  cpuHistory: number[];
+  memoryHistory: number[];
+  rxHistory: number[];
+  txHistory: number[];
 }
 
 const createMonitorTerminalState = (): MonitorTerminalState => ({
@@ -189,73 +193,79 @@ const createMonitorTerminalState = (): MonitorTerminalState => ({
   memoryHistory: [],
   rxHistory: [],
   txHistory: [],
-})
+});
 
-const appendMonitorHistoryValue = (history: number[], value: number): number[] => {
+const appendMonitorHistoryValue = (
+  history: number[],
+  value: number,
+): number[] => {
   if (!Number.isFinite(value)) {
-    return history
+    return history;
   }
-  const next = [...history, value]
-  return next.length > MONITOR_HISTORY_LIMIT ? next.slice(-MONITOR_HISTORY_LIMIT) : next
-}
+  const next = [...history, value];
+  return next.length > MONITOR_HISTORY_LIMIT
+    ? next.slice(-MONITOR_HISTORY_LIMIT)
+    : next;
+};
 
 export class AppStore {
-  readonly windowRole = WINDOW_CONTEXT.role
-  readonly windowClientId = WINDOW_CONTEXT.clientId
-  readonly detachedSourceClientId = WINDOW_CONTEXT.sourceClientId
+  readonly windowRole = WINDOW_CONTEXT.role;
+  readonly windowClientId = WINDOW_CONTEXT.clientId;
+  readonly detachedSourceClientId = WINDOW_CONTEXT.sourceClientId;
 
-  view: AppView = 'main'
-  settings: AppSettings | null = null
-  isBootstrapped = false
-  settingsSection: SettingsSection = 'general'
+  view: AppView = "main";
+  settings: AppSettings | null = null;
+  isBootstrapped = false;
+  settingsSection: SettingsSection = "general";
 
-  terminalTabs: TerminalTabModel[] = []
-  terminalTabsHydrated = false
-  activeTerminalId: string | null = null
-  monitorStateByTerminalId: Record<string, MonitorTerminalState> = {}
-  terminalSelections: Record<string, string> = {}
-  fileSystemClipboard: FileSystemClipboardState | null = null
+  terminalTabs: TerminalTabModel[] = [];
+  terminalTabsHydrated = false;
+  activeTerminalId: string | null = null;
+  monitorStateByTerminalId: Record<string, MonitorTerminalState> = {};
+  terminalSelections: Record<string, string> = {};
+  fileSystemClipboard: FileSystemClipboardState | null = null;
 
-  xtermTheme: ITheme = {}
-  customThemes: TerminalColorScheme[] = []
-  i18n = new I18nStore()
-  chat = new ChatStore()
-  fileEditor = new FileEditorStore(this)
-  layout = new LayoutStore(this)
-  mcpTools: McpToolSummary[] = []
-  builtInTools: BuiltInToolSummary[] = []
-  skills: SkillSummary[] = []
-  memoryFilePath = ''
-  memoryContent = ''
-  accessTokens: AccessTokenSummary[] = []
+  xtermTheme: ITheme = {};
+  customThemes: TerminalColorScheme[] = [];
+  i18n = new I18nStore();
+  chat = new ChatStore();
+  fileEditor = new FileEditorStore(this);
+  layout = new LayoutStore(this);
+  mcpTools: McpToolSummary[] = [];
+  builtInTools: BuiltInToolSummary[] = [];
+  skills: SkillSummary[] = [];
+  memoryFilePath = "";
+  memoryContent = "";
+  accessTokens: AccessTokenSummary[] = [];
   commandPolicyLists: CommandPolicyLists = {
     allowlist: [],
     denylist: [],
     asklist: [],
-  }
-  versionInfo: VersionCheckResult | null = null
-  versionCheckInProgress = false
-  showVersionUpdateDialog = false
+  };
+  versionInfo: VersionCheckResult | null = null;
+  versionCheckInProgress = false;
+  showVersionUpdateDialog = false;
+  historyMigrationState: HistoryMigrationSnapshot | null = null;
   mobileWebStatus: { running: boolean; port?: number; urls?: string[] } = {
     running: false,
-  }
+  };
   private detachedVisibleTabIdsByKind: Record<
-    'chat' | 'terminal' | 'filesystem' | 'monitor',
+    "chat" | "terminal" | "filesystem" | "monitor",
     Set<string>
-  > | null = null
-  private lastKnownChatSessionIds = new Set<string>()
+  > | null = null;
+  private lastKnownChatSessionIds = new Set<string>();
   private suppressedTabIdsByKind: Record<
-    'chat' | 'terminal' | 'filesystem' | 'monitor',
+    "chat" | "terminal" | "filesystem" | "monitor",
     Set<string>
   > = {
     chat: new Set<string>(),
     terminal: new Set<string>(),
     filesystem: new Set<string>(),
     monitor: new Set<string>(),
-  }
-  private monitorRetainedTabIds = new Set<string>()
-  private monitorSubscribedTabIds = new Set<string>()
-  private monitorSnapshotUnsubscribe: (() => void) | null = null
+  };
+  private monitorRetainedTabIds = new Set<string>();
+  private monitorSubscribedTabIds = new Set<string>();
+  private monitorSnapshotUnsubscribe: (() => void) | null = null;
 
   constructor() {
     makeObservable(this, {
@@ -285,6 +295,7 @@ export class AppStore {
       versionInfo: observable,
       versionCheckInProgress: observable,
       showVersionUpdateDialog: observable,
+      historyMigrationState: observable.ref,
       isDetachedWindow: computed,
       isSettings: computed,
       isConnections: computed,
@@ -383,222 +394,258 @@ export class AppStore {
       closeVersionUpdateDialog: action,
       openVersionDownload: action,
       reconcileTerminalTabs: action,
-    })
+    });
     this.chat.setQueueRunner((sessionId, input) =>
-      this.sendChatMessage(sessionId, input, { mode: 'queue' }),
-    )
+      this.sendChatMessage(sessionId, input, { mode: "queue" }),
+    );
     this.chat.setSessionsChangedListener((sessionIds) =>
       this.handleChatSessionsChanged(sessionIds),
-    )
+    );
     this.lastKnownChatSessionIds = new Set(
       this.chat.sessions.map((session) => session.id),
-    )
+    );
   }
 
   getMonitorTerminalState(terminalId: string): MonitorTerminalState | null {
-    return this.monitorStateByTerminalId[terminalId] || null
+    return this.monitorStateByTerminalId[terminalId] || null;
   }
 
   private getAssignedMonitorTabIds(): string[] {
-    const availableMonitorIds = new Set(this.monitorTabs.map((tab) => tab.id))
-    const suppressedMonitorIds = this.suppressedTabIdsByKind.monitor
-    return (this.collectAssignedTabsByKind().monitor || []).filter((terminalId) =>
-      availableMonitorIds.has(terminalId) && !suppressedMonitorIds.has(terminalId)
-    )
+    const availableMonitorIds = new Set(this.monitorTabs.map((tab) => tab.id));
+    const suppressedMonitorIds = this.suppressedTabIdsByKind.monitor;
+    return (this.collectAssignedTabsByKind().monitor || []).filter(
+      (terminalId) =>
+        availableMonitorIds.has(terminalId) &&
+        !suppressedMonitorIds.has(terminalId),
+    );
   }
 
   private ensureMonitorListener(): void {
-    if (this.monitorSnapshotUnsubscribe || typeof window === 'undefined' || !window.gyshell?.monitor) {
-      return
+    if (
+      this.monitorSnapshotUnsubscribe ||
+      typeof window === "undefined" ||
+      !window.gyshell?.monitor
+    ) {
+      return;
     }
-    this.monitorSnapshotUnsubscribe = window.gyshell.monitor.onSnapshot((snapshot: MonitorSnapshot) => {
-      runInAction(() => {
-        this.applyMonitorSnapshot(snapshot)
-      })
-    })
+    this.monitorSnapshotUnsubscribe = window.gyshell.monitor.onSnapshot(
+      (snapshot: MonitorSnapshot) => {
+        runInAction(() => {
+          this.applyMonitorSnapshot(snapshot);
+        });
+      },
+    );
   }
 
   private syncMonitorSnapshotSubscriptions(): void {
-    if (!this.isBootstrapped || typeof window === 'undefined' || !window.gyshell?.monitor) {
-      return
+    if (
+      !this.isBootstrapped ||
+      typeof window === "undefined" ||
+      !window.gyshell?.monitor
+    ) {
+      return;
     }
 
-    const desiredSubscriptionIds = new Set(this.getAssignedMonitorTabIds())
+    const desiredSubscriptionIds = new Set(this.getAssignedMonitorTabIds());
 
-    const nextMonitorState = { ...this.monitorStateByTerminalId }
-    let stateChanged = false
+    const nextMonitorState = { ...this.monitorStateByTerminalId };
+    let stateChanged = false;
     Object.keys(nextMonitorState).forEach((terminalId) => {
       if (desiredSubscriptionIds.has(terminalId)) {
-        return
+        return;
       }
-      delete nextMonitorState[terminalId]
-      stateChanged = true
-    })
+      delete nextMonitorState[terminalId];
+      stateChanged = true;
+    });
     if (stateChanged) {
-      this.monitorStateByTerminalId = nextMonitorState
+      this.monitorStateByTerminalId = nextMonitorState;
     }
 
     Array.from(this.monitorSubscribedTabIds).forEach((terminalId) => {
       if (desiredSubscriptionIds.has(terminalId)) {
-        return
+        return;
       }
-      this.monitorSubscribedTabIds.delete(terminalId)
+      this.monitorSubscribedTabIds.delete(terminalId);
       void window.gyshell.monitor.unsubscribe(terminalId).catch(() => {
         // Ignore unsubscribe failures; window-scoped delivery is best-effort.
-      })
-    })
+      });
+    });
 
     desiredSubscriptionIds.forEach((terminalId) => {
       if (this.monitorSubscribedTabIds.has(terminalId)) {
-        return
+        return;
       }
-      this.monitorSubscribedTabIds.add(terminalId)
+      this.monitorSubscribedTabIds.add(terminalId);
       void window.gyshell.monitor.subscribe(terminalId).catch(() => {
-        this.monitorSubscribedTabIds.delete(terminalId)
-      })
-    })
+        this.monitorSubscribedTabIds.delete(terminalId);
+      });
+    });
   }
 
   private syncMonitorSessions(): void {
-    if (!this.isBootstrapped || typeof window === 'undefined' || !window.gyshell?.monitor) {
-      return
+    if (
+      !this.isBootstrapped ||
+      typeof window === "undefined" ||
+      !window.gyshell?.monitor
+    ) {
+      return;
     }
 
-    this.syncMonitorSnapshotSubscriptions()
+    this.syncMonitorSnapshotSubscriptions();
 
     const desiredMonitorIds = new Set(
       this.getAssignedMonitorTabIds().filter((terminalId) => {
-        const tab = this.terminalTabs.find((entry) => entry.id === terminalId)
-        return tab?.runtimeState === 'ready'
-      })
-    )
+        const tab = this.terminalTabs.find((entry) => entry.id === terminalId);
+        return tab?.runtimeState === "ready";
+      }),
+    );
 
     Array.from(this.monitorRetainedTabIds).forEach((terminalId) => {
       if (desiredMonitorIds.has(terminalId)) {
-        return
+        return;
       }
-      this.monitorRetainedTabIds.delete(terminalId)
+      this.monitorRetainedTabIds.delete(terminalId);
       void window.gyshell.monitor.stop(terminalId).catch(() => {
         // Ignore stop failures; the backend session is best-effort.
-      })
-    })
+      });
+    });
 
     desiredMonitorIds.forEach((terminalId) => {
       if (this.monitorRetainedTabIds.has(terminalId)) {
-        return
+        return;
       }
-      this.monitorRetainedTabIds.add(terminalId)
+      this.monitorRetainedTabIds.add(terminalId);
       void window.gyshell.monitor
         .start(terminalId, MONITOR_POLL_INTERVAL_MS)
         .catch(() => {
-          this.monitorRetainedTabIds.delete(terminalId)
-        })
-    })
+          this.monitorRetainedTabIds.delete(terminalId);
+        });
+    });
   }
 
   private applyMonitorSnapshot(snapshot: MonitorSnapshot): void {
-    const terminalId = String(snapshot?.terminalId || '').trim()
+    const terminalId = String(snapshot?.terminalId || "").trim();
     if (!terminalId) {
-      return
+      return;
     }
     if (!this.monitorSubscribedTabIds.has(terminalId)) {
-      return
+      return;
     }
 
-    const currentState = this.monitorStateByTerminalId[terminalId] || createMonitorTerminalState()
+    const currentState =
+      this.monitorStateByTerminalId[terminalId] || createMonitorTerminalState();
     const nextState: MonitorTerminalState = {
       ...currentState,
       lastError: snapshot.error || null,
-    }
+    };
 
     if (!snapshot.error) {
-      nextState.snapshot = snapshot
-      if (typeof snapshot.cpu?.usagePercent === 'number') {
-        nextState.cpuHistory = appendMonitorHistoryValue(nextState.cpuHistory, snapshot.cpu.usagePercent)
+      nextState.snapshot = snapshot;
+      if (typeof snapshot.cpu?.usagePercent === "number") {
+        nextState.cpuHistory = appendMonitorHistoryValue(
+          nextState.cpuHistory,
+          snapshot.cpu.usagePercent,
+        );
       }
-      if (typeof snapshot.memory?.usagePercent === 'number') {
-        nextState.memoryHistory = appendMonitorHistoryValue(nextState.memoryHistory, snapshot.memory.usagePercent)
+      if (typeof snapshot.memory?.usagePercent === "number") {
+        nextState.memoryHistory = appendMonitorHistoryValue(
+          nextState.memoryHistory,
+          snapshot.memory.usagePercent,
+        );
       }
       if (snapshot.network && snapshot.network.length > 0) {
         const totals = snapshot.network.reduce(
-          (acc: { rx: number; tx: number }, entry: NonNullable<MonitorSnapshot['network']>[number]) => {
-            acc.rx += Number.isFinite(entry.rxBytesPerSec) ? entry.rxBytesPerSec : 0
-            acc.tx += Number.isFinite(entry.txBytesPerSec) ? entry.txBytesPerSec : 0
-            return acc
+          (
+            acc: { rx: number; tx: number },
+            entry: NonNullable<MonitorSnapshot["network"]>[number],
+          ) => {
+            acc.rx += Number.isFinite(entry.rxBytesPerSec)
+              ? entry.rxBytesPerSec
+              : 0;
+            acc.tx += Number.isFinite(entry.txBytesPerSec)
+              ? entry.txBytesPerSec
+              : 0;
+            return acc;
           },
-          { rx: 0, tx: 0 }
-        )
-        nextState.rxHistory = appendMonitorHistoryValue(nextState.rxHistory, totals.rx)
-        nextState.txHistory = appendMonitorHistoryValue(nextState.txHistory, totals.tx)
+          { rx: 0, tx: 0 },
+        );
+        nextState.rxHistory = appendMonitorHistoryValue(
+          nextState.rxHistory,
+          totals.rx,
+        );
+        nextState.txHistory = appendMonitorHistoryValue(
+          nextState.txHistory,
+          totals.tx,
+        );
       }
     }
 
     this.monitorStateByTerminalId = {
       ...this.monitorStateByTerminalId,
       [terminalId]: nextState,
-    }
+    };
   }
 
   getUniqueTitle(baseTitle: string): string {
-    const existingTitles = this.terminalTabs.map((t) => t.title)
+    const existingTitles = this.terminalTabs.map((t) => t.title);
     if (!existingTitles.includes(baseTitle)) {
-      return baseTitle
+      return baseTitle;
     }
 
-    let counter = 1
-    let newTitle = `${baseTitle} (${counter})`
+    let counter = 1;
+    let newTitle = `${baseTitle} (${counter})`;
     while (existingTitles.includes(newTitle)) {
-      counter++
-      newTitle = `${baseTitle} (${counter})`
+      counter++;
+      newTitle = `${baseTitle} (${counter})`;
     }
-    return newTitle
+    return newTitle;
   }
 
   get isDetachedWindow(): boolean {
-    return this.windowRole === 'detached'
+    return this.windowRole === "detached";
   }
 
   shouldPersistLayout(): boolean {
-    return !this.isDetachedWindow
+    return !this.isDetachedWindow;
   }
 
   private getTerminalTabById(tabId: string): TerminalTabModel | null {
-    return this.terminalTabs.find((tab) => tab.id === tabId) ?? null
+    return this.terminalTabs.find((tab) => tab.id === tabId) ?? null;
   }
 
   private supportsFilesystemForTabId(tabId: string): boolean {
-    const terminalTab = this.getTerminalTabById(tabId)
+    const terminalTab = this.getTerminalTabById(tabId);
     if (!terminalTab) {
-      return false
+      return false;
     }
-    return terminalTab.capabilities.supportsFilesystem
+    return terminalTab.capabilities.supportsFilesystem;
   }
 
   private getVisibilityLinkedKindsForTab(
     kind: PanelKind,
     tabId: string,
   ): WindowScopedTabKind[] {
-    if (kind === 'chat') {
-      return ['chat']
+    if (kind === "chat") {
+      return ["chat"];
     }
-    if (kind === 'filesystem') {
-      return ['terminal', 'filesystem']
+    if (kind === "filesystem") {
+      return ["terminal", "filesystem"];
     }
-    if (kind === 'monitor') {
-      return ['terminal', 'monitor']
+    if (kind === "monitor") {
+      return ["terminal", "monitor"];
     }
-    if (kind !== 'terminal') {
-      return []
+    if (kind !== "terminal") {
+      return [];
     }
-    const linkedKinds: WindowScopedTabKind[] = ['terminal']
+    const linkedKinds: WindowScopedTabKind[] = ["terminal"];
     if (this.supportsFilesystemForTabId(tabId)) {
-      linkedKinds.push('filesystem')
+      linkedKinds.push("filesystem");
     }
-    const tab = this.terminalTabs.find((t) => t.id === tabId)
+    const tab = this.terminalTabs.find((t) => t.id === tabId);
     if (tab?.capabilities.supportsMonitor) {
-      linkedKinds.push('monitor')
+      linkedKinds.push("monitor");
     }
-    return linkedKinds
+    return linkedKinds;
   }
 
   getOwnedTabIds(kind: PanelKind): string[] {
@@ -607,48 +654,48 @@ export class AppStore {
       scopedKind: WindowScopedTabKind,
     ): string[] => {
       if (!this.isDetachedWindow || !this.detachedVisibleTabIdsByKind) {
-        return tabIds
+        return tabIds;
       }
-      const visibleSet = this.detachedVisibleTabIdsByKind[scopedKind]
-      return tabIds.filter((tabId) => visibleSet.has(tabId))
-    }
+      const visibleSet = this.detachedVisibleTabIdsByKind[scopedKind];
+      return tabIds.filter((tabId) => visibleSet.has(tabId));
+    };
 
-    if (kind === 'terminal') {
-      const hidden = this.suppressedTabIdsByKind.terminal
+    if (kind === "terminal") {
+      const hidden = this.suppressedTabIdsByKind.terminal;
       const tabIds = this.terminalTabs
         .map((tab) => tab.id)
-        .filter((id) => !hidden.has(id))
-      return filterByDetachedVisibility(tabIds, 'terminal')
+        .filter((id) => !hidden.has(id));
+      return filterByDetachedVisibility(tabIds, "terminal");
     }
-    if (kind === 'filesystem') {
-      const hidden = this.suppressedTabIdsByKind.filesystem
+    if (kind === "filesystem") {
+      const hidden = this.suppressedTabIdsByKind.filesystem;
       const tabIds = this.fileSystemTabs
         .map((tab) => tab.id)
-        .filter((id) => !hidden.has(id))
-      return filterByDetachedVisibility(tabIds, 'filesystem')
+        .filter((id) => !hidden.has(id));
+      return filterByDetachedVisibility(tabIds, "filesystem");
     }
-    if (kind === 'monitor') {
-      const hidden = this.suppressedTabIdsByKind.monitor
+    if (kind === "monitor") {
+      const hidden = this.suppressedTabIdsByKind.monitor;
       const tabIds = this.monitorTabs
         .map((tab) => tab.id)
-        .filter((id) => !hidden.has(id))
-      return filterByDetachedVisibility(tabIds, 'monitor')
+        .filter((id) => !hidden.has(id));
+      return filterByDetachedVisibility(tabIds, "monitor");
     }
-    if (kind === 'chat') {
-      const hidden = this.suppressedTabIdsByKind.chat
+    if (kind === "chat") {
+      const hidden = this.suppressedTabIdsByKind.chat;
       const tabIds = this.chat.sessions
         .map((session) => session.id)
-        .filter((id) => !hidden.has(id))
-      return filterByDetachedVisibility(tabIds, 'chat')
+        .filter((id) => !hidden.has(id));
+      return filterByDetachedVisibility(tabIds, "chat");
     }
-    return []
+    return [];
   }
 
   private collectDetachedVisibleTabIdsByKind(
     layoutTree: LayoutTree | null | undefined,
   ): Record<WindowScopedTabKind, Set<string>> | null {
     if (!this.isDetachedWindow) {
-      return null
+      return null;
     }
     if (!layoutTree) {
       return {
@@ -656,7 +703,7 @@ export class AppStore {
         terminal: new Set<string>(),
         filesystem: new Set<string>(),
         monitor: new Set<string>(),
-      }
+      };
     }
 
     const sets: Record<WindowScopedTabKind, Set<string>> = {
@@ -664,116 +711,116 @@ export class AppStore {
       terminal: new Set<string>(),
       filesystem: new Set<string>(),
       monitor: new Set<string>(),
-    }
+    };
     const panelKindById = new Map(
       listPanels(layoutTree).map(
         (panel) => [panel.panel.id, panel.panel.kind] as const,
       ),
-    )
+    );
 
     Object.entries(layoutTree.panelTabs || {}).forEach(([panelId, binding]) => {
-      const panelKind = panelKindById.get(panelId)
+      const panelKind = panelKindById.get(panelId);
       if (!panelKind) {
-        return
+        return;
       }
-      const tabIds = Array.isArray(binding?.tabIds) ? binding.tabIds : []
+      const tabIds = Array.isArray(binding?.tabIds) ? binding.tabIds : [];
       tabIds.forEach((tabId) => {
-        const normalized = typeof tabId === 'string' ? tabId.trim() : ''
-        if (!normalized) return
+        const normalized = typeof tabId === "string" ? tabId.trim() : "";
+        if (!normalized) return;
         this.getVisibilityLinkedKindsForTab(panelKind, normalized).forEach(
           (targetKind) => {
-          sets[targetKind].add(normalized)
+            sets[targetKind].add(normalized);
           },
-        )
-      })
-    })
+        );
+      });
+    });
 
-    return sets
+    return sets;
   }
 
   private updateDetachedVisibleTabIds(
     kind: PanelKind,
     tabIds: string[],
-    mode: 'add' | 'delete',
+    mode: "add" | "delete",
   ): boolean {
     if (!this.isDetachedWindow || !this.detachedVisibleTabIdsByKind) {
-      return false
+      return false;
     }
 
     const normalizedIds = tabIds
-      .map((tabId) => String(tabId || '').trim())
-      .filter((tabId) => tabId.length > 0)
+      .map((tabId) => String(tabId || "").trim())
+      .filter((tabId) => tabId.length > 0);
     if (normalizedIds.length === 0) {
-      return false
+      return false;
     }
 
-    let changed = false
+    let changed = false;
     normalizedIds.forEach((tabId) => {
       this.getVisibilityLinkedKindsForTab(kind, tabId).forEach((targetKind) => {
-        const setRef = this.detachedVisibleTabIdsByKind?.[targetKind]
-        if (!setRef) return
-        if (mode === 'add') {
-          if (setRef.has(tabId)) return
-          setRef.add(tabId)
-          changed = true
-          return
+        const setRef = this.detachedVisibleTabIdsByKind?.[targetKind];
+        if (!setRef) return;
+        if (mode === "add") {
+          if (setRef.has(tabId)) return;
+          setRef.add(tabId);
+          changed = true;
+          return;
         }
-        if (!setRef.delete(tabId)) return
-        changed = true
-      })
-    })
-    return changed
+        if (!setRef.delete(tabId)) return;
+        changed = true;
+      });
+    });
+    return changed;
   }
 
   private handleChatSessionsChanged(sessionIds: string[]): void {
     const normalizedIds = sessionIds
-      .map((sessionId) => String(sessionId || '').trim())
-      .filter((sessionId) => sessionId.length > 0)
-    const nextIds = new Set(normalizedIds)
+      .map((sessionId) => String(sessionId || "").trim())
+      .filter((sessionId) => sessionId.length > 0);
+    const nextIds = new Set(normalizedIds);
     const addedIds = normalizedIds.filter(
       (sessionId) => !this.lastKnownChatSessionIds.has(sessionId),
-    )
+    );
     const removedIds = Array.from(this.lastKnownChatSessionIds).filter(
       (sessionId) => !nextIds.has(sessionId),
-    )
+    );
 
     // Detached chat windows keep a visibility filter separate from the global
     // chat inventory. Newly created sessions must be added here immediately or
     // the window creates the tab and then hides it from itself.
     if (addedIds.length > 0) {
-      this.updateDetachedVisibleTabIds('chat', addedIds, 'add')
+      this.updateDetachedVisibleTabIds("chat", addedIds, "add");
     }
     if (removedIds.length > 0) {
-      this.updateDetachedVisibleTabIds('chat', removedIds, 'delete')
+      this.updateDetachedVisibleTabIds("chat", removedIds, "delete");
     }
 
-    this.lastKnownChatSessionIds = nextIds
-    this.layout.syncPanelBindings()
+    this.lastKnownChatSessionIds = nextIds;
+    this.layout.syncPanelBindings();
   }
 
   private upsertTransferredTerminalTab(
     snapshot: WindowingTerminalTabSnapshot,
   ): void {
-    const normalizedId = String(snapshot.id || '').trim()
+    const normalizedId = String(snapshot.id || "").trim();
     if (!normalizedId) {
-      return
+      return;
     }
     const nextTab: TerminalTabModel = {
       id: normalizedId,
-      title: String(snapshot.title || '').trim() || normalizedId,
+      title: String(snapshot.title || "").trim() || normalizedId,
       config: snapshot.config,
       capabilities: resolveTerminalConnectionCapabilities(snapshot.config),
       ...(snapshot.connectionRef
         ? { connectionRef: snapshot.connectionRef }
         : {}),
       ...(snapshot.runtimeState ? { runtimeState: snapshot.runtimeState } : {}),
-      ...(typeof snapshot.lastExitCode === 'number'
+      ...(typeof snapshot.lastExitCode === "number"
         ? { lastExitCode: snapshot.lastExitCode }
         : {}),
-    }
-    this.terminalTabs = upsertById(this.terminalTabs, nextTab)
+    };
+    this.terminalTabs = upsertById(this.terminalTabs, nextTab);
     if (!this.activeTerminalId) {
-      this.activeTerminalId = normalizedId
+      this.activeTerminalId = normalizedId;
     }
   }
 
@@ -784,27 +831,27 @@ export class AppStore {
       terminalTab?: WindowingTerminalTabSnapshot;
     },
   ): void {
-    const normalizedTabId = String(tabId || '').trim()
+    const normalizedTabId = String(tabId || "").trim();
     if (!normalizedTabId) {
-      return
+      return;
     }
-    if (kind === 'chat') {
+    if (kind === "chat") {
       // Chat sessions are not backed by a shared runtime inventory like terminal
       // tabs. When a newly created chat tab crosses into another window, materialize
       // a placeholder session immediately so the target layout can render it before
       // any later backend/history hydration happens.
-      this.chat.ensureSession(normalizedTabId)
-      return
+      this.chat.ensureSession(normalizedTabId);
+      return;
     }
     if (
-      (kind === 'terminal' || kind === 'filesystem' || kind === 'monitor') &&
+      (kind === "terminal" || kind === "filesystem" || kind === "monitor") &&
       options?.terminalTab?.id === normalizedTabId
     ) {
       // Terminal/filesystem tabs share backend inventory, but a target renderer
       // may still be one onTabsUpdated tick behind when a tab is dragged across
       // windows. Seed a lightweight placeholder so syncPanelBindings() does not
       // strip the transferred tab before backend state catches up.
-      this.upsertTransferredTerminalTab(options.terminalTab)
+      this.upsertTransferredTerminalTab(options.terminalTab);
     }
   }
 
@@ -818,42 +865,42 @@ export class AppStore {
     const normalizedTabIds = Array.from(
       new Set(
         (tabIds || [])
-          .map((tabId) => String(tabId || '').trim())
+          .map((tabId) => String(tabId || "").trim())
           .filter((tabId) => tabId.length > 0),
       ),
-    )
+    );
     if (normalizedTabIds.length === 0) {
-      return normalizedTabIds
+      return normalizedTabIds;
     }
     const terminalTabById = new Map(
       (options?.terminalTabs || [])
         .map(
           (terminalTab) =>
-            [String(terminalTab.id || '').trim(), terminalTab] as const,
+            [String(terminalTab.id || "").trim(), terminalTab] as const,
         )
         .filter(([tabId]) => tabId.length > 0),
-    )
+    );
     // Cross-window transferred tabs must create owner inventory entries before
     // any layout sync runs, otherwise syncPanelBindings() can strip them back
     // out of the restored binding as "unknown" ids.
     normalizedTabIds.forEach((tabId) => {
       this.ensureTabInventoryEntry(kind, tabId, {
         terminalTab: terminalTabById.get(tabId),
-      })
-    })
-    return normalizedTabIds
+      });
+    });
+    return normalizedTabIds;
   }
 
   hydrateTransferredTabEntry(kind: PanelKind, tabId: string): void {
-    const normalizedTabId = String(tabId || '').trim()
-    if (!normalizedTabId || kind !== 'chat') {
-      return
+    const normalizedTabId = String(tabId || "").trim();
+    if (!normalizedTabId || kind !== "chat") {
+      return;
     }
-    const session = this.chat.getSessionById(normalizedTabId)
+    const session = this.chat.getSessionById(normalizedTabId);
     if (session && session.messageIds.length > 0) {
-      return
+      return;
     }
-    this.chat.ensureSession(normalizedTabId)
+    this.chat.ensureSession(normalizedTabId);
     void this.chat
       .hydrateSessionFromBackend(normalizedTabId, {
         activate: false,
@@ -862,21 +909,21 @@ export class AppStore {
       .catch(() => {
         // A brand-new local chat may not exist in backend history yet. Keep the
         // placeholder session so cross-window tab/panel moves still succeed.
-      })
+      });
   }
 
   hydrateTransferredTabs(kind: PanelKind, tabIds: string[]): string[] {
     const normalizedTabIds = Array.from(
       new Set(
         (tabIds || [])
-          .map((tabId) => String(tabId || '').trim())
+          .map((tabId) => String(tabId || "").trim())
           .filter((tabId) => tabId.length > 0),
       ),
-    )
+    );
     normalizedTabIds.forEach((tabId) => {
-      this.hydrateTransferredTabEntry(kind, tabId)
-    })
-    return normalizedTabIds
+      this.hydrateTransferredTabEntry(kind, tabId);
+    });
+    return normalizedTabIds;
   }
 
   suppressTabs(
@@ -884,33 +931,33 @@ export class AppStore {
     tabIds: string[],
     options?: { syncLayout?: boolean },
   ): void {
-    if (!Array.isArray(tabIds) || tabIds.length === 0) return
-    const shouldSyncLayout = options?.syncLayout !== false
-    const targetKinds = resolveSuppressionKinds(kind)
-    if (targetKinds.length === 0) return
+    if (!Array.isArray(tabIds) || tabIds.length === 0) return;
+    const shouldSyncLayout = options?.syncLayout !== false;
+    const targetKinds = resolveSuppressionKinds(kind);
+    if (targetKinds.length === 0) return;
 
-    let changed = false
+    let changed = false;
     const normalizedIds = tabIds
-      .map((tabId) => String(tabId || '').trim())
-      .filter((tabId) => tabId.length > 0)
-    if (normalizedIds.length === 0) return
+      .map((tabId) => String(tabId || "").trim())
+      .filter((tabId) => tabId.length > 0);
+    if (normalizedIds.length === 0) return;
 
     targetKinds.forEach((targetKind) => {
-      const setRef = this.suppressedTabIdsByKind[targetKind]
+      const setRef = this.suppressedTabIdsByKind[targetKind];
       normalizedIds.forEach((tabId) => {
-        if (setRef.has(tabId)) return
-        setRef.add(tabId)
-        changed = true
-      })
-    })
-    if (this.updateDetachedVisibleTabIds(kind, normalizedIds, 'delete')) {
-      changed = true
+        if (setRef.has(tabId)) return;
+        setRef.add(tabId);
+        changed = true;
+      });
+    });
+    if (this.updateDetachedVisibleTabIds(kind, normalizedIds, "delete")) {
+      changed = true;
     }
     if (changed && shouldSyncLayout) {
-      this.layout.syncPanelBindings()
+      this.layout.syncPanelBindings();
     }
     if (changed) {
-      this.syncMonitorSessions()
+      this.syncMonitorSessions();
     }
   }
 
@@ -919,108 +966,108 @@ export class AppStore {
     tabIds: string[],
     options?: { syncLayout?: boolean },
   ): void {
-    if (!Array.isArray(tabIds) || tabIds.length === 0) return
-    const shouldSyncLayout = options?.syncLayout !== false
-    const targetKinds = resolveSuppressionKinds(kind)
-    if (targetKinds.length === 0) return
+    if (!Array.isArray(tabIds) || tabIds.length === 0) return;
+    const shouldSyncLayout = options?.syncLayout !== false;
+    const targetKinds = resolveSuppressionKinds(kind);
+    if (targetKinds.length === 0) return;
 
-    let changed = false
+    let changed = false;
     const normalizedIds = tabIds
-      .map((tabId) => String(tabId || '').trim())
-      .filter((tabId) => tabId.length > 0)
-    if (normalizedIds.length === 0) return
+      .map((tabId) => String(tabId || "").trim())
+      .filter((tabId) => tabId.length > 0);
+    if (normalizedIds.length === 0) return;
 
     targetKinds.forEach((targetKind) => {
-      const setRef = this.suppressedTabIdsByKind[targetKind]
+      const setRef = this.suppressedTabIdsByKind[targetKind];
       normalizedIds.forEach((tabId) => {
-        if (!setRef.delete(tabId)) return
-        changed = true
-      })
-    })
-    if (this.updateDetachedVisibleTabIds(kind, normalizedIds, 'add')) {
-      changed = true
+        if (!setRef.delete(tabId)) return;
+        changed = true;
+      });
+    });
+    if (this.updateDetachedVisibleTabIds(kind, normalizedIds, "add")) {
+      changed = true;
     }
     if (changed && shouldSyncLayout) {
-      this.layout.syncPanelBindings()
+      this.layout.syncPanelBindings();
     }
     if (changed) {
-      this.syncMonitorSessions()
+      this.syncMonitorSessions();
     }
   }
 
   collectAssignedTabsByKind(): Partial<
-    Record<'chat' | 'terminal' | 'filesystem' | 'monitor', string[]>
+    Record<"chat" | "terminal" | "filesystem" | "monitor", string[]>
   > {
     const collectForKind = (
-      kind: Extract<PanelKind, 'chat' | 'terminal' | 'filesystem' | 'monitor'>,
+      kind: Extract<PanelKind, "chat" | "terminal" | "filesystem" | "monitor">,
     ): string[] => {
-      const ids = new Set<string>()
+      const ids = new Set<string>();
       this.layout.getPanelIdsByKind(kind).forEach((panelId) => {
         this.layout.getPanelTabIds(panelId).forEach((tabId) => {
-          const normalized = String(tabId || '').trim()
-          if (!normalized) return
-          ids.add(normalized)
-        })
-      })
-      return Array.from(ids)
-    }
+          const normalized = String(tabId || "").trim();
+          if (!normalized) return;
+          ids.add(normalized);
+        });
+      });
+      return Array.from(ids);
+    };
 
     return {
-      chat: collectForKind('chat'),
-      terminal: collectForKind('terminal'),
-      filesystem: collectForKind('filesystem'),
-      monitor: collectForKind('monitor'),
-    }
+      chat: collectForKind("chat"),
+      terminal: collectForKind("terminal"),
+      filesystem: collectForKind("filesystem"),
+      monitor: collectForKind("monitor"),
+    };
   }
 
   get isSettings(): boolean {
-    return this.view === 'settings'
+    return this.view === "settings";
   }
 
   get isConnections(): boolean {
-    return this.view === 'connections'
+    return this.view === "connections";
   }
 
   get activeTerminal(): TerminalTabModel | null {
-    if (!this.activeTerminalId) return null
+    if (!this.activeTerminalId) return null;
     return (
       this.terminalTabs.find((t) => t.id === this.activeTerminalId) ?? null
-    )
+    );
   }
 
   get fileSystemTabs(): TerminalTabModel[] {
     return this.terminalTabs.filter(
       (tab) => tab.capabilities.supportsFilesystem,
-    )
+    );
   }
 
   get monitorTabs(): TerminalTabModel[] {
-    return this.terminalTabs.filter(
-      (tab) => tab.capabilities.supportsMonitor,
-    )
+    return this.terminalTabs.filter((tab) => tab.capabilities.supportsMonitor);
   }
 
   get panelTabDisplayMode(): PanelTabDisplayModePreference {
     return (
       this.settings?.panelTabs?.displayMode ?? DEFAULT_PANEL_TAB_DISPLAY_MODE
-    )
+    );
   }
 
-  get chatDisplayMode(): 'classic' | 'seamless' {
-    return this.settings?.chat?.displayMode ?? 'classic'
+  get chatDisplayMode(): "classic" | "seamless" {
+    return this.settings?.chat?.displayMode ?? "classic";
   }
 
   get commandDraftProfileId(): string {
-    const profiles = this.settings?.models?.profiles ?? []
-    const storedId = String(this.settings?.commandDraft?.profileId || '').trim()
+    const profiles = this.settings?.models?.profiles ?? [];
+    const storedId = String(
+      this.settings?.commandDraft?.profileId || "",
+    ).trim();
     if (storedId && profiles.some((profile) => profile.id === storedId)) {
-      return storedId
+      return storedId;
     }
-    return profiles[0]?.id || ''
+    return profiles[0]?.id || "";
   }
 
   private collectPersistedChatInventoryState(
-    layout: AppSettings['layout'] | undefined,
+    layout: AppSettings["layout"] | undefined,
   ): {
     tabIds: string[];
     preferredActiveTabId: string | null;
@@ -1028,96 +1075,96 @@ export class AppStore {
     const emptyState = {
       tabIds: [],
       preferredActiveTabId: null,
-    }
+    };
 
     try {
-      const tree = buildLayoutTree(layout)
+      const tree = buildLayoutTree(layout);
       const chatPanels = listPanels(tree).filter(
-        (panel) => panel.panel.kind === 'chat',
-      )
-      const chatPanelIds = chatPanels.map((panel) => panel.panel.id)
+        (panel) => panel.panel.kind === "chat",
+      );
+      const chatPanelIds = chatPanels.map((panel) => panel.panel.id);
       if (chatPanelIds.length === 0) {
-        return emptyState
+        return emptyState;
       }
 
-      const chatPanelSet = new Set(chatPanelIds)
+      const chatPanelSet = new Set(chatPanelIds);
       const chatBindings = chatPanelIds.map((panelId) => {
-        const binding = tree.panelTabs?.[panelId]
+        const binding = tree.panelTabs?.[panelId];
         const tabIds = Array.isArray(binding?.tabIds)
           ? binding.tabIds.filter(
               (tabId): tabId is string =>
-                typeof tabId === 'string' && tabId.length > 0,
+                typeof tabId === "string" && tabId.length > 0,
             )
-          : []
+          : [];
         const activeTabId =
-          typeof binding?.activeTabId === 'string' &&
+          typeof binding?.activeTabId === "string" &&
           tabIds.includes(binding.activeTabId)
             ? binding.activeTabId
-            : null
+            : null;
         return {
           panelId,
           tabIds,
           activeTabId,
-        }
-      })
-      const seen = new Set<string>()
-      const tabIds: string[] = []
+        };
+      });
+      const seen = new Set<string>();
+      const tabIds: string[] = [];
 
       chatBindings.forEach(({ tabIds: bindingTabIds }) => {
         bindingTabIds.forEach((tabId) => {
-          if (seen.has(tabId)) return
-          seen.add(tabId)
-          tabIds.push(tabId)
-        })
-      })
+          if (seen.has(tabId)) return;
+          seen.add(tabId);
+          tabIds.push(tabId);
+        });
+      });
 
       const focusedActiveTabId = (() => {
-        const focusedPanelId = tree.focusedPanelId
+        const focusedPanelId = tree.focusedPanelId;
         if (!focusedPanelId || !chatPanelSet.has(focusedPanelId)) {
-          return null
+          return null;
         }
         return (
           chatBindings.find((binding) => binding.panelId === focusedPanelId)
             ?.activeTabId || null
-        )
-      })()
+        );
+      })();
 
       const fallbackActiveTabId =
         chatBindings.find((binding) => !!binding.activeTabId)?.activeTabId ||
-        null
+        null;
       const preferredActiveTabId =
-        focusedActiveTabId || fallbackActiveTabId || tabIds[0] || null
+        focusedActiveTabId || fallbackActiveTabId || tabIds[0] || null;
 
       return {
         tabIds,
         preferredActiveTabId,
-      }
+      };
     } catch {
-      return emptyState
+      return emptyState;
     }
   }
 
   private isFirstLaunchDefaultLayout(
-    layout: AppSettings['layout'] | undefined,
+    layout: AppSettings["layout"] | undefined,
   ): boolean {
-    if (!layout) return true
-    if (layout.v2) return false
+    if (!layout) return true;
+    if (layout.v2) return false;
     const panelOrder = Array.isArray(layout.panelOrder)
       ? layout.panelOrder
-      : []
+      : [];
     if (panelOrder.length === 0) {
-      return true
+      return true;
     }
     if (panelOrder.length !== 2) {
-      return false
+      return false;
     }
-    return panelOrder[0] === 'chat' && panelOrder[1] === 'terminal'
+    return panelOrder[0] === "chat" && panelOrder[1] === "terminal";
   }
 
   private toTerminalConfig(item: {
     id: string;
     title: string;
-    type: TerminalConfig['type'];
+    type: TerminalConfig["type"];
     cols: number;
     rows: number;
   }): TerminalConfig {
@@ -1127,25 +1174,25 @@ export class AppStore {
       title: item.title,
       cols: item.cols > 0 ? item.cols : 80,
       rows: item.rows > 0 ? item.rows : 24,
-    } as TerminalConfig
+    } as TerminalConfig;
   }
 
   reconcileTerminalTabs(payload: TerminalListPayload): void {
-    const firstHydration = this.terminalTabsHydrated !== true
-    const incoming = payload?.terminals || []
+    const firstHydration = this.terminalTabsHydrated !== true;
+    const incoming = payload?.terminals || [];
     const incomingIds = incoming
       .map((item) => item.id)
-      .filter((id): id is string => typeof id === 'string' && id.length > 0)
+      .filter((id): id is string => typeof id === "string" && id.length > 0);
     if (firstHydration) {
       const unresolvedPanelIds = this.layout.getPanelsWithMissingTabBindings(
-        'terminal',
+        "terminal",
         incomingIds,
-      )
-      this.layout.pinPanelsAsRestorePlaceholder(unresolvedPanelIds)
+      );
+      this.layout.pinPanelsAsRestorePlaceholder(unresolvedPanelIds);
     }
-    const existingById = new Map(this.terminalTabs.map((tab) => [tab.id, tab]))
+    const existingById = new Map(this.terminalTabs.map((tab) => [tab.id, tab]));
     const nextTabs: TerminalTabModel[] = incoming.map((item) => {
-      const existing = existingById.get(item.id)
+      const existing = existingById.get(item.id);
       if (existing) {
         return {
           ...existing,
@@ -1163,7 +1210,7 @@ export class AppStore {
             cols: item.cols > 0 ? item.cols : existing.config.cols,
             rows: item.rows > 0 ? item.rows : existing.config.rows,
           },
-        }
+        };
       }
       return {
         id: item.id,
@@ -1172,44 +1219,44 @@ export class AppStore {
         capabilities: resolveTerminalConnectionCapabilities({
           type: item.type,
         }),
-        connectionRef: item.type === 'local' ? { type: 'local' } : undefined,
+        connectionRef: item.type === "local" ? { type: "local" } : undefined,
         runtimeState: item.runtimeState,
         lastExitCode: item.lastExitCode,
         remoteOs: item.remoteOs,
         systemInfo: item.systemInfo,
-      }
-    })
+      };
+    });
 
-    let nextActive = this.activeTerminalId
+    let nextActive = this.activeTerminalId;
     if (!nextActive || !nextTabs.some((tab) => tab.id === nextActive)) {
-      nextActive = nextTabs[0]?.id || null
+      nextActive = nextTabs[0]?.id || null;
     }
 
-    this.terminalTabs = nextTabs
-    this.terminalTabsHydrated = true
-    this.activeTerminalId = nextActive
-    this.layout.syncPanelBindings()
-    this.syncMonitorSessions()
+    this.terminalTabs = nextTabs;
+    this.terminalTabsHydrated = true;
+    this.activeTerminalId = nextActive;
+    this.layout.syncPanelBindings();
+    this.syncMonitorSessions();
   }
 
   private async fetchCombinedSettings(): Promise<AppSettings> {
     const [backendSettings, uiSettings] = await Promise.all([
       window.gyshell.settings.get(),
       window.gyshell.uiSettings.get(),
-    ])
+    ]);
     return {
       ...backendSettings,
       ...uiSettings,
-    }
+    };
   }
 
   private applySkillStatusUpdate(updates: SkillStatusSummary[]): void {
-    const enabledByName = new Map<string, boolean>()
+    const enabledByName = new Map<string, boolean>();
     updates.forEach((item) => {
-      if (!item?.name) return
-      enabledByName.set(item.name, item.enabled !== false)
-    })
-    if (enabledByName.size === 0) return
+      if (!item?.name) return;
+      enabledByName.set(item.name, item.enabled !== false);
+    });
+    if (enabledByName.size === 0) return;
 
     this.skills = this.skills.map((skill) =>
       enabledByName.has(skill.name)
@@ -1218,217 +1265,217 @@ export class AppStore {
             enabled: enabledByName.get(skill.name),
           }
         : skill,
-    )
+    );
 
-    if (!this.settings) return
-    const nextToolsSkills = { ...(this.settings.tools?.skills ?? {}) }
+    if (!this.settings) return;
+    const nextToolsSkills = { ...(this.settings.tools?.skills ?? {}) };
     enabledByName.forEach((enabled, name) => {
-      nextToolsSkills[name] = enabled
-    })
+      nextToolsSkills[name] = enabled;
+    });
     this.settings = {
       ...this.settings,
       tools: {
         builtIn: this.settings.tools?.builtIn ?? {},
         skills: nextToolsSkills,
       },
-    }
+    };
   }
 
   private applyBuiltInToolStatusUpdate(tools: BuiltInToolSummary[]): void {
-    this.builtInTools = tools
-    if (!this.settings) return
-    const nextToolsBuiltIn = { ...(this.settings.tools?.builtIn ?? {}) }
+    this.builtInTools = tools;
+    if (!this.settings) return;
+    const nextToolsBuiltIn = { ...(this.settings.tools?.builtIn ?? {}) };
     tools.forEach((tool) => {
-      nextToolsBuiltIn[tool.name] = tool.enabled
-    })
+      nextToolsBuiltIn[tool.name] = tool.enabled;
+    });
     this.settings = {
       ...this.settings,
       tools: {
         builtIn: nextToolsBuiltIn,
         skills: this.settings.tools?.skills ?? {},
       },
-    }
+    };
   }
 
   openSettings(): void {
-    this.view = 'settings'
+    this.view = "settings";
   }
 
   closeSettings(): void {
-    this.view = 'main'
+    this.view = "main";
   }
 
   toggleSettings(): void {
-    this.view = this.view === 'settings' ? 'main' : 'settings'
+    this.view = this.view === "settings" ? "main" : "settings";
   }
 
   openConnections(): void {
-    this.view = 'connections'
+    this.view = "connections";
   }
 
   closeOverlay(): void {
-    this.view = 'main'
+    this.view = "main";
   }
 
   setSettingsSection(section: SettingsSection): void {
-    this.settingsSection = section
+    this.settingsSection = section;
   }
 
   async loadVersionState(): Promise<void> {
     try {
-      const state = await window.gyshell.version.getState()
+      const state = await window.gyshell.version.getState();
       runInAction(() => {
-        this.versionInfo = state
-      })
+        this.versionInfo = state;
+      });
     } catch (err) {
-      console.error('Failed to load version state', err)
+      console.error("Failed to load version state", err);
     }
   }
 
   async checkVersion(options?: {
     showPopupOnVersionChange?: boolean;
   }): Promise<void> {
-    if (this.versionCheckInProgress) return
+    if (this.versionCheckInProgress) return;
     runInAction(() => {
-      this.versionCheckInProgress = true
-    })
+      this.versionCheckInProgress = true;
+    });
     try {
-      const result = await window.gyshell.version.check()
+      const result = await window.gyshell.version.check();
       runInAction(() => {
-        this.versionInfo = result
+        this.versionInfo = result;
         const hasVersionDifference =
-          result.status !== 'error' &&
-          typeof result.latestVersion === 'string' &&
+          result.status !== "error" &&
+          typeof result.latestVersion === "string" &&
           result.latestVersion.length > 0 &&
-          result.latestVersion !== result.currentVersion
-        const shouldShowPopup = options?.showPopupOnVersionChange ?? true
+          result.latestVersion !== result.currentVersion;
+        const shouldShowPopup = options?.showPopupOnVersionChange ?? true;
         if (hasVersionDifference && shouldShowPopup) {
-          this.showVersionUpdateDialog = true
+          this.showVersionUpdateDialog = true;
         }
-      })
+      });
     } catch (err) {
-      console.error('Failed to check version', err)
+      console.error("Failed to check version", err);
     } finally {
       runInAction(() => {
-        this.versionCheckInProgress = false
-      })
+        this.versionCheckInProgress = false;
+      });
     }
   }
 
   closeVersionUpdateDialog(): void {
-    this.showVersionUpdateDialog = false
+    this.showVersionUpdateDialog = false;
   }
 
   async openVersionDownload(): Promise<void> {
-    const url = this.versionInfo?.downloadUrl
-    if (!url) return
-    await window.gyshell.system.openExternal(url)
+    const url = this.versionInfo?.downloadUrl;
+    if (!url) return;
+    await window.gyshell.system.openExternal(url);
   }
 
   async setLanguage(lang: AppLanguage): Promise<void> {
-    this.i18n.setLocale(lang)
+    this.i18n.setLocale(lang);
     runInAction(() => {
       if (this.settings) {
-        this.settings = { ...this.settings, language: lang }
+        this.settings = { ...this.settings, language: lang };
       }
-    })
-    await window.gyshell.uiSettings.set({ language: lang })
+    });
+    await window.gyshell.uiSettings.set({ language: lang });
   }
 
   async setTerminalSettings(
-    terminal: Partial<AppSettings['terminal']>,
+    terminal: Partial<AppSettings["terminal"]>,
   ): Promise<void> {
-    let nextTerminal: AppSettings['terminal'] | undefined
+    let nextTerminal: AppSettings["terminal"] | undefined;
     runInAction(() => {
       if (this.settings) {
         this.settings.terminal = {
           ...this.settings.terminal,
           ...terminal,
-        }
-        nextTerminal = toJS(this.settings.terminal)
+        };
+        nextTerminal = toJS(this.settings.terminal);
       }
-    })
+    });
     if (nextTerminal) {
-      await window.gyshell.uiSettings.set({ terminal: nextTerminal })
+      await window.gyshell.uiSettings.set({ terminal: nextTerminal });
     }
   }
 
   async setPanelTabDisplayMode(
     displayMode: PanelTabDisplayModePreference,
   ): Promise<void> {
-    const nextPanelTabs = { displayMode }
+    const nextPanelTabs = { displayMode };
     runInAction(() => {
-      if (!this.settings) return
+      if (!this.settings) return;
       this.settings = {
         ...this.settings,
         panelTabs: nextPanelTabs,
-      }
-    })
-    await window.gyshell.uiSettings.set({ panelTabs: nextPanelTabs })
+      };
+    });
+    await window.gyshell.uiSettings.set({ panelTabs: nextPanelTabs });
   }
 
-  async setChatDisplayMode(displayMode: 'classic' | 'seamless'): Promise<void> {
-    const nextChat = { displayMode }
+  async setChatDisplayMode(displayMode: "classic" | "seamless"): Promise<void> {
+    const nextChat = { displayMode };
     runInAction(() => {
-      if (!this.settings) return
+      if (!this.settings) return;
       this.settings = {
         ...this.settings,
         chat: nextChat,
-      }
-    })
-    await window.gyshell.uiSettings.set({ chat: nextChat })
+      };
+    });
+    await window.gyshell.uiSettings.set({ chat: nextChat });
   }
 
   async setCommandDraftProfileId(profileId: string): Promise<void> {
     const nextCommandDraft = {
       profileId,
-    }
+    };
     runInAction(() => {
-      if (!this.settings) return
+      if (!this.settings) return;
       this.settings = {
         ...this.settings,
         commandDraft: nextCommandDraft,
-      }
-    })
-    await window.gyshell.uiSettings.set({ commandDraft: nextCommandDraft })
+      };
+    });
+    await window.gyshell.uiSettings.set({ commandDraft: nextCommandDraft });
   }
 
   async setThemeId(themeId: string): Promise<void> {
     // optimistic UI: apply immediately
-    const theme = resolveTheme(themeId, this.customThemes)
-    applyAppThemeFromTerminalScheme(theme.terminal)
+    const theme = resolveTheme(themeId, this.customThemes);
+    applyAppThemeFromTerminalScheme(theme.terminal);
     const xtermTheme = toXtermTheme(theme.terminal, {
       transparentBackground: true,
-    })
+    });
     runInAction(() => {
-      this.xtermTheme = xtermTheme
+      this.xtermTheme = xtermTheme;
       if (this.settings) {
-        this.settings = { ...this.settings, themeId }
+        this.settings = { ...this.settings, themeId };
       }
-    })
+    });
 
     try {
-      await window.gyshell.uiSettings.set({ themeId })
+      await window.gyshell.uiSettings.set({ themeId });
     } catch (err) {
-      console.error('Failed to persist themeId', err)
+      console.error("Failed to persist themeId", err);
       // best-effort rollback by reloading
       try {
         const [backendSettings, uiSettings] = await Promise.all([
           window.gyshell.settings.get(),
           window.gyshell.uiSettings.get(),
-        ])
+        ]);
         const settings = {
           ...backendSettings,
           ...uiSettings,
-        }
-        const t = resolveTheme(settings.themeId, this.customThemes)
-        applyAppThemeFromTerminalScheme(t.terminal)
+        };
+        const t = resolveTheme(settings.themeId, this.customThemes);
+        applyAppThemeFromTerminalScheme(t.terminal);
         runInAction(() => {
-          this.settings = settings
+          this.settings = settings;
           this.xtermTheme = toXtermTheme(t.terminal, {
             transparentBackground: true,
-          })
-        })
+          });
+        });
       } catch {
         // ignore
       }
@@ -1436,55 +1483,55 @@ export class AppStore {
   }
 
   async setCommandPolicyMode(
-    mode: AppSettings['commandPolicyMode'],
+    mode: AppSettings["commandPolicyMode"],
   ): Promise<void> {
     runInAction(() => {
       if (this.settings) {
-        this.settings = { ...this.settings, commandPolicyMode: mode }
+        this.settings = { ...this.settings, commandPolicyMode: mode };
       }
-    })
-    await window.gyshell.settings.set({ commandPolicyMode: mode })
+    });
+    await window.gyshell.settings.set({ commandPolicyMode: mode });
   }
 
   async openCommandPolicyFile(): Promise<void> {
-    await window.gyshell.settings.openCommandPolicyFile()
+    await window.gyshell.settings.openCommandPolicyFile();
   }
 
   async loadCommandPolicyLists(): Promise<void> {
     try {
-      const lists = await window.gyshell.settings.getCommandPolicyLists()
+      const lists = await window.gyshell.settings.getCommandPolicyLists();
       runInAction(() => {
-        this.commandPolicyLists = lists
-      })
+        this.commandPolicyLists = lists;
+      });
     } catch (err) {
-      console.error('Failed to load command policy lists', err)
+      console.error("Failed to load command policy lists", err);
     }
   }
 
   async addCommandPolicyRule(
-    listName: 'allowlist' | 'denylist' | 'asklist',
+    listName: "allowlist" | "denylist" | "asklist",
     rule: string,
   ): Promise<void> {
     const lists = await window.gyshell.settings.addCommandPolicyRule(
       listName,
       rule,
-    )
+    );
     runInAction(() => {
-      this.commandPolicyLists = lists
-    })
+      this.commandPolicyLists = lists;
+    });
   }
 
   async deleteCommandPolicyRule(
-    listName: 'allowlist' | 'denylist' | 'asklist',
+    listName: "allowlist" | "denylist" | "asklist",
     rule: string,
   ): Promise<void> {
     const lists = await window.gyshell.settings.deleteCommandPolicyRule(
       listName,
       rule,
-    )
+    );
     runInAction(() => {
-      this.commandPolicyLists = lists
-    })
+      this.commandPolicyLists = lists;
+    });
   }
 
   async loadTools(): Promise<void> {
@@ -1492,13 +1539,13 @@ export class AppStore {
       const [mcpTools, builtInTools] = await Promise.all([
         window.gyshell.tools.getMcp(),
         window.gyshell.tools.getBuiltIn(),
-      ])
+      ]);
       runInAction(() => {
-        this.mcpTools = mcpTools
-        this.builtInTools = builtInTools
-      })
+        this.mcpTools = mcpTools;
+        this.builtInTools = builtInTools;
+      });
     } catch (err) {
-      console.error('Failed to load tools status', err)
+      console.error("Failed to load tools status", err);
     }
   }
 
@@ -1508,22 +1555,22 @@ export class AppStore {
         window.gyshell.skills.getAll(),
         window.gyshell.skills.getEnabled(),
         this.fetchCombinedSettings(),
-      ])
-      const enabledByName = new Set(enabledSkills.map((skill) => skill.name))
+      ]);
+      const enabledByName = new Set(enabledSkills.map((skill) => skill.name));
       runInAction(() => {
-        this.settings = settings
+        this.settings = settings;
         this.skills = skills.map((skill) => ({
           ...skill,
           enabled: enabledByName.has(skill.name),
-        }))
-      })
+        }));
+      });
     } catch (err) {
-      console.error('Failed to load skills', err)
+      console.error("Failed to load skills", err);
     }
   }
 
   async openSkillsFolder(): Promise<void> {
-    await window.gyshell.skills.openFolder()
+    await window.gyshell.skills.openFolder();
   }
 
   async reloadSkills(): Promise<void> {
@@ -1531,135 +1578,135 @@ export class AppStore {
       window.gyshell.skills.reload(),
       window.gyshell.skills.getEnabled(),
       this.fetchCombinedSettings(),
-    ])
-    const enabledByName = new Set(enabledSkills.map((skill) => skill.name))
+    ]);
+    const enabledByName = new Set(enabledSkills.map((skill) => skill.name));
     runInAction(() => {
-      this.settings = settings
+      this.settings = settings;
       this.skills = skills.map((skill) => ({
         ...skill,
         enabled: enabledByName.has(skill.name),
-      }))
-    })
+      }));
+    });
   }
 
   async createSkill(): Promise<void> {
-    await window.gyshell.skills.create()
-    await this.reloadSkills()
+    await window.gyshell.skills.create();
+    await this.reloadSkills();
   }
 
   async editSkill(fileName: string): Promise<void> {
-    await window.gyshell.skills.openFile(fileName)
+    await window.gyshell.skills.openFile(fileName);
   }
 
   async deleteSkill(fileName: string): Promise<void> {
-    const skills = await window.gyshell.skills.delete(fileName)
+    const skills = await window.gyshell.skills.delete(fileName);
     runInAction(() => {
-      this.skills = skills
-    })
+      this.skills = skills;
+    });
   }
 
   async loadMemory(): Promise<MemorySnapshot | null> {
     try {
-      const snapshot = await window.gyshell.memory.get()
+      const snapshot = await window.gyshell.memory.get();
       runInAction(() => {
-        this.memoryFilePath = snapshot.filePath
-        this.memoryContent = snapshot.content
-      })
-      return snapshot
+        this.memoryFilePath = snapshot.filePath;
+        this.memoryContent = snapshot.content;
+      });
+      return snapshot;
     } catch (err) {
-      console.error('Failed to load memory.md', err)
-      return null
+      console.error("Failed to load memory.md", err);
+      return null;
     }
   }
 
   async openMemoryFile(): Promise<void> {
-    await window.gyshell.memory.openFile()
+    await window.gyshell.memory.openFile();
   }
 
   async saveMemoryContent(content: string): Promise<MemorySnapshot | null> {
     try {
-      const snapshot = await window.gyshell.memory.setContent(content)
+      const snapshot = await window.gyshell.memory.setContent(content);
       runInAction(() => {
-        this.memoryFilePath = snapshot.filePath
-        this.memoryContent = snapshot.content
-      })
-      return snapshot
+        this.memoryFilePath = snapshot.filePath;
+        this.memoryContent = snapshot.content;
+      });
+      return snapshot;
     } catch (err) {
-      console.error('Failed to save memory.md', err)
-      return null
+      console.error("Failed to save memory.md", err);
+      return null;
     }
   }
 
   async loadAccessTokens(): Promise<void> {
     try {
-      const items = await window.gyshell.accessTokens.list()
+      const items = await window.gyshell.accessTokens.list();
       runInAction(() => {
         this.accessTokens = [...items].sort(
           (left, right) => right.createdAt - left.createdAt,
-        )
-      })
+        );
+      });
     } catch (error) {
-      console.error('Failed to load access tokens', error)
+      console.error("Failed to load access tokens", error);
     }
   }
 
   async createAccessToken(
     name: string,
-  ): Promise<Awaited<ReturnType<Window['gyshell']['accessTokens']['create']>>> {
-    const created = await window.gyshell.accessTokens.create(name)
+  ): Promise<Awaited<ReturnType<Window["gyshell"]["accessTokens"]["create"]>>> {
+    const created = await window.gyshell.accessTokens.create(name);
     runInAction(() => {
       this.accessTokens = [
         { id: created.id, name: created.name, createdAt: created.createdAt },
         ...this.accessTokens.filter((item) => item.id !== created.id),
-      ]
-    })
-    return created
+      ];
+    });
+    return created;
   }
 
   async deleteAccessToken(id: string): Promise<boolean> {
-    const deleted = await window.gyshell.accessTokens.delete(id)
-    if (!deleted) return false
+    const deleted = await window.gyshell.accessTokens.delete(id);
+    if (!deleted) return false;
     runInAction(() => {
-      this.accessTokens = this.accessTokens.filter((item) => item.id !== id)
-    })
-    return true
+      this.accessTokens = this.accessTokens.filter((item) => item.id !== id);
+    });
+    return true;
   }
 
   async openMcpConfig(): Promise<void> {
-    await window.gyshell.tools.openMcpConfig()
+    await window.gyshell.tools.openMcpConfig();
   }
 
   async reloadMcpTools(): Promise<void> {
-    const mcpTools = await window.gyshell.tools.reloadMcp()
+    const mcpTools = await window.gyshell.tools.reloadMcp();
     runInAction(() => {
-      this.mcpTools = mcpTools
-    })
+      this.mcpTools = mcpTools;
+    });
   }
 
   async setMcpToolEnabled(name: string, enabled: boolean): Promise<void> {
-    const mcpTools = await window.gyshell.tools.setMcpEnabled(name, enabled)
+    const mcpTools = await window.gyshell.tools.setMcpEnabled(name, enabled);
     runInAction(() => {
-      this.mcpTools = mcpTools
-    })
+      this.mcpTools = mcpTools;
+    });
   }
 
   async setBuiltInToolEnabled(name: string, enabled: boolean): Promise<void> {
     const builtInTools = await window.gyshell.tools.setBuiltInEnabled(
       name,
       enabled,
-    )
+    );
     runInAction(() => {
-      this.applyBuiltInToolStatusUpdate(builtInTools)
-    })
+      this.applyBuiltInToolStatusUpdate(builtInTools);
+    });
   }
 
   async setSkillEnabled(name: string, enabled: boolean): Promise<void> {
-    const skills = await window.gyshell.skills.setEnabled(name, enabled)
-    const settings = await this.fetchCombinedSettings()
+    const skills = await window.gyshell.skills.setEnabled(name, enabled);
+    const settings = await this.fetchCombinedSettings();
     runInAction(() => {
-      this.settings = settings
-      this.applySkillStatusUpdate(skills)
-    })
+      this.settings = settings;
+      this.applySkillStatusUpdate(skills);
+    });
   }
 
   async setMemoryEnabled(enabled: boolean): Promise<void> {
@@ -1670,32 +1717,32 @@ export class AppStore {
           memory: {
             enabled,
           },
-        }
+        };
       }
-    })
+    });
     await window.gyshell.settings.set({
       memory: {
         enabled,
       },
-    })
+    });
   }
 
   async setRecursionLimit(limit: number): Promise<void> {
     runInAction(() => {
       if (this.settings) {
-        this.settings.recursionLimit = limit
+        this.settings.recursionLimit = limit;
       }
-    })
-    await window.gyshell.settings.set({ recursionLimit: limit })
+    });
+    await window.gyshell.settings.set({ recursionLimit: limit });
   }
 
   async setDebugMode(enabled: boolean): Promise<void> {
     runInAction(() => {
       if (this.settings) {
-        this.settings.debugMode = enabled
+        this.settings.debugMode = enabled;
       }
-    })
-    await window.gyshell.settings.set({ debugMode: enabled })
+    });
+    await window.gyshell.settings.set({ debugMode: enabled });
   }
 
   setMobileWebStatus(status: {
@@ -1703,44 +1750,44 @@ export class AppStore {
     port?: number;
     urls?: string[];
   }): void {
-    this.mobileWebStatus = status
+    this.mobileWebStatus = status;
   }
 
   async loadMobileWebStatus(): Promise<void> {
     try {
-      const status = await window.gyshell.mobileWeb.getStatus()
+      const status = await window.gyshell.mobileWeb.getStatus();
       runInAction(() => {
-        this.mobileWebStatus = status
-      })
+        this.mobileWebStatus = status;
+      });
     } catch (error) {
-      console.error('Failed to load mobile web status', error)
+      console.error("Failed to load mobile web status", error);
     }
   }
 
   async startMobileWeb(): Promise<void> {
     try {
-      const status = await window.gyshell.mobileWeb.start()
+      const status = await window.gyshell.mobileWeb.start();
       runInAction(() => {
-        this.mobileWebStatus = status
-      })
+        this.mobileWebStatus = status;
+      });
     } catch (error) {
-      console.error('Failed to start mobile web server', error)
+      console.error("Failed to start mobile web server", error);
     }
   }
 
   async stopMobileWeb(): Promise<void> {
     try {
-      await window.gyshell.mobileWeb.stop()
+      await window.gyshell.mobileWeb.stop();
       runInAction(() => {
-        this.mobileWebStatus = { running: false }
-      })
+        this.mobileWebStatus = { running: false };
+      });
     } catch (error) {
-      console.error('Failed to stop mobile web server', error)
+      console.error("Failed to stop mobile web server", error);
     }
   }
 
   async setMobileWebPort(port: number | null): Promise<void> {
-    const current = this.settings?.gateway?.mobileWeb
+    const current = this.settings?.gateway?.mobileWeb;
     runInAction(() => {
       if (this.settings) {
         this.settings = {
@@ -1749,11 +1796,11 @@ export class AppStore {
             ...this.settings.gateway,
             mobileWeb: { port },
           },
-        }
+        };
       }
-    })
+    });
     try {
-      await window.gyshell.mobileWeb.setPort(port)
+      await window.gyshell.mobileWeb.setPort(port);
     } catch (error) {
       runInAction(() => {
         if (this.settings && current !== undefined) {
@@ -1763,17 +1810,17 @@ export class AppStore {
               ...this.settings.gateway,
               mobileWeb: current,
             },
-          }
+          };
         }
-      })
-      console.error('Failed to set mobile web port', error)
+      });
+      console.error("Failed to set mobile web port", error);
     }
   }
 
   private async updateWsGatewaySettings(
-    nextWs: NonNullable<AppSettings['gateway']>['ws'],
+    nextWs: NonNullable<AppSettings["gateway"]>["ws"],
   ): Promise<void> {
-    const previous = this.settings?.gateway?.ws
+    const previous = this.settings?.gateway?.ws;
     runInAction(() => {
       if (this.settings) {
         this.settings = {
@@ -1782,17 +1829,17 @@ export class AppStore {
             ...this.settings.gateway,
             ws: nextWs,
           },
-        }
+        };
       }
-    })
+    });
     try {
       const plainNextWs = {
         access: nextWs.access,
         port: nextWs.port,
         allowedCidrs: Array.from(nextWs.allowedCidrs ?? []),
-      }
+      };
       const next =
-        await window.gyshell.settings.setWsGatewayConfig(plainNextWs)
+        await window.gyshell.settings.setWsGatewayConfig(plainNextWs);
       runInAction(() => {
         if (this.settings) {
           this.settings = {
@@ -1801,9 +1848,9 @@ export class AppStore {
               ...this.settings.gateway,
               ws: next,
             },
-          }
+          };
         }
-      })
+      });
     } catch (error) {
       runInAction(() => {
         if (this.settings && previous) {
@@ -1813,90 +1860,90 @@ export class AppStore {
               ...this.settings.gateway,
               ws: previous,
             },
-          }
+          };
         }
-      })
-      console.error('Failed to update websocket gateway settings', error)
+      });
+      console.error("Failed to update websocket gateway settings", error);
     }
   }
 
   async setWsGatewayAccess(
-    access: NonNullable<AppSettings['gateway']>['ws']['access'],
+    access: NonNullable<AppSettings["gateway"]>["ws"]["access"],
   ): Promise<void> {
     const current = this.settings?.gateway?.ws || {
-      access: 'localhost' as const,
+      access: "localhost" as const,
       port: 17888,
       allowedCidrs: [] as string[],
-    }
+    };
     await this.updateWsGatewaySettings({
       access,
       port: current.port,
       allowedCidrs: current.allowedCidrs ?? [],
-    })
+    });
   }
 
   async setWsGatewayPort(port: number): Promise<void> {
     const current = this.settings?.gateway?.ws || {
-      access: 'localhost' as const,
+      access: "localhost" as const,
       port: 17888,
       allowedCidrs: [] as string[],
-    }
-    const rounded = Math.floor(port)
+    };
+    const rounded = Math.floor(port);
     if (!Number.isInteger(rounded) || rounded <= 0 || rounded >= 65536) {
-      return
+      return;
     }
     await this.updateWsGatewaySettings({
       access: current.access,
       port: rounded,
       allowedCidrs: current.allowedCidrs ?? [],
-    })
+    });
   }
 
   private parseWsGatewayCidrsInput(cidrs: string): string[] {
     return cidrs
       .split(/[\n,]/)
       .map((s) => s.trim())
-      .filter((s) => s.length > 0)
+      .filter((s) => s.length > 0);
   }
 
   async setWsGatewayCidrs(cidrs: string): Promise<boolean> {
-    const parsed = this.parseWsGatewayCidrsInput(cidrs)
+    const parsed = this.parseWsGatewayCidrsInput(cidrs);
     const current = this.settings?.gateway?.ws || {
-      access: 'localhost' as const,
+      access: "localhost" as const,
       port: 17888,
       allowedCidrs: [] as string[],
-    }
-    if (current.access === 'custom' && parsed.length === 0) {
-      return false
+    };
+    if (current.access === "custom" && parsed.length === 0) {
+      return false;
     }
     await this.updateWsGatewaySettings({
       access: current.access,
       port: current.port,
       allowedCidrs: parsed,
-    })
-    return true
+    });
+    return true;
   }
 
   async setWsGatewayCustomCidrs(cidrs: string): Promise<boolean> {
-    const parsed = this.parseWsGatewayCidrsInput(cidrs)
+    const parsed = this.parseWsGatewayCidrsInput(cidrs);
     if (parsed.length === 0) {
-      return false
+      return false;
     }
     const current = this.settings?.gateway?.ws || {
-      access: 'localhost' as const,
+      access: "localhost" as const,
       port: 17888,
       allowedCidrs: [] as string[],
-    }
+    };
     await this.updateWsGatewaySettings({
-      access: 'custom',
+      access: "custom",
       port: current.port,
       allowedCidrs: parsed,
-    })
-    return true
+    });
+    return true;
   }
 
   private getExperimentalSettingsSnapshot(): NonNullable<
-    AppSettings['experimental']
+    AppSettings["experimental"]
   > {
     return {
       runtimeThinkingCorrectionEnabled:
@@ -1909,255 +1956,289 @@ export class AppStore {
         this.settings?.experimental?.execCommandActionModelEnabled !== false,
       writeStdinActionModelEnabled:
         this.settings?.experimental?.writeStdinActionModelEnabled !== false,
-    }
+    };
   }
 
   private async updateExperimentalSettings(
-    patch: Partial<NonNullable<AppSettings['experimental']>>,
+    patch: Partial<NonNullable<AppSettings["experimental"]>>,
   ): Promise<void> {
     const next = {
       ...this.getExperimentalSettingsSnapshot(),
       ...patch,
-    }
+    };
     runInAction(() => {
       if (this.settings) {
-        this.settings.experimental = next
+        this.settings.experimental = next;
       }
-    })
+    });
     await window.gyshell.settings.set({
       experimental: next,
-    })
+    });
   }
 
   async setRuntimeThinkingCorrectionEnabled(enabled: boolean): Promise<void> {
     await this.updateExperimentalSettings({
       runtimeThinkingCorrectionEnabled: enabled,
-    })
+    });
   }
 
   async setTaskFinishGuardEnabled(enabled: boolean): Promise<void> {
     await this.updateExperimentalSettings({
       taskFinishGuardEnabled: enabled,
-    })
+    });
   }
 
   async setFirstTurnThinkingModelEnabled(enabled: boolean): Promise<void> {
     await this.updateExperimentalSettings({
       firstTurnThinkingModelEnabled: enabled,
-    })
+    });
   }
 
   async setExecCommandActionModelEnabled(enabled: boolean): Promise<void> {
     await this.updateExperimentalSettings({
       execCommandActionModelEnabled: enabled,
-    })
+    });
   }
 
   async setWriteStdinActionModelEnabled(enabled: boolean): Promise<void> {
     await this.updateExperimentalSettings({
       writeStdinActionModelEnabled: enabled,
-    })
+    });
   }
 
   async openCustomThemeFile(): Promise<void> {
-    await window.gyshell.themes.openCustomConfig()
+    await window.gyshell.themes.openCustomConfig();
   }
 
   async reloadCustomThemes(): Promise<void> {
-    const themes = await window.gyshell.themes.reloadCustom()
+    const themes = await window.gyshell.themes.reloadCustom();
     runInAction(() => {
-      this.customThemes = themes
-    })
-    this.ensureThemeExists()
+      this.customThemes = themes;
+    });
+    this.ensureThemeExists();
   }
 
   async bootstrap(): Promise<void> {
-    if (this.isBootstrapped) return
-    const deferredUiUpdates: any[] = []
-    let deferUiUpdates = false
+    if (this.isBootstrapped) return;
+    const deferredUiUpdates: any[] = [];
+    let deferUiUpdates = false;
     const flushDeferredUiUpdates = () => {
-      if (!deferUiUpdates) return
-      deferUiUpdates = false
-      if (deferredUiUpdates.length === 0) return
-      const pending = deferredUiUpdates.splice(0, deferredUiUpdates.length)
+      if (!deferUiUpdates) return;
+      deferUiUpdates = false;
+      if (deferredUiUpdates.length === 0) return;
+      const pending = deferredUiUpdates.splice(0, deferredUiUpdates.length);
       pending.forEach((action) => {
-        this.chat.handleUiUpdate(action)
-      })
-    }
+        this.chat.handleUiUpdate(action);
+      });
+    };
     try {
+      window.gyshell.historyMigration.onStateChanged((state) => {
+        runInAction(() => {
+          this.historyMigrationState = state;
+        });
+      });
+      const initialHistoryMigrationState =
+        await window.gyshell.historyMigration.getState();
+      runInAction(() => {
+        this.historyMigrationState = initialHistoryMigrationState;
+      });
+      const settledHistoryMigrationState =
+        await window.gyshell.historyMigration.waitUntilSettled();
+      runInAction(() => {
+        this.historyMigrationState = settledHistoryMigrationState;
+      });
+      if (settledHistoryMigrationState.status === "error") {
+        return;
+      }
+
       const [backendSettings, uiSettings, customThemes] = await Promise.all([
         window.gyshell.settings.get(),
         window.gyshell.uiSettings.get(),
         window.gyshell.themes.getCustom(),
-      ])
+      ]);
       const settings = {
         ...backendSettings,
         ...uiSettings,
-      }
+      };
       const detachedWindowState: DetachedWindowState | null =
-        this.windowRole === 'detached' && WINDOW_CONTEXT.detachedStateToken
+        this.windowRole === "detached" && WINDOW_CONTEXT.detachedStateToken
           ? readDetachedWindowState(WINDOW_CONTEXT.detachedStateToken)
-          : null
+          : null;
       const effectiveLayout = detachedWindowState
         ? {
             ...(settings.layout || {}),
             v2: detachedWindowState.layoutTree,
           }
-        : settings.layout
+        : settings.layout;
       const normalizedSettings = effectiveLayout
         ? {
             ...settings,
             layout: effectiveLayout,
           }
-        : settings
+        : settings;
       const persistedChatInventoryState =
-        this.collectPersistedChatInventoryState(effectiveLayout)
+        this.collectPersistedChatInventoryState(effectiveLayout);
       const detachedVisibleTabIdsByKind =
         this.collectDetachedVisibleTabIdsByKind(
           detachedWindowState?.layoutTree,
-        )
-      const theme = resolveTheme(settings.themeId, customThemes)
-      applyAppThemeFromTerminalScheme(theme.terminal)
+        );
+      const theme = resolveTheme(settings.themeId, customThemes);
+      applyAppThemeFromTerminalScheme(theme.terminal);
       const xtermTheme = toXtermTheme(theme.terminal, {
         transparentBackground: true,
-      })
-      deferUiUpdates = persistedChatInventoryState.tabIds.length > 0
+      });
+      deferUiUpdates = persistedChatInventoryState.tabIds.length > 0;
 
       runInAction(() => {
-        this.settings = normalizedSettings
-        this.xtermTheme = xtermTheme
-        this.isBootstrapped = true
-        this.detachedVisibleTabIdsByKind = detachedVisibleTabIdsByKind
-        this.i18n.setLocale(normalizedSettings.language)
-        this.customThemes = customThemes
+        this.settings = normalizedSettings;
+        this.xtermTheme = xtermTheme;
+        this.isBootstrapped = true;
+        this.detachedVisibleTabIdsByKind = detachedVisibleTabIdsByKind;
+        this.i18n.setLocale(normalizedSettings.language);
+        this.customThemes = customThemes;
         this.chat.hydrateSessionInventoryFromLayout(
           persistedChatInventoryState.tabIds,
           persistedChatInventoryState.preferredActiveTabId,
-        )
-        this.layout.bootstrap()
+        );
+        this.layout.bootstrap();
         if (detachedWindowState?.fileEditorSnapshot) {
           this.fileEditor.restoreSnapshot(
             detachedWindowState.fileEditorSnapshot,
-          )
+          );
         }
-      })
+      });
 
       // Setup deterministic UI update listener (backend is the source of truth).
       // Register before awaiting hydration to avoid dropping updates emitted during startup.
       window.gyshell.agent.onUiUpdate((action) => {
         runInAction(() => {
           if (deferUiUpdates) {
-            deferredUiUpdates.push(action)
-            return
+            deferredUiUpdates.push(action);
+            return;
           }
-          this.chat.handleUiUpdate(action)
-        })
-      })
+          this.chat.handleUiUpdate(action);
+        });
+      });
 
       if (persistedChatInventoryState.tabIds.length > 0) {
         await this.chat.hydrateSessionsFromBackend(
           persistedChatInventoryState.tabIds,
           persistedChatInventoryState.preferredActiveTabId,
-        )
+        );
       }
       runInAction(() => {
-        flushDeferredUiUpdates()
-      })
+        flushDeferredUiUpdates();
+      });
 
       // Terminal exit should not auto-close tabs. UI tab lifecycle is user-driven.
       window.gyshell.terminal.onExit(() => {
         // No-op: runtime state is synchronized through terminal:tabs updates.
-      })
+      });
 
       window.gyshell.terminal.onTabsUpdated((payload) => {
         runInAction(() => {
-          this.reconcileTerminalTabs(payload)
-        })
-      })
-      this.ensureMonitorListener()
+          this.reconcileTerminalTabs(payload);
+        });
+      });
+      this.ensureMonitorListener();
 
       // MCP tool status updates
       window.gyshell.tools.onMcpUpdated((mcpTools) => {
         runInAction(() => {
-          this.mcpTools = mcpTools
-        })
-      })
+          this.mcpTools = mcpTools;
+        });
+      });
 
       window.gyshell.tools.onBuiltInUpdated((tools) => {
         runInAction(() => {
-          this.applyBuiltInToolStatusUpdate(tools)
-        })
-      })
+          this.applyBuiltInToolStatusUpdate(tools);
+        });
+      });
 
       // Skill status updates
       window.gyshell.skills.onUpdated((skills) => {
         runInAction(() => {
-          this.applySkillStatusUpdate(skills)
-        })
-      })
+          this.applySkillStatusUpdate(skills);
+        });
+      });
 
-      const terminalSnapshot = await window.gyshell.terminal.list()
+      const terminalSnapshot = await window.gyshell.terminal.list();
       if (terminalSnapshot.terminals.length > 0) {
         runInAction(() => {
-          this.reconcileTerminalTabs(terminalSnapshot)
+          this.reconcileTerminalTabs(terminalSnapshot);
           if (this.isDetachedWindow && detachedWindowState?.layoutTree) {
             this.detachedVisibleTabIdsByKind =
               this.collectDetachedVisibleTabIdsByKind(
                 detachedWindowState.layoutTree,
-              )
-            this.layout.syncPanelBindings()
+              );
+            this.layout.syncPanelBindings();
           }
-        })
+        });
       } else {
         runInAction(() => {
-          this.terminalTabs = []
-          this.terminalTabsHydrated = true
-          this.activeTerminalId = null
-        })
-        this.syncMonitorSessions()
+          this.terminalTabs = [];
+          this.terminalTabsHydrated = true;
+          this.activeTerminalId = null;
+        });
+        this.syncMonitorSessions();
         const ensurePanelForDefault =
-          this.windowRole === 'main' &&
-          this.isFirstLaunchDefaultLayout(effectiveLayout)
+          this.windowRole === "main" &&
+          this.isFirstLaunchDefaultLayout(effectiveLayout);
         const targetPanelId =
-          this.layout.getPrimaryPanelId('terminal') ||
+          this.layout.getPrimaryPanelId("terminal") ||
           (ensurePanelForDefault
-            ? this.layout.ensurePrimaryPanelForKind('terminal')
+            ? this.layout.ensurePrimaryPanelForKind("terminal")
             : null) ||
-          undefined
+          undefined;
         this.createLocalTab(targetPanelId, {
           ensurePanel: ensurePanelForDefault,
-        })
+        });
       }
 
       // Load tools status
-      void this.loadTools()
-      void this.loadSkills()
-      void this.loadMemory()
-      void this.loadCommandPolicyLists()
-      void this.loadAccessTokens()
-      void this.loadVersionState()
-      void this.loadMobileWebStatus()
-      void this.checkVersion({ showPopupOnVersionChange: true })
+      void this.loadTools();
+      void this.loadSkills();
+      void this.loadMemory();
+      void this.loadCommandPolicyLists();
+      void this.loadAccessTokens();
+      void this.loadVersionState();
+      void this.loadMobileWebStatus();
+      void this.checkVersion({ showPopupOnVersionChange: true });
     } catch (err) {
       runInAction(() => {
-        flushDeferredUiUpdates()
-      })
-      console.error('Failed to bootstrap settings', err)
+        flushDeferredUiUpdates();
+        if (
+          this.historyMigrationState &&
+          (this.historyMigrationState.blocking ||
+            this.historyMigrationState.status === "error")
+        ) {
+          this.historyMigrationState = {
+            ...this.historyMigrationState,
+            status: "error",
+            ready: false,
+            active: false,
+            blocking: true,
+            phase: "error",
+            error: err instanceof Error ? err.message : String(err),
+          };
+        }
+      });
+      console.error("Failed to bootstrap settings", err);
       runInAction(() => {
-        this.isBootstrapped = true
-        this.chat.hydrateSessionInventoryFromLayout([])
-      })
+        this.isBootstrapped = true;
+        this.chat.hydrateSessionInventoryFromLayout([]);
+      });
       if (this.terminalTabs.length === 0) {
-        this.createLocalTab(undefined, { ensurePanel: true })
+        this.createLocalTab(undefined, { ensurePanel: true });
       }
-      void this.loadTools()
-      void this.loadSkills()
-      void this.loadMemory()
-      void this.loadCommandPolicyLists()
-      void this.loadAccessTokens()
-      void this.loadVersionState()
-      void this.loadMobileWebStatus()
-      void this.checkVersion({ showPopupOnVersionChange: true })
+      void this.loadTools();
+      void this.loadSkills();
+      void this.loadMemory();
+      void this.loadCommandPolicyLists();
+      void this.loadAccessTokens();
+      void this.loadVersionState();
+      void this.loadMobileWebStatus();
+      void this.checkVersion({ showPopupOnVersionChange: true });
     }
   }
 
@@ -2165,67 +2246,67 @@ export class AppStore {
     targetPanelId?: string,
     options?: { ensurePanel?: boolean },
   ): string {
-    const id = `local-${uuidv4()}`
-    const title = this.getUniqueTitle('Local')
+    const id = `local-${uuidv4()}`;
+    const title = this.getUniqueTitle("Local");
     const cfg: TerminalConfig = {
-      type: 'local',
+      type: "local",
       id,
       title,
       cols: 80,
       rows: 24,
-    }
+    };
     const tab: TerminalTabModel = {
       id,
       title,
       config: cfg,
       capabilities: resolveTerminalConnectionCapabilities(cfg),
-      connectionRef: { type: 'local' },
-      runtimeState: 'initializing',
-    }
-    this.terminalTabs.push(tab)
-    this.terminalTabsHydrated = true
-    this.activeTerminalId = id
-    this.unsuppressTabs('terminal', [id], { syncLayout: false })
-    const shouldEnsurePanel = options?.ensurePanel === true
+      connectionRef: { type: "local" },
+      runtimeState: "initializing",
+    };
+    this.terminalTabs.push(tab);
+    this.terminalTabsHydrated = true;
+    this.activeTerminalId = id;
+    this.unsuppressTabs("terminal", [id], { syncLayout: false });
+    const shouldEnsurePanel = options?.ensurePanel === true;
     const resolvedPanelId =
       targetPanelId ||
-      this.layout.getPrimaryPanelId('terminal') ||
+      this.layout.getPrimaryPanelId("terminal") ||
       (shouldEnsurePanel
-        ? this.layout.ensurePrimaryPanelForKind('terminal')
+        ? this.layout.ensurePrimaryPanelForKind("terminal")
         : null) ||
-      undefined
+      undefined;
     if (resolvedPanelId) {
-      this.layout.attachTabToPanel('terminal', id, resolvedPanelId)
+      this.layout.attachTabToPanel("terminal", id, resolvedPanelId);
     } else {
-      this.layout.syncPanelBindings()
+      this.layout.syncPanelBindings();
     }
-    return id
+    return id;
   }
 
   createSshTab(entryId: string, targetPanelId?: string): string | null {
     const entry = this.settings?.connections?.ssh?.find(
       (x) => x.id === entryId,
-    )
+    );
     if (!entry) {
-      console.warn('SSH entry not found', entryId)
-      return null
+      console.warn("SSH entry not found", entryId);
+      return null;
     }
     const proxy = entry.proxyId
       ? this.settings?.connections?.proxies?.find((p) => p.id === entry.proxyId)
-      : undefined
+      : undefined;
     const tunnels = (entry.tunnelIds ?? [])
       .map((id) =>
         this.settings?.connections?.tunnels?.find((t) => t.id === id),
       )
-      .filter(Boolean) as any[]
-    const id = `ssh-${uuidv4()}`
-    const baseTitle = entry.name || `${entry.username}@${entry.host}`
-    const title = this.getUniqueTitle(baseTitle)
+      .filter(Boolean) as any[];
+    const id = `ssh-${uuidv4()}`;
+    const baseTitle = entry.name || `${entry.username}@${entry.host}`;
+    const title = this.getUniqueTitle(baseTitle);
     const jumpHost = (entry as any).jumpHost
       ? (toJS((entry as any).jumpHost) as any)
-      : undefined
+      : undefined;
     const cfg: TerminalConfig = {
-      type: 'ssh',
+      type: "ssh",
       id,
       title,
       cols: 80,
@@ -2241,91 +2322,91 @@ export class AppStore {
       proxy,
       tunnels,
       jumpHost,
-    } as any
+    } as any;
     const tab: TerminalTabModel = {
       id,
       title,
       config: cfg,
       capabilities: resolveTerminalConnectionCapabilities(cfg),
-      connectionRef: { type: 'ssh', entryId },
-      runtimeState: 'initializing',
-    }
-    this.terminalTabs.push(tab)
-    this.terminalTabsHydrated = true
-    this.activeTerminalId = id
-    this.unsuppressTabs('terminal', [id], { syncLayout: false })
+      connectionRef: { type: "ssh", entryId },
+      runtimeState: "initializing",
+    };
+    this.terminalTabs.push(tab);
+    this.terminalTabsHydrated = true;
+    this.activeTerminalId = id;
+    this.unsuppressTabs("terminal", [id], { syncLayout: false });
     const resolvedPanelId =
       targetPanelId ||
-      this.layout.getPrimaryPanelId('terminal') ||
-      this.layout.ensurePrimaryPanelForKind('terminal') ||
-      undefined
+      this.layout.getPrimaryPanelId("terminal") ||
+      this.layout.ensurePrimaryPanelForKind("terminal") ||
+      undefined;
     if (resolvedPanelId) {
-      this.layout.attachTabToPanel('terminal', id, resolvedPanelId)
+      this.layout.attachTabToPanel("terminal", id, resolvedPanelId);
     } else {
-      this.layout.syncPanelBindings()
+      this.layout.syncPanelBindings();
     }
-    return id
+    return id;
   }
 
   async saveSshConnection(
-    entry: AppSettings['connections']['ssh'][number],
+    entry: AppSettings["connections"]["ssh"][number],
   ): Promise<void> {
-    const current = this.settings ?? (await this.fetchCombinedSettings())
-    const plainEntry = toJS(entry)
-    const list = current.connections.ssh.slice().map((x) => toJS(x))
-    const nextList = upsertById(list, plainEntry)
+    const current = this.settings ?? (await this.fetchCombinedSettings());
+    const plainEntry = toJS(entry);
+    const list = current.connections.ssh.slice().map((x) => toJS(x));
+    const nextList = upsertById(list, plainEntry);
 
-    const nextConnections = { ...toJS(current.connections), ssh: nextList }
+    const nextConnections = { ...toJS(current.connections), ssh: nextList };
 
     runInAction(() => {
       if (this.settings) {
-        this.settings.connections.ssh = nextList as any
+        this.settings.connections.ssh = nextList as any;
       }
-    })
+    });
 
-    await window.gyshell.settings.set({ connections: nextConnections })
+    await window.gyshell.settings.set({ connections: nextConnections });
   }
 
   async deleteSshConnection(id: string): Promise<void> {
-    const current = this.settings ?? (await this.fetchCombinedSettings())
-    const list = removeById(current.connections.ssh, id).map((x) => toJS(x))
-    const nextConnections = { ...toJS(current.connections), ssh: list }
+    const current = this.settings ?? (await this.fetchCombinedSettings());
+    const list = removeById(current.connections.ssh, id).map((x) => toJS(x));
+    const nextConnections = { ...toJS(current.connections), ssh: list };
     runInAction(() => {
       if (this.settings) {
-        this.settings.connections.ssh = list as any
+        this.settings.connections.ssh = list as any;
       }
-    })
-    await window.gyshell.settings.set({ connections: nextConnections })
+    });
+    await window.gyshell.settings.set({ connections: nextConnections });
   }
 
   async saveModel(model: ModelDefinition): Promise<void> {
-    const current = this.settings ?? (await this.fetchCombinedSettings())
-    const items = current.models.items.slice().map((x) => toJS(x))
-    const modelSnapshot = toJS(model)
-    const structuredOutputMode: 'auto' | 'on' | 'off' =
-      modelSnapshot.structuredOutputMode === 'on' ||
-      modelSnapshot.structuredOutputMode === 'off'
+    const current = this.settings ?? (await this.fetchCombinedSettings());
+    const items = current.models.items.slice().map((x) => toJS(x));
+    const modelSnapshot = toJS(model);
+    const structuredOutputMode: "auto" | "on" | "off" =
+      modelSnapshot.structuredOutputMode === "on" ||
+      modelSnapshot.structuredOutputMode === "off"
         ? modelSnapshot.structuredOutputMode
-        : 'auto'
+        : "auto";
     const plainModel: ModelDefinition = {
       ...modelSnapshot,
       structuredOutputMode,
-      supportsStructuredOutput: structuredOutputMode === 'on',
+      supportsStructuredOutput: structuredOutputMode === "on",
       supportsObjectToolChoice: false,
       // Ensure profile is a plain object for IPC cloning
       profile: modelSnapshot.profile ? toJS(modelSnapshot.profile) : undefined,
-    }
-    let nextProfile: ModelDefinition['profile'] = {
+    };
+    let nextProfile: ModelDefinition["profile"] = {
       imageInputs: false,
       textOutputs: false,
       supportsStructuredOutput: false,
       supportsObjectToolChoice: false,
       testedAt: Date.now(),
       ok: false,
-      error: 'Probe failed',
-    }
+      error: "Probe failed",
+    };
     try {
-      const probeResult = await window.gyshell.models.probe(plainModel)
+      const probeResult = await window.gyshell.models.probe(plainModel);
       nextProfile = {
         imageInputs: probeResult.imageInputs,
         textOutputs: probeResult.textOutputs,
@@ -2334,7 +2415,7 @@ export class AppStore {
         testedAt: probeResult.testedAt,
         ok: probeResult.ok,
         error: probeResult.error,
-      }
+      };
     } catch (err) {
       nextProfile = {
         imageInputs: false,
@@ -2344,88 +2425,88 @@ export class AppStore {
         testedAt: Date.now(),
         ok: false,
         error: err instanceof Error ? err.message : String(err),
-      }
+      };
     }
     const nextModel: ModelDefinition = {
       ...plainModel,
       supportsStructuredOutput:
-        structuredOutputMode === 'auto'
+        structuredOutputMode === "auto"
           ? nextProfile.supportsStructuredOutput === true
-          : structuredOutputMode === 'on',
+          : structuredOutputMode === "on",
       supportsObjectToolChoice: nextProfile.supportsObjectToolChoice === true,
       profile: nextProfile,
-    }
-    const nextItems = upsertById(items, nextModel)
+    };
+    const nextItems = upsertById(items, nextModel);
 
-    const nextModels = { ...toJS(current.models), items: nextItems }
+    const nextModels = { ...toJS(current.models), items: nextItems };
 
     runInAction(() => {
       if (this.settings) {
-        this.settings.models = nextModels as any
+        this.settings.models = nextModels as any;
       }
-    })
-    await window.gyshell.settings.set({ models: nextModels })
+    });
+    await window.gyshell.settings.set({ models: nextModels });
   }
 
   async deleteModel(id: string): Promise<void> {
-    const current = this.settings ?? (await this.fetchCombinedSettings())
-    const items = removeById(current.models.items, id).map((x) => toJS(x))
-    const nextModels = { ...toJS(current.models), items }
+    const current = this.settings ?? (await this.fetchCombinedSettings());
+    const items = removeById(current.models.items, id).map((x) => toJS(x));
+    const nextModels = { ...toJS(current.models), items };
 
     runInAction(() => {
       if (this.settings) {
-        this.settings.models = nextModels as any
+        this.settings.models = nextModels as any;
       }
-    })
-    await window.gyshell.settings.set({ models: nextModels })
+    });
+    await window.gyshell.settings.set({ models: nextModels });
   }
 
   async saveProfile(
-    profile: AppSettings['models']['profiles'][number],
+    profile: AppSettings["models"]["profiles"][number],
   ): Promise<void> {
-    const current = this.settings ?? (await this.fetchCombinedSettings())
-    const profiles = current.models.profiles.slice().map((x) => toJS(x))
-    const plainProfile = toJS(profile)
-    const nextProfiles = upsertById(profiles, plainProfile)
+    const current = this.settings ?? (await this.fetchCombinedSettings());
+    const profiles = current.models.profiles.slice().map((x) => toJS(x));
+    const plainProfile = toJS(profile);
+    const nextProfiles = upsertById(profiles, plainProfile);
 
-    const nextModels = { ...toJS(current.models), profiles: nextProfiles }
+    const nextModels = { ...toJS(current.models), profiles: nextProfiles };
 
     runInAction(() => {
       if (this.settings) {
-        this.settings.models = nextModels as any
+        this.settings.models = nextModels as any;
       }
-    })
-    await window.gyshell.settings.set({ models: nextModels })
+    });
+    await window.gyshell.settings.set({ models: nextModels });
   }
 
   async deleteProfile(id: string): Promise<void> {
-    const current = this.settings ?? (await this.fetchCombinedSettings())
+    const current = this.settings ?? (await this.fetchCombinedSettings());
     const profiles = removeById(current.models.profiles, id).map((x) =>
       toJS(x),
-    )
+    );
     const currentCommandDraftProfileId = String(
-      current.commandDraft?.profileId || '',
-    ).trim()
+      current.commandDraft?.profileId || "",
+    ).trim();
     // If active profile is deleted, reset to first available or default
-    let activeProfileId = current.models.activeProfileId
+    let activeProfileId = current.models.activeProfileId;
     if (activeProfileId === id) {
-      activeProfileId = profiles[0]?.id || ''
+      activeProfileId = profiles[0]?.id || "";
     }
 
-    const nextModels = { ...toJS(current.models), profiles, activeProfileId }
+    const nextModels = { ...toJS(current.models), profiles, activeProfileId };
     const nextCommandDraftProfileId =
       currentCommandDraftProfileId === id
-        ? profiles[0]?.id || ''
-        : currentCommandDraftProfileId
+        ? profiles[0]?.id || ""
+        : currentCommandDraftProfileId;
 
     runInAction(() => {
       if (this.settings) {
-        this.settings.models = nextModels as any
+        this.settings.models = nextModels as any;
         this.settings.commandDraft = {
           profileId: nextCommandDraftProfileId,
-        }
+        };
       }
-    })
+    });
     await Promise.all([
       window.gyshell.settings.set({ models: nextModels }),
       window.gyshell.uiSettings.set({
@@ -2433,103 +2514,103 @@ export class AppStore {
           profileId: nextCommandDraftProfileId,
         },
       }),
-    ])
+    ]);
   }
 
   async setActiveProfile(id: string): Promise<void> {
-    const current = this.settings ?? (await this.fetchCombinedSettings())
-    const nextModels = { ...toJS(current.models), activeProfileId: id }
+    const current = this.settings ?? (await this.fetchCombinedSettings());
+    const nextModels = { ...toJS(current.models), activeProfileId: id };
 
     runInAction(() => {
       if (this.settings) {
-        this.settings.models.activeProfileId = id
+        this.settings.models.activeProfileId = id;
       }
-    })
-    await window.gyshell.settings.set({ models: nextModels })
+    });
+    await window.gyshell.settings.set({ models: nextModels });
   }
 
   async saveProxy(entry: ProxyEntry): Promise<void> {
-    const current = this.settings ?? (await this.fetchCombinedSettings())
-    const plainEntry = toJS(entry)
-    const list = current.connections.proxies.slice().map((x) => toJS(x))
-    const nextList = upsertById(list, plainEntry)
+    const current = this.settings ?? (await this.fetchCombinedSettings());
+    const plainEntry = toJS(entry);
+    const list = current.connections.proxies.slice().map((x) => toJS(x));
+    const nextList = upsertById(list, plainEntry);
 
-    const nextConnections = { ...toJS(current.connections), proxies: nextList }
+    const nextConnections = { ...toJS(current.connections), proxies: nextList };
     runInAction(() => {
       if (this.settings) {
-        this.settings.connections.proxies = nextList as any
+        this.settings.connections.proxies = nextList as any;
       }
-    })
-    await window.gyshell.settings.set({ connections: nextConnections })
+    });
+    await window.gyshell.settings.set({ connections: nextConnections });
   }
 
   async deleteProxy(id: string): Promise<void> {
-    const current = this.settings ?? (await this.fetchCombinedSettings())
+    const current = this.settings ?? (await this.fetchCombinedSettings());
     const list = removeById(current.connections.proxies, id).map((x) =>
       toJS(x),
-    )
-    const nextConnections = { ...toJS(current.connections), proxies: list }
+    );
+    const nextConnections = { ...toJS(current.connections), proxies: list };
     runInAction(() => {
       if (this.settings) {
-        this.settings.connections.proxies = list as any
+        this.settings.connections.proxies = list as any;
       }
-    })
-    await window.gyshell.settings.set({ connections: nextConnections })
+    });
+    await window.gyshell.settings.set({ connections: nextConnections });
   }
 
   async saveTunnel(entry: TunnelEntry): Promise<void> {
-    const current = this.settings ?? (await this.fetchCombinedSettings())
-    const plainEntry = toJS(entry)
-    const list = current.connections.tunnels.slice().map((x) => toJS(x))
-    const nextList = upsertById(list, plainEntry)
+    const current = this.settings ?? (await this.fetchCombinedSettings());
+    const plainEntry = toJS(entry);
+    const list = current.connections.tunnels.slice().map((x) => toJS(x));
+    const nextList = upsertById(list, plainEntry);
 
-    const nextConnections = { ...toJS(current.connections), tunnels: nextList }
+    const nextConnections = { ...toJS(current.connections), tunnels: nextList };
     runInAction(() => {
       if (this.settings) {
-        this.settings.connections.tunnels = nextList as any
+        this.settings.connections.tunnels = nextList as any;
       }
-    })
-    await window.gyshell.settings.set({ connections: nextConnections })
+    });
+    await window.gyshell.settings.set({ connections: nextConnections });
   }
 
   async deleteTunnel(id: string): Promise<void> {
-    const current = this.settings ?? (await this.fetchCombinedSettings())
+    const current = this.settings ?? (await this.fetchCombinedSettings());
     const list = removeById(current.connections.tunnels, id).map((x) =>
       toJS(x),
-    )
-    const nextConnections = { ...toJS(current.connections), tunnels: list }
+    );
+    const nextConnections = { ...toJS(current.connections), tunnels: list };
     runInAction(() => {
       if (this.settings) {
-        this.settings.connections.tunnels = list as any
+        this.settings.connections.tunnels = list as any;
       }
-    })
-    await window.gyshell.settings.set({ connections: nextConnections })
+    });
+    await window.gyshell.settings.set({ connections: nextConnections });
   }
 
   async closeTab(tabId: string): Promise<void> {
-    const idx = this.terminalTabs.findIndex((t) => t.id === tabId)
-    if (idx < 0) return
+    const idx = this.terminalTabs.findIndex((t) => t.id === tabId);
+    if (idx < 0) return;
 
-    const wasActive = this.activeTerminalId === tabId
-    const nextTabs = this.terminalTabs.slice()
-    nextTabs.splice(idx, 1)
+    const wasActive = this.activeTerminalId === tabId;
+    const nextTabs = this.terminalTabs.slice();
+    nextTabs.splice(idx, 1);
 
-    let nextActive: string | null = this.activeTerminalId
+    let nextActive: string | null = this.activeTerminalId;
     if (wasActive) {
-      nextActive = nextTabs[idx]?.id ?? nextTabs[idx - 1]?.id ?? null
+      nextActive = nextTabs[idx]?.id ?? nextTabs[idx - 1]?.id ?? null;
     }
 
     runInAction(() => {
-      this.terminalTabs = nextTabs
-      this.activeTerminalId = nextActive
-    })
-    this.unsuppressTabs('terminal', [tabId], { syncLayout: false })
-    this.layout.syncPanelBindings()
-    this.syncMonitorSessions()
+      this.terminalTabs = nextTabs;
+      this.activeTerminalId = nextActive;
+    });
+    this.unsuppressTabs("terminal", [tabId], { syncLayout: false });
+    this.layout.syncPanelBindings();
+    this.syncMonitorSessions();
 
     // Kill backend session (best-effort)
     try {
-      await window.gyshell.terminal.kill(tabId)
+      await window.gyshell.terminal.kill(tabId);
     } catch {
       // ignore
     }
@@ -2541,34 +2622,34 @@ export class AppStore {
   ): Promise<boolean> {
     const hasTerminal = this.fileSystemTabs.some(
       (tab) => tab.id === terminalId,
-    )
+    );
     if (!hasTerminal) {
-      return false
+      return false;
     }
-    this.setActiveTerminal(terminalId)
-    return await this.fileEditor.openFromFileSystem(terminalId, filePath)
+    this.setActiveTerminal(terminalId);
+    return await this.fileEditor.openFromFileSystem(terminalId, filePath);
   }
 
   async openChatSessionFromHistory(
     sessionId: string,
     options?: {
-      loadAgentContext?: boolean
-    }
+      loadAgentContext?: boolean;
+    },
   ): Promise<void> {
-    const normalizedSessionId = String(sessionId || '').trim()
+    const normalizedSessionId = String(sessionId || "").trim();
     if (!normalizedSessionId) {
-      return
+      return;
     }
 
-    this.chat.ensureSession(normalizedSessionId)
-    if (!this.layout.getPrimaryPanelId('chat')) {
-      this.layout.ensurePrimaryPanelForKind('chat')
+    this.chat.ensureSession(normalizedSessionId);
+    if (!this.layout.getPrimaryPanelId("chat")) {
+      this.layout.ensurePrimaryPanelForKind("chat");
     }
-    this.unsuppressTabs('chat', [normalizedSessionId])
+    this.unsuppressTabs("chat", [normalizedSessionId]);
     await this.chat.loadChatHistory(normalizedSessionId, {
       activate: true,
-      loadAgentContext: options?.loadAgentContext !== false
-    })
+      loadAgentContext: options?.loadAgentContext !== false,
+    });
   }
 
   async openDetachedFileEditorForPath(
@@ -2578,90 +2659,90 @@ export class AppStore {
     const snapshot: FileEditorSnapshot = {
       terminalId,
       filePath,
-      mode: 'loading',
-      content: '',
+      mode: "loading",
+      content: "",
       dirty: false,
       errorMessage: null,
       statusMessage: null,
-    }
+    };
 
     return await openDetachedWindowState({
       sourceClientId: this.windowClientId,
-      layoutTree: buildDetachedLayoutTree('fileEditor'),
+      layoutTree: buildDetachedLayoutTree("fileEditor"),
       createdAt: Date.now(),
       fileEditorSnapshot: snapshot,
-    })
+    });
   }
 
   canClosePanel(kind: PanelKind): boolean {
     // This guard is intentionally scoped to explicit in-workspace panel removal
     // flows (close, detach, cross-window move). Full window/app shutdown does
     // not block on dirty file editors.
-    if (kind !== 'fileEditor') {
-      return true
+    if (kind !== "fileEditor") {
+      return true;
     }
-    if (this.fileEditor.mode !== 'text' || !this.fileEditor.dirty) {
-      return true
+    if (this.fileEditor.mode !== "text" || !this.fileEditor.dirty) {
+      return true;
     }
-    return window.confirm(this.i18n.t.fileEditor.unsavedChangesConfirm)
+    return window.confirm(this.i18n.t.fileEditor.unsavedChangesConfirm);
   }
 
   onPanelRemoved(kind: PanelKind): void {
-    if (kind === 'fileEditor') {
-      this.fileEditor.clear()
+    if (kind === "fileEditor") {
+      this.fileEditor.clear();
     }
   }
 
   private sanitizeImageAttachmentForSend(
     image: InputImageAttachment,
   ): InputImageAttachment {
-    const attachmentId = String(image.attachmentId || '').trim()
-    const fileName = String(image.fileName || '').trim()
-    const mimeType = String(image.mimeType || '').trim()
-    const previewDataUrl = String(image.previewDataUrl || '').trim()
-    const sha256 = String(image.sha256 || '').trim()
+    const attachmentId = String(image.attachmentId || "").trim();
+    const fileName = String(image.fileName || "").trim();
+    const mimeType = String(image.mimeType || "").trim();
+    const previewDataUrl = String(image.previewDataUrl || "").trim();
+    const sha256 = String(image.sha256 || "").trim();
     const status =
-      image.status === 'ready' || image.status === 'missing'
+      image.status === "ready" || image.status === "missing"
         ? image.status
-        : undefined
+        : undefined;
     return {
       ...(attachmentId ? { attachmentId } : {}),
       ...(fileName ? { fileName } : {}),
       ...(mimeType ? { mimeType } : {}),
-      ...(typeof image.sizeBytes === 'number' &&
+      ...(typeof image.sizeBytes === "number" &&
       Number.isFinite(image.sizeBytes)
         ? { sizeBytes: image.sizeBytes }
         : {}),
       ...(sha256 ? { sha256 } : {}),
       ...(previewDataUrl ? { previewDataUrl } : {}),
       ...(status ? { status } : {}),
-    }
+    };
   }
 
   private async resolveInputImagesForSend(
     images: InputImageAttachment[] | undefined,
   ): Promise<InputImageAttachment[]> {
-    if (!Array.isArray(images) || images.length === 0) return []
-    const resolved: InputImageAttachment[] = []
+    if (!Array.isArray(images) || images.length === 0) return [];
+    const resolved: InputImageAttachment[] = [];
     for (const image of images) {
-      const attachmentId = String(image.attachmentId || '').trim()
+      const attachmentId = String(image.attachmentId || "").trim();
       if (attachmentId) {
-        resolved.push(this.sanitizeImageAttachmentForSend(image))
-        continue
+        resolved.push(this.sanitizeImageAttachmentForSend(image));
+        continue;
       }
 
-      const localFile = (image as any).localFile
+      const localFile = (image as any).localFile;
       if (localFile instanceof File) {
-        const dataBase64 = await readFileAsDataUrl(localFile)
+        const dataBase64 = await readFileAsDataUrl(localFile);
         const previewDataUrl =
-          String(image.previewDataUrl || '').trim() ||
-          (await createImagePreviewDataUrl(localFile).catch(() => ''))
+          String(image.previewDataUrl || "").trim() ||
+          (await createImagePreviewDataUrl(localFile).catch(() => ""));
         const saved = await window.gyshell.system.saveImageAttachment({
           dataBase64,
           fileName: image.fileName || localFile.name || undefined,
           mimeType: image.mimeType || localFile.type || undefined,
           ...(previewDataUrl ? { previewDataUrl } : {}),
-        })
+        });
         resolved.push(
           this.sanitizeImageAttachmentForSend({
             ...saved,
@@ -2670,118 +2751,118 @@ export class AppStore {
             sizeBytes: image.sizeBytes || saved.sizeBytes,
             previewDataUrl: previewDataUrl || saved.previewDataUrl,
           }),
-        )
-        continue
+        );
+        continue;
       }
     }
-    return resolved
+    return resolved;
   }
 
   private async resolveUserInputPayloadForSend(
     content: string | UserInputPayload,
   ): Promise<string | UserInputPayload> {
-    if (typeof content === 'string') return content
-    const text = typeof content?.text === 'string' ? content.text : ''
-    const images = await this.resolveInputImagesForSend(content?.images)
+    if (typeof content === "string") return content;
+    const text = typeof content?.text === "string" ? content.text : "";
+    const images = await this.resolveInputImagesForSend(content?.images);
     return {
       text,
       ...(images.length > 0 ? { images } : {}),
-    }
+    };
   }
 
   async sendChatMessage(
     sessionId: string,
     content: string | UserInputPayload,
-    options?: { mode?: 'normal' | 'queue' },
+    options?: { mode?: "normal" | "queue" },
   ): Promise<boolean> {
-    const mode = options?.mode || 'normal'
-    let targetSessionId = sessionId
+    const mode = options?.mode || "normal";
+    let targetSessionId = sessionId;
     if (!targetSessionId) {
-      targetSessionId = this.chat.createSession()
+      targetSessionId = this.chat.createSession();
     }
 
-    const session = this.chat.sessions.find((s) => s.id === targetSessionId)
-    const wasBusy = !!session?.isSessionBusy
-    if (mode === 'queue' && session?.isSessionBusy) {
-      console.warn('[AppStore] Session is busy, ignoring message.')
-      return false
+    const session = this.chat.sessions.find((s) => s.id === targetSessionId);
+    const wasBusy = !!session?.isSessionBusy;
+    if (mode === "queue" && session?.isSessionBusy) {
+      console.warn("[AppStore] Session is busy, ignoring message.");
+      return false;
     }
 
-    let resolvedContent: string | UserInputPayload
+    let resolvedContent: string | UserInputPayload;
     try {
-      resolvedContent = await this.resolveUserInputPayloadForSend(content)
+      resolvedContent = await this.resolveUserInputPayloadForSend(content);
     } catch (error) {
       console.error(
-        '[AppStore] Failed to resolve image attachments before send:',
+        "[AppStore] Failed to resolve image attachments before send:",
         error,
-      )
-      return false
+      );
+      return false;
     }
 
-    this.chat.setThinking(true, targetSessionId)
-    this.chat.setSessionBusy(true, targetSessionId)
+    this.chat.setThinking(true, targetSessionId);
+    this.chat.setSessionBusy(true, targetSessionId);
     if (!wasBusy) {
-      const activeProfileId = this.settings?.models.activeProfileId || ''
+      const activeProfileId = this.settings?.models.activeProfileId || "";
       this.chat.setSessionLockedProfile(
         targetSessionId,
         activeProfileId || null,
-      )
+      );
     }
 
-    const startMode = wasBusy && mode === 'normal' ? 'inserted' : 'normal'
+    const startMode = wasBusy && mode === "normal" ? "inserted" : "normal";
     window.gyshell.agent.startTask(targetSessionId, resolvedContent, {
       startMode,
-    })
-    return true
+    });
+    return true;
   }
 
   setActiveTerminal(id: string): void {
-    this.activeTerminalId = id
+    this.activeTerminalId = id;
   }
 
   getPreferredLocalTerminalId(): string | null {
-    const active = this.activeTerminal
-    if (active?.config?.type === 'local') {
-      return active.id
+    const active = this.activeTerminal;
+    if (active?.config?.type === "local") {
+      return active.id;
     }
     const fallback = this.terminalTabs.find(
-      (tab) => tab.config?.type === 'local',
-    )
-    return fallback?.id || null
+      (tab) => tab.config?.type === "local",
+    );
+    return fallback?.id || null;
   }
 
   setFileSystemClipboard(payload: FileSystemClipboardState | null): void {
-    this.fileSystemClipboard = cloneFileSystemClipboardState(payload)
+    this.fileSystemClipboard = cloneFileSystemClipboardState(payload);
   }
 
   clearFileSystemClipboard(): void {
-    this.fileSystemClipboard = null
+    this.fileSystemClipboard = null;
   }
 
   setTerminalSelection(terminalId: string, selectionText: string): void {
     this.terminalSelections = {
       ...this.terminalSelections,
       [terminalId]: selectionText,
-    }
+    };
   }
 
   getTerminalSelection(terminalId: string): string {
-    return this.terminalSelections[terminalId] || ''
+    return this.terminalSelections[terminalId] || "";
   }
 
   private ensureThemeExists(): void {
-    if (!this.settings) return
-    const themeId = this.settings.themeId
-    const theme = resolveTheme(themeId, this.customThemes)
+    if (!this.settings) return;
+    const themeId = this.settings.themeId;
+    const theme = resolveTheme(themeId, this.customThemes);
     if (theme.id !== themeId) {
-      void this.setThemeId(theme.id)
+      void this.setThemeId(theme.id);
     } else {
-      applyAppThemeFromTerminalScheme(theme.terminal)
+      applyAppThemeFromTerminalScheme(theme.terminal);
       runInAction(() => {
         this.xtermTheme = toXtermTheme(theme.terminal, {
           transparentBackground: true,
-        })
-      })
+        });
+      });
     }
   }
 }

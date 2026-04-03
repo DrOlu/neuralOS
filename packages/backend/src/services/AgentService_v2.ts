@@ -1,23 +1,37 @@
-import { ChatOpenAI } from '@langchain/openai'
-import { HumanMessage, AIMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages'
-import { mapChatMessagesToStoredMessages, mapStoredMessagesToChatMessages } from '@langchain/core/messages'
-import { convertToOpenAITool } from '@langchain/core/utils/function_calling'
-import { StateGraph, START, END, Annotation, MemorySaver } from '@langchain/langgraph'
-import { RunnableLambda } from '@langchain/core/runnables'
-import type { ChatSession, BackendSettings } from '../types'
-import { TerminalService } from './TerminalService'
+import { ChatOpenAI } from "@langchain/openai";
+import {
+  HumanMessage,
+  AIMessage,
+  ToolMessage,
+  type BaseMessage,
+} from "@langchain/core/messages";
+import {
+  mapChatMessagesToStoredMessages,
+  mapStoredMessagesToChatMessages,
+} from "@langchain/core/messages";
+import { convertToOpenAITool } from "@langchain/core/utils/function_calling";
+import {
+  StateGraph,
+  START,
+  END,
+  Annotation,
+  MemorySaver,
+} from "@langchain/langgraph";
+import { RunnableLambda } from "@langchain/core/runnables";
+import type { ChatSession, BackendSettings } from "../types";
+import { TerminalService } from "./TerminalService";
 import type {
   IChatHistoryRuntime,
   ICommandPolicyRuntime,
   IMcpRuntime,
   ISkillRuntime,
-  IMemoryRuntime
-} from './runtimeContracts'
-import type { UIHistoryService } from './UIHistoryService'
-import { v4 as uuidv4 } from 'uuid'
-import type { z } from 'zod'
-import type { StartTaskInput } from './Gateway/types'
-import type { StoredChatSession } from './ChatHistoryService'
+  IMemoryRuntime,
+} from "./runtimeContracts";
+import type { UIHistoryService } from "./UIHistoryService";
+import { v4 as uuidv4 } from "uuid";
+import type { z } from "zod";
+import type { StartTaskInput } from "./Gateway/types";
+import type { StoredChatSession } from "./ChatHistoryService";
 import {
   buildToolsForModel,
   execCommandSchema,
@@ -29,26 +43,28 @@ import {
   waitSchema,
   waitTerminalIdleSchema,
   waitCommandEndSchema,
-
   toolImplementations,
-  buildSkillToolDescription
-} from './AgentHelper/tools'
-import type { ToolExecutionContext } from './AgentHelper/types'
-import { AgentHelpers } from './AgentHelper/helpers'
-import { buildDebugRawResponse, captureRawResponseChunk } from './AgentHelper/utils/raw_response'
+  buildSkillToolDescription,
+} from "./AgentHelper/tools";
+import type { ToolExecutionContext } from "./AgentHelper/types";
+import { AgentHelpers } from "./AgentHelper/helpers";
+import {
+  buildDebugRawResponse,
+  captureRawResponseChunk,
+} from "./AgentHelper/utils/raw_response";
 import {
   buildDynamicRequestHistory,
   invokeWithRetryAndSanitizedInput,
-  stripRawResponseFromStoredMessages
-} from './AgentHelper/utils/model_messages'
-import { createStreamReasoningExtractor } from './AgentHelper/utils/stream_reasoning_extractor'
-import { resolveRunExperimentalFlags } from './AgentHelper/utils/experimental_flags'
-import { SelfCorrectionRuntimeManager } from './AgentHelper/utils/self_correction_runtime'
-import { removeUnmatchedToolCallsFromHistory } from './AgentHelper/utils/tool_call_history'
+  stripRawResponseFromStoredMessages,
+} from "./AgentHelper/utils/model_messages";
+import { createStreamReasoningExtractor } from "./AgentHelper/utils/stream_reasoning_extractor";
+import { resolveRunExperimentalFlags } from "./AgentHelper/utils/experimental_flags";
+import { SelfCorrectionRuntimeManager } from "./AgentHelper/utils/self_correction_runtime";
+import { removeUnmatchedToolCallsFromHistory } from "./AgentHelper/utils/tool_call_history";
 import {
   clearAllCompressionArtifacts,
-  sanitizeCompressionAfterRollback
-} from './AgentHelper/utils/history_compression_maintenance'
+  sanitizeCompressionAfterRollback,
+} from "./AgentHelper/utils/history_compression_maintenance";
 import {
   CONTINUE_INSTRUCTION_TAG,
   SELF_CORRECTION_INPUT_TAG,
@@ -74,129 +90,134 @@ import {
   createWriteStdinPolicyUserPrompt,
   hasAnyNormalUserInputTag,
   WHAT_HAVE_DONE_IN_THE_PAST_TAG,
-} from './AgentHelper/prompts'
-import { runSkillTool } from './AgentHelper/tools/skill_tools'
-import { TokenManager } from './AgentHelper/TokenManager'
-import { InputParseHelper } from './AgentHelper/InputParseHelper'
-import { ImageAttachmentService } from './ImageAttachmentService'
+} from "./AgentHelper/prompts";
+import { runSkillTool } from "./AgentHelper/tools/skill_tools";
+import { TokenManager } from "./AgentHelper/TokenManager";
+import { InputParseHelper } from "./AgentHelper/InputParseHelper";
+import { ImageAttachmentService } from "./ImageAttachmentService";
 
-const Ann: any = Annotation
-type StartupInputState = StartTaskInput | undefined
+const Ann: any = Annotation;
+type StartupInputState = StartTaskInput | undefined;
 
 const StateAnnotation = Ann.Root({
   // Runtime/Persistence Context - single source of truth for the whole graph
   messages: Ann({
     reducer: (x: BaseMessage[], y?: BaseMessage | BaseMessage[]) => {
-      if (!y) return x
+      if (!y) return x;
 
       if (Array.isArray(y)) {
-        return y
+        return y;
       }
-      return [...x, y]
+      return [...x, y];
     },
-    default: () => []
+    default: () => [],
   }),
   // Token State - tracked separately
   token_state: Ann({
-    reducer: (current: { current_tokens: number, max_tokens: number }, update?: Partial<{ current_tokens: number, max_tokens: number }>) => {
-      if (!update) return current
-      return { ...current, ...update }
+    reducer: (
+      current: { current_tokens: number; max_tokens: number },
+      update?: Partial<{ current_tokens: number; max_tokens: number }>,
+    ) => {
+      if (!update) return current;
+      return { ...current, ...update };
     },
-    default: () => ({ current_tokens: 0, max_tokens: 0 })
+    default: () => ({ current_tokens: 0, max_tokens: 0 }),
   }),
   // Add sessionId to the state to track which session this execution belongs to
   sessionId: Ann({
     reducer: (x: string, y?: string) => y ?? x,
-    default: () => ""
+    default: () => "",
   }),
   startup_input: Ann({
     reducer: (x: StartupInputState, y?: StartTaskInput) => y ?? x,
-    default: (): StartupInputState => undefined
+    default: (): StartupInputState => undefined,
   }),
   startup_mode: Ann({
-    reducer: (x: 'normal' | 'inserted', y?: 'normal' | 'inserted') => y ?? x,
-    default: () => 'normal'
+    reducer: (x: "normal" | "inserted", y?: "normal" | "inserted") => y ?? x,
+    default: () => "normal",
   }),
   pendingToolCalls: Ann({
     reducer: (x: any[], y?: any[] | any) => {
-      if (!y) return x
-      if (Array.isArray(y)) return y
-      return x
+      if (!y) return x;
+      if (Array.isArray(y)) return y;
+      return x;
     },
-    default: () => []
+    default: () => [],
   }),
   completionGuardDecision: Ann({
-    reducer: (x: 'end' | 'continue', y?: 'end' | 'continue') => y ?? x,
-    default: () => 'end'
+    reducer: (x: "end" | "continue", y?: "end" | "continue") => y ?? x,
+    default: () => "end",
   }),
   modelRequestPassCount: Ann({
-    reducer: (x: number, y?: number) => (typeof y === 'number' ? y : x),
-    default: () => 0
+    reducer: (x: number, y?: number) => (typeof y === "number" ? y : x),
+    default: () => 0,
   }),
   runtimeThinkingCorrectionEnabled: Ann({
-    reducer: (x: boolean, y?: boolean) => (typeof y === 'boolean' ? y : x),
-    default: () => true
+    reducer: (x: boolean, y?: boolean) => (typeof y === "boolean" ? y : x),
+    default: () => true,
   }),
   taskFinishGuardEnabled: Ann({
-    reducer: (x: boolean, y?: boolean) => (typeof y === 'boolean' ? y : x),
-    default: () => true
+    reducer: (x: boolean, y?: boolean) => (typeof y === "boolean" ? y : x),
+    default: () => true,
   }),
   firstTurnThinkingModelEnabled: Ann({
-    reducer: (x: boolean, y?: boolean) => (typeof y === 'boolean' ? y : x),
-    default: () => false
+    reducer: (x: boolean, y?: boolean) => (typeof y === "boolean" ? y : x),
+    default: () => false,
   }),
   execCommandActionModelEnabled: Ann({
-    reducer: (x: boolean, y?: boolean) => (typeof y === 'boolean' ? y : x),
-    default: () => true
+    reducer: (x: boolean, y?: boolean) => (typeof y === "boolean" ? y : x),
+    default: () => true,
   }),
   writeStdinActionModelEnabled: Ann({
-    reducer: (x: boolean, y?: boolean) => (typeof y === 'boolean' ? y : x),
-    default: () => true
-  })
-})
+    reducer: (x: boolean, y?: boolean) => (typeof y === "boolean" ? y : x),
+    default: () => true,
+  }),
+});
 
-const MODEL_RETRY_MAX = 4
-const MODEL_RETRY_DELAYS_MS = [1000, 2000, 4000, 6000]
-const COMPACTION_PROTECTED_NORMAL_USER_ROUNDS = 2
+const MODEL_RETRY_MAX = 4;
+const MODEL_RETRY_DELAYS_MS = [1000, 2000, 4000, 6000];
+const COMPACTION_PROTECTED_NORMAL_USER_ROUNDS = 2;
 
 interface SessionModelBinding {
-  profileId: string
-  model: ChatOpenAI
-  actionModel: ChatOpenAI
-  thinkingModel: ChatOpenAI
-  compactionModel: ChatOpenAI
-  actionModelSupportsStructuredOutput: boolean
-  actionModelSupportsObjectToolChoice: boolean
-  thinkingModelSupportsStructuredOutput: boolean
-  thinkingModelSupportsObjectToolChoice: boolean
-  compactionModelSupportsStructuredOutput: boolean
-  compactionModelSupportsObjectToolChoice: boolean
-  readFileSupport: { image: boolean }
-  toolsForModel: any[]
-  globalMaxTokens: number
-  thinkingMaxTokens: number
-  compactionMaxTokens: number
+  profileId: string;
+  model: ChatOpenAI;
+  actionModel: ChatOpenAI;
+  thinkingModel: ChatOpenAI;
+  compactionModel: ChatOpenAI;
+  actionModelSupportsStructuredOutput: boolean;
+  actionModelSupportsObjectToolChoice: boolean;
+  thinkingModelSupportsStructuredOutput: boolean;
+  thinkingModelSupportsObjectToolChoice: boolean;
+  compactionModelSupportsStructuredOutput: boolean;
+  compactionModelSupportsObjectToolChoice: boolean;
+  readFileSupport: { image: boolean };
+  toolsForModel: any[];
+  globalMaxTokens: number;
+  thinkingMaxTokens: number;
+  compactionMaxTokens: number;
 }
 
 export class AgentService_v2 {
-  private terminalService: TerminalService
-  private chatHistoryService: IChatHistoryRuntime
-  private commandPolicyService: ICommandPolicyRuntime
-  private mcpToolService: IMcpRuntime
-  private skillService: ISkillRuntime
-  private memoryService: IMemoryRuntime
-  private uiHistoryService: UIHistoryService
-  private settings: BackendSettings | null = null
+  private terminalService: TerminalService;
+  private chatHistoryService: IChatHistoryRuntime;
+  private commandPolicyService: ICommandPolicyRuntime;
+  private mcpToolService: IMcpRuntime;
+  private skillService: ISkillRuntime;
+  private memoryService: IMemoryRuntime;
+  private uiHistoryService: UIHistoryService;
+  private settings: BackendSettings | null = null;
 
-  private graph: any = null
-  private helpers: AgentHelpers
-  private checkpointer: MemorySaver
-  private builtInToolEnabled: Record<string, boolean> = {}
-  private lastAbortedMessage: BaseMessage | null = null
-  private sessionModelBindings: Map<string, SessionModelBinding> = new Map()
-  private selfCorrectionRuntimeManager = new SelfCorrectionRuntimeManager()
-  private waitForFeedback: ((messageId: string, timeoutMs?: number) => Promise<any | null>) | null = null
-  private imageAttachmentService: ImageAttachmentService | null = null
+  private graph: any = null;
+  private helpers: AgentHelpers;
+  private checkpointer: MemorySaver;
+  private builtInToolEnabled: Record<string, boolean> = {};
+  private lastAbortedMessage: BaseMessage | null = null;
+  private sessionModelBindings: Map<string, SessionModelBinding> = new Map();
+  private selfCorrectionRuntimeManager = new SelfCorrectionRuntimeManager();
+  private waitForFeedback:
+    | ((messageId: string, timeoutMs?: number) => Promise<any | null>)
+    | null = null;
+  private imageAttachmentService: ImageAttachmentService | null = null;
 
   constructor(
     terminalService: TerminalService,
@@ -206,167 +227,217 @@ export class AgentService_v2 {
     memoryService: IMemoryRuntime,
     uiHistoryService: UIHistoryService,
     chatHistoryService: IChatHistoryRuntime,
-    imageAttachmentService?: ImageAttachmentService
+    imageAttachmentService?: ImageAttachmentService,
   ) {
-    this.terminalService = terminalService
-    this.chatHistoryService = chatHistoryService
-    this.commandPolicyService = commandPolicyService
-    this.mcpToolService = mcpToolService
-    this.skillService = skillService
-    this.memoryService = memoryService
-    this.uiHistoryService = uiHistoryService
-    this.imageAttachmentService = imageAttachmentService || null
-    this.helpers = new AgentHelpers()
-    this.checkpointer = new MemorySaver()
-    this.initializeGraph()
+    this.terminalService = terminalService;
+    this.chatHistoryService = chatHistoryService;
+    this.commandPolicyService = commandPolicyService;
+    this.mcpToolService = mcpToolService;
+    this.skillService = skillService;
+    this.memoryService = memoryService;
+    this.uiHistoryService = uiHistoryService;
+    this.imageAttachmentService = imageAttachmentService || null;
+    this.helpers = new AgentHelpers();
+    this.checkpointer = new MemorySaver();
+    this.initializeGraph();
   }
 
   updateSettings(settings: BackendSettings): void {
-    this.settings = settings
-    this.builtInToolEnabled = settings.tools?.builtIn ?? {}
-    this.initializeGraph()
+    this.settings = settings;
+    this.builtInToolEnabled = settings.tools?.builtIn ?? {};
+    this.initializeGraph();
   }
 
   setEventPublisher(publisher: (sessionId: string, event: any) => void): void {
-    this.helpers.setEventPublisher(publisher)
+    this.helpers.setEventPublisher(publisher);
   }
 
-  setFeedbackWaiter(waiter: (messageId: string, timeoutMs?: number) => Promise<any | null>): void {
-    this.waitForFeedback = waiter
+  setFeedbackWaiter(
+    waiter: (messageId: string, timeoutMs?: number) => Promise<any | null>,
+  ): void {
+    this.waitForFeedback = waiter;
   }
 
   isAbortError(error: unknown): boolean {
-    return this.helpers.isAbortError(error)
+    return this.helpers.isAbortError(error);
   }
 
   private initializeGraph(): void {
-    const workflow = new StateGraph(StateAnnotation) as any
+    const workflow = new StateGraph(StateAnnotation) as any;
 
-    workflow.addNode('startup_message_builder', this.createStartupMessageBuilderNode())
-    workflow.addNode('token_pruner_runtime', this.createTokenManagerNode())
-    
-    workflow.addNode('model_request', this.createModelRequestNode())
-    workflow.addNode('batch_toolcall_executor', this.createBatchToolcallExecutorNode())
-    workflow.addNode('task_completion_guard', this.createTaskCompletionGuardNode())
-    workflow.addNode('tools', this.createToolsNode())
-    workflow.addNode('command_tools', this.createCommandToolsNode())
-    workflow.addNode('file_tools', this.createFileToolsNode())
-    workflow.addNode('read_file', this.createReadFileNode())
-    workflow.addNode('mcp_tools', this.createMcpToolsNode())
-    workflow.addNode('final_output', this.createFinalOutputNode())
+    workflow.addNode(
+      "startup_message_builder",
+      this.createStartupMessageBuilderNode(),
+    );
+    workflow.addNode("token_pruner_runtime", this.createTokenManagerNode());
 
-    workflow.addEdge(START, 'startup_message_builder')
-    workflow.addEdge('startup_message_builder', 'token_pruner_runtime')
-    workflow.addEdge('token_pruner_runtime', 'model_request')
-    
-    workflow.addEdge('model_request', 'batch_toolcall_executor')
+    workflow.addNode("model_request", this.createModelRequestNode());
+    workflow.addNode(
+      "batch_toolcall_executor",
+      this.createBatchToolcallExecutorNode(),
+    );
+    workflow.addNode(
+      "task_completion_guard",
+      this.createTaskCompletionGuardNode(),
+    );
+    workflow.addNode("tools", this.createToolsNode());
+    workflow.addNode("command_tools", this.createCommandToolsNode());
+    workflow.addNode("file_tools", this.createFileToolsNode());
+    workflow.addNode("read_file", this.createReadFileNode());
+    workflow.addNode("mcp_tools", this.createMcpToolsNode());
+    workflow.addNode("final_output", this.createFinalOutputNode());
+
+    workflow.addEdge(START, "startup_message_builder");
+    workflow.addEdge("startup_message_builder", "token_pruner_runtime");
+    workflow.addEdge("token_pruner_runtime", "model_request");
+
+    workflow.addEdge("model_request", "batch_toolcall_executor");
     workflow.addConditionalEdges(
-      'batch_toolcall_executor',
+      "batch_toolcall_executor",
       this.routeModelOutput,
-      ['tools', 'command_tools', 'file_tools', 'read_file', 'mcp_tools', 'task_completion_guard', 'final_output']
-    )
+      [
+        "tools",
+        "command_tools",
+        "file_tools",
+        "read_file",
+        "mcp_tools",
+        "task_completion_guard",
+        "final_output",
+      ],
+    );
 
     workflow.addConditionalEdges(
-      'task_completion_guard',
+      "task_completion_guard",
       this.routeCompletionGuardOutput,
-      ['token_pruner_runtime', 'final_output']
-    )
-    
-    workflow.addConditionalEdges(
-      'tools',
-      this.routeAfterToolCall,
-      ['tools', 'command_tools', 'file_tools', 'read_file', 'mcp_tools', 'token_pruner_runtime']
-    )
-    workflow.addConditionalEdges(
-      'command_tools',
-      this.routeAfterToolCall,
-      ['tools', 'command_tools', 'file_tools', 'read_file', 'mcp_tools', 'token_pruner_runtime']
-    )
-    workflow.addConditionalEdges(
-      'file_tools',
-      this.routeAfterToolCall,
-      ['tools', 'command_tools', 'file_tools', 'read_file', 'mcp_tools', 'token_pruner_runtime']
-    )
-    workflow.addConditionalEdges(
-      'read_file',
-      this.routeAfterToolCall,
-      ['tools', 'command_tools', 'file_tools', 'read_file', 'mcp_tools', 'token_pruner_runtime']
-    )
-    workflow.addConditionalEdges(
-      'mcp_tools',
-      this.routeAfterToolCall,
-      ['tools', 'command_tools', 'file_tools', 'read_file', 'mcp_tools', 'token_pruner_runtime']
-    )
-    
-    workflow.addEdge('final_output', END)
+      ["token_pruner_runtime", "final_output"],
+    );
 
-    this.graph = workflow.compile({ checkpointer: this.checkpointer })
+    workflow.addConditionalEdges("tools", this.routeAfterToolCall, [
+      "tools",
+      "command_tools",
+      "file_tools",
+      "read_file",
+      "mcp_tools",
+      "token_pruner_runtime",
+    ]);
+    workflow.addConditionalEdges("command_tools", this.routeAfterToolCall, [
+      "tools",
+      "command_tools",
+      "file_tools",
+      "read_file",
+      "mcp_tools",
+      "token_pruner_runtime",
+    ]);
+    workflow.addConditionalEdges("file_tools", this.routeAfterToolCall, [
+      "tools",
+      "command_tools",
+      "file_tools",
+      "read_file",
+      "mcp_tools",
+      "token_pruner_runtime",
+    ]);
+    workflow.addConditionalEdges("read_file", this.routeAfterToolCall, [
+      "tools",
+      "command_tools",
+      "file_tools",
+      "read_file",
+      "mcp_tools",
+      "token_pruner_runtime",
+    ]);
+    workflow.addConditionalEdges("mcp_tools", this.routeAfterToolCall, [
+      "tools",
+      "command_tools",
+      "file_tools",
+      "read_file",
+      "mcp_tools",
+      "token_pruner_runtime",
+    ]);
+
+    workflow.addEdge("final_output", END);
+
+    this.graph = workflow.compile({ checkpointer: this.checkpointer });
   }
 
-  private buildModelBindingFromProfileId(profileId: string): SessionModelBinding | null {
-    const settings = this.settings
-    if (!settings) return null
+  private buildModelBindingFromProfileId(
+    profileId: string,
+  ): SessionModelBinding | null {
+    const settings = this.settings;
+    if (!settings) return null;
 
-    const profile = settings.models.profiles.find((p) => p.id === profileId)
+    const profile = settings.models.profiles.find((p) => p.id === profileId);
     if (!profile) {
-      console.warn('[AgentService_v2] Profile not found for session binding:', profileId)
-      return null
+      console.warn(
+        "[AgentService_v2] Profile not found for session binding:",
+        profileId,
+      );
+      return null;
     }
 
-    const globalItem = settings.models.items.find((m) => m.id === profile.globalModelId)
+    const globalItem = settings.models.items.find(
+      (m) => m.id === profile.globalModelId,
+    );
     if (!globalItem || !globalItem.apiKey) {
-      console.warn('[AgentService_v2] Global model is invalid for session binding:', {
-        profileId,
-        globalModelId: profile.globalModelId
-      })
-      return null
+      console.warn(
+        "[AgentService_v2] Global model is invalid for session binding:",
+        {
+          profileId,
+          globalModelId: profile.globalModelId,
+        },
+      );
+      return null;
     }
 
     const actionItem = profile.actionModelId
       ? settings.models.items.find((m) => m.id === profile.actionModelId)
-      : undefined
+      : undefined;
     const thinkingItem = profile.thinkingModelId
       ? settings.models.items.find((m) => m.id === profile.thinkingModelId)
-      : undefined
+      : undefined;
     const compactionItem = profile.compactionModelId
       ? settings.models.items.find((m) => m.id === profile.compactionModelId)
-      : undefined
+      : undefined;
 
-    const model = this.helpers.createChatModel(globalItem, 0.7)
-    const actionModel = actionItem?.apiKey ? this.helpers.createChatModel(actionItem, 0.1) : model
-    const thinkingModel = thinkingItem?.apiKey ? this.helpers.createChatModel(thinkingItem, 0.2) : model
+    const model = this.helpers.createChatModel(globalItem, 0.7);
+    const actionModel = actionItem?.apiKey
+      ? this.helpers.createChatModel(actionItem, 0.1)
+      : model;
+    const thinkingModel = thinkingItem?.apiKey
+      ? this.helpers.createChatModel(thinkingItem, 0.2)
+      : model;
     const compactionModel = compactionItem?.apiKey
       ? this.helpers.createChatModel(compactionItem, 0.2)
-      : (thinkingItem?.apiKey ? thinkingModel : model)
+      : thinkingItem?.apiKey
+        ? thinkingModel
+        : model;
     const actionModelSupportsStructuredOutput = actionItem?.apiKey
       ? actionItem.supportsStructuredOutput === true
-      : globalItem.supportsStructuredOutput === true
+      : globalItem.supportsStructuredOutput === true;
     const actionModelSupportsObjectToolChoice = actionItem?.apiKey
       ? actionItem.supportsObjectToolChoice === true
-      : globalItem.supportsObjectToolChoice === true
+      : globalItem.supportsObjectToolChoice === true;
     const thinkingModelSupportsStructuredOutput = thinkingItem?.apiKey
       ? thinkingItem.supportsStructuredOutput === true
-      : globalItem.supportsStructuredOutput === true
+      : globalItem.supportsStructuredOutput === true;
     const thinkingModelSupportsObjectToolChoice = thinkingItem?.apiKey
       ? thinkingItem.supportsObjectToolChoice === true
-      : globalItem.supportsObjectToolChoice === true
+      : globalItem.supportsObjectToolChoice === true;
     const compactionModelSupportsStructuredOutput = compactionItem?.apiKey
       ? compactionItem.supportsStructuredOutput === true
-      : (thinkingItem?.apiKey
-          ? thinkingItem.supportsStructuredOutput === true
-          : globalItem.supportsStructuredOutput === true)
+      : thinkingItem?.apiKey
+        ? thinkingItem.supportsStructuredOutput === true
+        : globalItem.supportsStructuredOutput === true;
     const compactionModelSupportsObjectToolChoice = compactionItem?.apiKey
       ? compactionItem.supportsObjectToolChoice === true
-      : (thinkingItem?.apiKey
-          ? thinkingItem.supportsObjectToolChoice === true
-          : globalItem.supportsObjectToolChoice === true)
+      : thinkingItem?.apiKey
+        ? thinkingItem.supportsObjectToolChoice === true
+        : globalItem.supportsObjectToolChoice === true;
     const readFileSupport = this.helpers.computeReadFileSupport(
       globalItem.profile,
       actionItem?.apiKey ? actionItem.profile : undefined,
       thinkingItem?.apiKey ? thinkingItem.profile : undefined,
-      compactionItem?.apiKey ? compactionItem.profile : undefined
-    )
-    const toolsForModel = buildToolsForModel(readFileSupport)
+      compactionItem?.apiKey ? compactionItem.profile : undefined,
+    );
+    const toolsForModel = buildToolsForModel(readFileSupport);
 
     return {
       profileId,
@@ -382,185 +453,242 @@ export class AgentService_v2 {
       compactionModelSupportsObjectToolChoice,
       readFileSupport,
       toolsForModel,
-      globalMaxTokens: typeof globalItem.maxTokens === 'number' ? globalItem.maxTokens : 200000,
-      thinkingMaxTokens: typeof thinkingItem?.maxTokens === 'number'
-        ? thinkingItem.maxTokens
-        : (typeof globalItem.maxTokens === 'number' ? globalItem.maxTokens : 200000),
-      compactionMaxTokens: typeof compactionItem?.maxTokens === 'number'
-        ? compactionItem.maxTokens
-        : (typeof thinkingItem?.maxTokens === 'number'
+      globalMaxTokens:
+        typeof globalItem.maxTokens === "number"
+          ? globalItem.maxTokens
+          : 200000,
+      thinkingMaxTokens:
+        typeof thinkingItem?.maxTokens === "number"
+          ? thinkingItem.maxTokens
+          : typeof globalItem.maxTokens === "number"
+            ? globalItem.maxTokens
+            : 200000,
+      compactionMaxTokens:
+        typeof compactionItem?.maxTokens === "number"
+          ? compactionItem.maxTokens
+          : typeof thinkingItem?.maxTokens === "number"
             ? thinkingItem.maxTokens
-            : (typeof globalItem.maxTokens === 'number' ? globalItem.maxTokens : 200000))
-    }
+            : typeof globalItem.maxTokens === "number"
+              ? globalItem.maxTokens
+              : 200000,
+    };
   }
 
-  private ensureSessionModelBinding(sessionId: string, profileId: string): SessionModelBinding {
-    const existing = this.sessionModelBindings.get(sessionId)
+  private ensureSessionModelBinding(
+    sessionId: string,
+    profileId: string,
+  ): SessionModelBinding {
+    const existing = this.sessionModelBindings.get(sessionId);
     if (existing && existing.profileId === profileId) {
-      return existing
+      return existing;
     }
 
-    const next = this.buildModelBindingFromProfileId(profileId)
+    const next = this.buildModelBindingFromProfileId(profileId);
     if (!next) {
-      throw new Error(`Cannot initialize session model binding for profile: ${profileId}`)
+      throw new Error(
+        `Cannot initialize session model binding for profile: ${profileId}`,
+      );
     }
 
-    this.sessionModelBindings.set(sessionId, next)
-    return next
+    this.sessionModelBindings.set(sessionId, next);
+    return next;
   }
 
   private getSessionModelBinding(sessionId: string): SessionModelBinding {
-    const binding = this.sessionModelBindings.get(sessionId)
+    const binding = this.sessionModelBindings.get(sessionId);
     if (!binding) {
-      throw new Error(`Session model binding not found for session: ${sessionId}`)
+      throw new Error(
+        `Session model binding not found for session: ${sessionId}`,
+      );
     }
-    return binding
+    return binding;
   }
 
-  private getEffectiveMaxTokensFromBinding(binding: SessionModelBinding): number {
-    return Math.min(binding.globalMaxTokens, binding.thinkingMaxTokens, binding.compactionMaxTokens)
+  private getEffectiveMaxTokensFromBinding(
+    binding: SessionModelBinding,
+  ): number {
+    return Math.min(
+      binding.globalMaxTokens,
+      binding.thinkingMaxTokens,
+      binding.compactionMaxTokens,
+    );
   }
 
-  private getEffectiveMaxTokensForSession(sessionId: string): number | undefined {
-    const binding = this.sessionModelBindings.get(sessionId)
-    if (!binding) return undefined
-    return this.getEffectiveMaxTokensFromBinding(binding)
+  private getEffectiveMaxTokensForSession(
+    sessionId: string,
+  ): number | undefined {
+    const binding = this.sessionModelBindings.get(sessionId);
+    if (!binding) return undefined;
+    return this.getEffectiveMaxTokensFromBinding(binding);
   }
 
   releaseSessionModelBinding(sessionId: string): void {
-    this.sessionModelBindings.delete(sessionId)
-    this.selfCorrectionRuntimeManager.clearSession(sessionId)
+    this.sessionModelBindings.delete(sessionId);
+    this.selfCorrectionRuntimeManager.clearSession(sessionId);
   }
 
   // --- Graph Nodes ---
-  
+
   private createTokenManagerNode() {
     return RunnableLambda.from(async (state: any, config: any) => {
-      const messages: BaseMessage[] = Array.isArray(state.messages) ? state.messages : []
-      const tokenState = state.token_state || {}
-      const dynamicRequestView = buildDynamicRequestHistory(messages)
-      const estimatedRequestTokens = TokenManager.estimateMessages(dynamicRequestView)
-      const currentTokensForCheck = Math.max(tokenState.current_tokens || 0, estimatedRequestTokens)
-      if (!TokenManager.isOverflow(currentTokensForCheck, tokenState.max_tokens || 0)) {
-        return {}
+      const messages: BaseMessage[] = Array.isArray(state.messages)
+        ? state.messages
+        : [];
+      const tokenState = state.token_state || {};
+      const dynamicRequestView = buildDynamicRequestHistory(messages);
+      const estimatedRequestTokens =
+        TokenManager.estimateMessages(dynamicRequestView);
+      const currentTokensForCheck = Math.max(
+        tokenState.current_tokens || 0,
+        estimatedRequestTokens,
+      );
+      if (
+        !TokenManager.isOverflow(
+          currentTokensForCheck,
+          tokenState.max_tokens || 0,
+        )
+      ) {
+        return {};
       }
 
-      const pruneResult = TokenManager.applyPruneLabels(messages)
-      let nextMessages = pruneResult.messages
+      const pruneResult = TokenManager.applyPruneLabels(messages);
+      let nextMessages = pruneResult.messages;
       if (pruneResult.changed) {
         console.log(
-          `[TokenManager] Labeled ${pruneResult.newlyTaggedCount} messages for dynamic pruning (~${pruneResult.estimatedPrunedTokens} tokens, sessionId=${state.sessionId || 'unknown'})`
-        )
+          `[TokenManager] Labeled ${pruneResult.newlyTaggedCount} messages for dynamic pruning (~${pruneResult.estimatedPrunedTokens} tokens, sessionId=${state.sessionId || "unknown"})`,
+        );
       }
 
       if (pruneResult.newlyTaggedCount === 0) {
         const compactionResult = await this.tryCompactHistory(
           state.sessionId,
           nextMessages,
-          config?.signal
-        )
+          config?.signal,
+        );
         if (compactionResult.changed) {
-          nextMessages = compactionResult.messages
+          nextMessages = compactionResult.messages;
         }
       }
 
       if (nextMessages !== messages) {
-        return { messages: nextMessages }
+        return { messages: nextMessages };
       }
-      return {}
-    })
+      return {};
+    });
   }
 
   private createStartupMessageBuilderNode() {
     return RunnableLambda.from(async (state: any) => {
-      const sessionId = state.sessionId
-      if (!sessionId) return state
-      const sessionBinding = this.getSessionModelBinding(sessionId)
+      const sessionId = state.sessionId;
+      if (!sessionId) return state;
+      const sessionBinding = this.getSessionModelBinding(sessionId);
 
-      const startupInput: StartTaskInput = state.startup_input ?? ''
-      const startupMode: 'normal' | 'inserted' = state.startup_mode === 'inserted' ? 'inserted' : 'normal'
+      const startupInput: StartTaskInput = state.startup_input ?? "";
+      const startupMode: "normal" | "inserted" =
+        state.startup_mode === "inserted" ? "inserted" : "normal";
 
-      const messages: BaseMessage[] = [...state.messages]
+      const messages: BaseMessage[] = [...state.messages];
 
-      const userMessageId = uuidv4()
-      const { enrichedContent, displayContent, inputImages, modelImages } = await InputParseHelper.parseAndEnrich(
-        startupInput,
-        this.skillService,
-        this.terminalService,
-        {
-          userInputTag: startupMode === 'inserted' ? USER_INSERTED_INPUT_TAG : InputParseHelper.DEFAULT_USER_INPUT_TAG,
-          includeContextDetails: true,
-          userInputInstruction: startupMode === 'inserted' ? USER_INSERTED_INPUT_INSTRUCTION : undefined,
-          keepTaggedBodyLiteral: startupMode === 'inserted',
-          modelSupportsImage: sessionBinding.readFileSupport.image,
-          imageAttachmentService: this.imageAttachmentService || undefined
-        }
-      )
+      const userMessageId = uuidv4();
+      const { enrichedContent, displayContent, inputImages, modelImages } =
+        await InputParseHelper.parseAndEnrich(
+          startupInput,
+          this.skillService,
+          this.terminalService,
+          {
+            userInputTag:
+              startupMode === "inserted"
+                ? USER_INSERTED_INPUT_TAG
+                : InputParseHelper.DEFAULT_USER_INPUT_TAG,
+            includeContextDetails: true,
+            userInputInstruction:
+              startupMode === "inserted"
+                ? USER_INSERTED_INPUT_INSTRUCTION
+                : undefined,
+            keepTaggedBodyLiteral: startupMode === "inserted",
+            modelSupportsImage: sessionBinding.readFileSupport.image,
+            imageAttachmentService: this.imageAttachmentService || undefined,
+          },
+        );
 
-      let injectedUserContent = enrichedContent
-      if (startupMode === 'normal') {
-        const tabs = this.terminalService.getAllTerminals()
-        injectedUserContent = prependSystemInfoToUserInput(enrichedContent, tabs, sessionId)
+      let injectedUserContent = enrichedContent;
+      if (startupMode === "normal") {
+        const tabs = this.terminalService.getAllTerminals();
+        injectedUserContent = prependSystemInfoToUserInput(
+          enrichedContent,
+          tabs,
+          sessionId,
+        );
       }
 
       const humanMessageContent =
         modelImages.length > 0
           ? ([
-              { type: 'text', text: injectedUserContent || 'User attached image inputs.' },
+              {
+                type: "text",
+                text: injectedUserContent || "User attached image inputs.",
+              },
               ...modelImages.map((item) => ({
-                type: 'image_url' as const,
-                image_url: { url: item.dataUrl }
-              }))
+                type: "image_url" as const,
+                image_url: { url: item.dataUrl },
+              })),
             ] as any)
-          : injectedUserContent
+          : injectedUserContent;
 
-      const humanMessage = new HumanMessage(humanMessageContent)
-      ;(humanMessage as any).additional_kwargs = {
+      const humanMessage = new HumanMessage(humanMessageContent);
+      (humanMessage as any).additional_kwargs = {
         _gyshellMessageId: userMessageId,
         original_input: displayContent,
         input_kind: startupMode,
-        ...(inputImages.length > 0 ? { input_images: inputImages } : {})
-      }
+        ...(inputImages.length > 0 ? { input_images: inputImages } : {}),
+      };
 
       this.helpers.sendEvent(sessionId, {
         messageId: userMessageId,
-        type: 'user_input',
+        type: "user_input",
         content: displayContent,
         inputKind: startupMode,
-        ...(inputImages.length > 0 ? { inputImages } : {})
-      })
+        ...(inputImages.length > 0 ? { inputImages } : {}),
+      });
 
-      const memoryEnabled = this.settings?.memory?.enabled !== false
+      const memoryEnabled = this.settings?.memory?.enabled !== false;
 
       let memoryPrompt:
         | {
-            memoryFilePath: string
-            memoryContent: string
+            memoryFilePath: string;
+            memoryContent: string;
           }
-        | undefined
+        | undefined;
       if (memoryEnabled) {
         try {
-          const snapshot = await this.memoryService.getMemorySnapshot()
+          const snapshot = await this.memoryService.getMemorySnapshot();
           memoryPrompt = {
             memoryFilePath: snapshot.filePath,
-            memoryContent: snapshot.content
-          }
+            memoryContent: snapshot.content,
+          };
         } catch (error) {
-          console.warn('[AgentService_v2] Failed to load memory.md for system prompt injection:', error)
+          console.warn(
+            "[AgentService_v2] Failed to load memory.md for system prompt injection:",
+            error,
+          );
         }
       }
-      const baseSystemText = createBaseSystemPromptText(memoryPrompt)
-      const newMessages = upsertSingleSystemMessageByText([...messages, humanMessage], baseSystemText)
+      const baseSystemText = createBaseSystemPromptText(memoryPrompt);
+      const newMessages = upsertSingleSystemMessageByText(
+        [...messages, humanMessage],
+        baseSystemText,
+      );
 
-      const maxTokens = this.getEffectiveMaxTokensFromBinding(sessionBinding)
+      const maxTokens = this.getEffectiveMaxTokensFromBinding(sessionBinding);
 
-      let currentTokens = 0
+      let currentTokens = 0;
       for (let i = newMessages.length - 1; i >= 0; i--) {
-        const m = newMessages[i]
-        const usage = (m as any).usage_metadata || (m as any).additional_kwargs?.usage
+        const m = newMessages[i];
+        const usage =
+          (m as any).usage_metadata || (m as any).additional_kwargs?.usage;
         if (usage?.total_tokens) {
-          currentTokens = usage.total_tokens
-          break
+          currentTokens = usage.total_tokens;
+          break;
         }
       }
 
@@ -568,68 +696,92 @@ export class AgentService_v2 {
         messages: newMessages,
         token_state: {
           max_tokens: maxTokens,
-          current_tokens: currentTokens
-        }
-      }
-    })
+          current_tokens: currentTokens,
+        },
+      };
+    });
   }
 
   private createModelRequestNode() {
     return RunnableLambda.from(async (state: any, config: any) => {
-      const sessionId = state.sessionId
-      if (!sessionId) throw new Error('No session ID in state')
-      const sessionBinding = this.getSessionModelBinding(sessionId)
-      const runtimeThinkingCorrectionEnabled = state.runtimeThinkingCorrectionEnabled !== false
+      const sessionId = state.sessionId;
+      if (!sessionId) throw new Error("No session ID in state");
+      const sessionBinding = this.getSessionModelBinding(sessionId);
+      const runtimeThinkingCorrectionEnabled =
+        state.runtimeThinkingCorrectionEnabled !== false;
 
-      let fullHistoryMessages: BaseMessage[] = [...(state.messages as BaseMessage[])]
+      let fullHistoryMessages: BaseMessage[] = [
+        ...(state.messages as BaseMessage[]),
+      ];
 
-      const pendingInstruction = this.selfCorrectionRuntimeManager.consumePendingInstruction(sessionId)
+      const pendingInstruction =
+        this.selfCorrectionRuntimeManager.consumePendingInstruction(sessionId);
       if (pendingInstruction && runtimeThinkingCorrectionEnabled) {
         const selfCorrectionMessage = new HumanMessage(
-          `${SELF_CORRECTION_INPUT_TAG}${pendingInstruction.instruction}`
-        )
-        ;(selfCorrectionMessage as any).additional_kwargs = {
+          `${SELF_CORRECTION_INPUT_TAG}${pendingInstruction.instruction}`,
+        );
+        (selfCorrectionMessage as any).additional_kwargs = {
           _gyshellMessageId: uuidv4(),
-          input_kind: 'self_correction'
-        }
-        fullHistoryMessages = [...fullHistoryMessages, selfCorrectionMessage]
+          input_kind: "self_correction",
+        };
+        fullHistoryMessages = [...fullHistoryMessages, selfCorrectionMessage];
       }
 
-      const prevPassCount = typeof state.modelRequestPassCount === 'number' ? state.modelRequestPassCount : 0
-      const nextPassCount = prevPassCount + 1
+      const prevPassCount =
+        typeof state.modelRequestPassCount === "number"
+          ? state.modelRequestPassCount
+          : 0;
+      const nextPassCount = prevPassCount + 1;
       if (runtimeThinkingCorrectionEnabled && nextPassCount % 8 === 0) {
-        this.spawnSelfCorrectionAudit(sessionId, fullHistoryMessages, config?.signal, nextPassCount)
+        this.spawnSelfCorrectionAudit(
+          sessionId,
+          fullHistoryMessages,
+          config?.signal,
+          nextPassCount,
+        );
       }
 
       // Ensure we get the freshest list from disk
-      await this.skillService.reload()
-      const skills = await this.skillService.getEnabledSkills()
-      
+      await this.skillService.reload();
+      const skills = await this.skillService.getEnabledSkills();
+
       // Filter built-in tools based on the latest enabled status
-      const builtInTools = this.helpers.getEnabledBuiltInTools(sessionBinding.toolsForModel, this.builtInToolEnabled)
-      
+      const builtInTools = this.helpers.getEnabledBuiltInTools(
+        sessionBinding.toolsForModel,
+        this.builtInToolEnabled,
+      );
+
       // Update skill tool description with latest skills
-      const skillToolIndex = builtInTools.findIndex(t => t.function.name === 'skill')
+      const skillToolIndex = builtInTools.findIndex(
+        (t) => t.function.name === "skill",
+      );
       if (skillToolIndex !== -1) {
-        builtInTools[skillToolIndex].function.description = buildSkillToolDescription(skills)
+        builtInTools[skillToolIndex].function.description =
+          buildSkillToolDescription(skills);
       }
 
-      const mcpTools = this.mcpToolService.getActiveTools()
+      const mcpTools = this.mcpToolService.getActiveTools();
       const shouldUseThinkingModelOnThisPass =
-        state.firstTurnThinkingModelEnabled === true && nextPassCount === 1
-      const modelInputMessages = buildDynamicRequestHistory(fullHistoryMessages, {
-        modelSupportsImage: sessionBinding.readFileSupport.image
-      })
+        state.firstTurnThinkingModelEnabled === true && nextPassCount === 1;
+      const modelInputMessages = buildDynamicRequestHistory(
+        fullHistoryMessages,
+        {
+          modelSupportsImage: sessionBinding.readFileSupport.image,
+        },
+      );
       const baseModel = shouldUseThinkingModelOnThisPass
-        ? (sessionBinding.thinkingModel || sessionBinding.model)
-        : sessionBinding.model
-      const modelWithTools = baseModel.bindTools([...builtInTools, ...mcpTools])
+        ? sessionBinding.thinkingModel || sessionBinding.model
+        : sessionBinding.model;
+      const modelWithTools = baseModel.bindTools([
+        ...builtInTools,
+        ...mcpTools,
+      ]);
 
-      const messageId = uuidv4()
-      
-      let partialText = ''
-      let reasoningContent = ''
-      let debugRawChunks: any[] = []
+      const messageId = uuidv4();
+
+      let partialText = "";
+      let reasoningContent = "";
+      let debugRawChunks: any[] = [];
       const fullResponse = await invokeWithRetryAndSanitizedInput({
         helpers: this.helpers,
         messages: modelInputMessages,
@@ -637,707 +789,852 @@ export class AgentService_v2 {
         signal: config?.signal,
         operation: async (streamInputMessages) => {
           const stream = await modelWithTools.stream(streamInputMessages, {
-            signal: config?.signal
-          })
+            signal: config?.signal,
+          });
 
-          let response: any = null
-          const streamReasoningExtractor = createStreamReasoningExtractor()
-          const attemptDebugRawChunks: any[] = []
-          let activeReasoningBannerId: string | null = null
+          let response: any = null;
+          const streamReasoningExtractor = createStreamReasoningExtractor();
+          const attemptDebugRawChunks: any[] = [];
+          let activeReasoningBannerId: string | null = null;
 
           const startReasoningBanner = () => {
-            if (activeReasoningBannerId) return
-            activeReasoningBannerId = uuidv4()
+            if (activeReasoningBannerId) return;
+            activeReasoningBannerId = uuidv4();
             this.helpers.sendEvent(sessionId, {
               messageId: activeReasoningBannerId,
-              type: 'sub_tool_started',
-              title: 'Reasoning...',
-              hint: ''
-            })
-          }
+              type: "sub_tool_started",
+              title: "Reasoning...",
+              hint: "",
+            });
+          };
 
           const appendReasoningDelta = (delta: string) => {
-            if (!delta) return
-            startReasoningBanner()
+            if (!delta) return;
+            startReasoningBanner();
             this.helpers.sendEvent(sessionId, {
               messageId: activeReasoningBannerId as string,
-              type: 'sub_tool_delta',
-              outputDelta: delta
-            })
-          }
+              type: "sub_tool_delta",
+              outputDelta: delta,
+            });
+          };
 
           const finishReasoningBanner = () => {
-            if (!activeReasoningBannerId) return
+            if (!activeReasoningBannerId) return;
             this.helpers.sendEvent(sessionId, {
               messageId: activeReasoningBannerId,
-              type: 'sub_tool_finished'
-            })
-            activeReasoningBannerId = null
-          }
+              type: "sub_tool_finished",
+            });
+            activeReasoningBannerId = null;
+          };
           try {
             for await (const chunk of stream) {
-              const rawChunk = captureRawResponseChunk(chunk as any, attemptDebugRawChunks)
-              const extracted = streamReasoningExtractor.processChunk(chunk as any, rawChunk)
-              response = response ? response.concat(chunk) : chunk
-              const rawDelta = this.helpers.extractText(chunk.content)
+              const rawChunk = captureRawResponseChunk(
+                chunk as any,
+                attemptDebugRawChunks,
+              );
+              const extracted = streamReasoningExtractor.processChunk(
+                chunk as any,
+                rawChunk,
+              );
+              response = response ? response.concat(chunk) : chunk;
+              const rawDelta = this.helpers.extractText(chunk.content);
               if (rawDelta) {
-                partialText += rawDelta
+                partialText += rawDelta;
               }
               if (extracted.reasoning) {
-                appendReasoningDelta(extracted.reasoning)
+                appendReasoningDelta(extracted.reasoning);
               } else {
-                finishReasoningBanner()
+                finishReasoningBanner();
               }
               if (extracted.content) {
                 this.helpers.sendEvent(sessionId, {
                   messageId,
-                  type: 'say',
-                  content: extracted.content
-                })
+                  type: "say",
+                  content: extracted.content,
+                });
               }
             }
-            const pendingContent = streamReasoningExtractor.flushPendingContent()
+            const pendingContent =
+              streamReasoningExtractor.flushPendingContent();
             if (pendingContent) {
               this.helpers.sendEvent(sessionId, {
                 messageId,
-                type: 'say',
-                content: pendingContent
-              })
+                type: "say",
+                content: pendingContent,
+              });
             }
-            finishReasoningBanner()
+            finishReasoningBanner();
           } catch (err) {
-            finishReasoningBanner()
+            finishReasoningBanner();
             if (partialText.trim()) {
               this.lastAbortedMessage = new AIMessage({
                 content: partialText,
-                additional_kwargs: { _gyshellMessageId: messageId, _gyshellAborted: true }
-              })
-              console.log('[AgentService_v2] Captured partial message from error/abort in instance variable.')
+                additional_kwargs: {
+                  _gyshellMessageId: messageId,
+                  _gyshellAborted: true,
+                },
+              });
+              console.log(
+                "[AgentService_v2] Captured partial message from error/abort in instance variable.",
+              );
             }
-            throw err
+            throw err;
           }
-          reasoningContent = streamReasoningExtractor.getReasoningContent()
-          debugRawChunks = attemptDebugRawChunks
-          return response
+          reasoningContent = streamReasoningExtractor.getReasoningContent();
+          debugRawChunks = attemptDebugRawChunks;
+          return response;
         },
         onRetry: (attempt) => {
           this.helpers.sendEvent(sessionId, {
-            type: 'alert',
+            type: "alert",
             message: `Retrying (${attempt}/${MODEL_RETRY_MAX})...`,
-            level: 'info',
-            messageId: `retry-${messageId}-${attempt}`
-          })
+            level: "info",
+            messageId: `retry-${messageId}-${attempt}`,
+          });
         },
         maxRetries: MODEL_RETRY_MAX,
-        delaysMs: MODEL_RETRY_DELAYS_MS
-      })
+        delaysMs: MODEL_RETRY_DELAYS_MS,
+      });
 
       fullResponse.additional_kwargs = {
         ...(fullResponse.additional_kwargs || {}),
-        _gyshellMessageId: messageId
-      }
+        _gyshellMessageId: messageId,
+      };
       if (reasoningContent) {
-        fullResponse.additional_kwargs.reasoning_content = reasoningContent
+        fullResponse.additional_kwargs.reasoning_content = reasoningContent;
       }
       if (this.shouldKeepDebugPayloadInPersistence()) {
-        const persistedRawResponse = buildDebugRawResponse(debugRawChunks)
-        if (typeof persistedRawResponse !== 'undefined') {
-          fullResponse.additional_kwargs.__raw_response = persistedRawResponse
+        const persistedRawResponse = buildDebugRawResponse(debugRawChunks);
+        if (typeof persistedRawResponse !== "undefined") {
+          fullResponse.additional_kwargs.__raw_response = persistedRawResponse;
         }
       } else if (fullResponse.additional_kwargs?.__raw_response) {
-        delete fullResponse.additional_kwargs.__raw_response
+        delete fullResponse.additional_kwargs.__raw_response;
       }
 
       // Extract usage metadata if available
-      const usage = (fullResponse as any).usage_metadata || (fullResponse as any).additional_kwargs?.usage
-      let currentTokens = state.token_state.current_tokens
-      
+      const usage =
+        (fullResponse as any).usage_metadata ||
+        (fullResponse as any).additional_kwargs?.usage;
+      let currentTokens = state.token_state.current_tokens;
+
       if (usage) {
-        currentTokens = usage.total_tokens || usage.totalTokens || 0
-        const modelName = (fullResponse as any).response_metadata?.model_name
-          || (baseModel as any)?.modelName
-          || 'unknown'
+        currentTokens = usage.total_tokens || usage.totalTokens || 0;
+        const modelName =
+          (fullResponse as any).response_metadata?.model_name ||
+          (baseModel as any)?.modelName ||
+          "unknown";
         this.helpers.sendEvent(sessionId, {
-          type: 'tokens_count',
+          type: "tokens_count",
           modelName,
           totalTokens: currentTokens,
-          maxTokens: state.token_state.max_tokens // Use static max from state
-        })
+          maxTokens: state.token_state.max_tokens, // Use static max from state
+        });
       }
 
       // Always reset pendingToolCalls here to avoid stale queue influencing routing.
-      return { 
-          messages: [...fullHistoryMessages, fullResponse],
-          token_state: { current_tokens: currentTokens },
-          sessionId,
-          pendingToolCalls: [],
-          modelRequestPassCount: nextPassCount
-      }
-    })
+      return {
+        messages: [...fullHistoryMessages, fullResponse],
+        token_state: { current_tokens: currentTokens },
+        sessionId,
+        pendingToolCalls: [],
+        modelRequestPassCount: nextPassCount,
+      };
+    });
   }
 
   private createBatchToolcallExecutorNode() {
     return RunnableLambda.from(async (state: any) => {
-      const sessionId = state.sessionId
-      if (!sessionId) throw new Error('No session ID in state')
+      const sessionId = state.sessionId;
+      if (!sessionId) throw new Error("No session ID in state");
 
-      const messages: BaseMessage[] = [...state.messages]
-      const lastMessage = messages[messages.length - 1]
+      const messages: BaseMessage[] = [...state.messages];
+      const lastMessage = messages[messages.length - 1];
 
-      let pendingToolCalls: any[] = []
+      let pendingToolCalls: any[] = [];
 
       if (!AIMessage.isInstance(lastMessage)) {
-        return { messages, sessionId, pendingToolCalls }
+        return { messages, sessionId, pendingToolCalls };
       }
 
-      const toolCalls: any[] = Array.isArray((lastMessage as any).tool_calls) ? (lastMessage as any).tool_calls : []
+      const toolCalls: any[] = Array.isArray((lastMessage as any).tool_calls)
+        ? (lastMessage as any).tool_calls
+        : [];
 
       // Always clean tool-call chunk/invalid metadata to prevent context bloat,
       // and then decide how many tool calls we keep/enqueue.
       if (!toolCalls || toolCalls.length === 0) {
-        this.cleanupModelToolCallMetadata(lastMessage, [])
-        return { messages, sessionId, pendingToolCalls }
+        this.cleanupModelToolCallMetadata(lastMessage, []);
+        return { messages, sessionId, pendingToolCalls };
       }
 
       // If only one tool call, just enqueue it and continue (no extra checks needed).
       if (toolCalls.length === 1) {
-        pendingToolCalls = toolCalls.slice(0, 1)
-        this.cleanupModelToolCallMetadata(lastMessage, pendingToolCalls)
-        return { messages, sessionId, pendingToolCalls }
+        pendingToolCalls = toolCalls.slice(0, 1);
+        this.cleanupModelToolCallMetadata(lastMessage, pendingToolCalls);
+        return { messages, sessionId, pendingToolCalls };
       }
 
-    // If ANY exec_command is present, force single-tool: keep only the first tool call.
-      const hasExecCommand = toolCalls.some((tc) => tc?.name === 'exec_command')
+      // If ANY exec_command is present, force single-tool: keep only the first tool call.
+      const hasExecCommand = toolCalls.some(
+        (tc) => tc?.name === "exec_command",
+      );
       if (hasExecCommand) {
-        pendingToolCalls = toolCalls.slice(0, 1)
-        this.cleanupModelToolCallMetadata(lastMessage, pendingToolCalls)
-        return { messages, sessionId, pendingToolCalls }
+        pendingToolCalls = toolCalls.slice(0, 1);
+        this.cleanupModelToolCallMetadata(lastMessage, pendingToolCalls);
+        return { messages, sessionId, pendingToolCalls };
       }
 
-      const skillCall = toolCalls.find((tc) => tc?.name === 'skill')
+      const skillCall = toolCalls.find((tc) => tc?.name === "skill");
       if (skillCall) {
-        pendingToolCalls = [skillCall]
-        this.cleanupModelToolCallMetadata(lastMessage, pendingToolCalls)
-        return { messages, sessionId, pendingToolCalls }
+        pendingToolCalls = [skillCall];
+        this.cleanupModelToolCallMetadata(lastMessage, pendingToolCalls);
+        return { messages, sessionId, pendingToolCalls };
       }
 
       // Otherwise (no exec_command), allow executing ALL tool calls sequentially.
-      pendingToolCalls = toolCalls.slice()
-      this.cleanupModelToolCallMetadata(lastMessage, pendingToolCalls)
-      return { messages, sessionId, pendingToolCalls }
-    })
+      pendingToolCalls = toolCalls.slice();
+      this.cleanupModelToolCallMetadata(lastMessage, pendingToolCalls);
+      return { messages, sessionId, pendingToolCalls };
+    });
   }
 
   private createToolsNode() {
     return RunnableLambda.from(async (state: any, config: any) => {
       const sessionId = state.sessionId;
-      if (!sessionId) throw new Error('No session ID in state')
-      const sessionBinding = this.getSessionModelBinding(sessionId)
+      if (!sessionId) throw new Error("No session ID in state");
+      const sessionBinding = this.getSessionModelBinding(sessionId);
 
-      const queue: any[] = Array.isArray(state.pendingToolCalls) ? state.pendingToolCalls : []
-      const toolCall = queue[0]
-      if (!toolCall) return state
+      const queue: any[] = Array.isArray(state.pendingToolCalls)
+        ? state.pendingToolCalls
+        : [];
+      const toolCall = queue[0];
+      if (!toolCall) return state;
 
-      const toolMessage = this.createToolMessage(toolCall)
+      const toolMessage = this.createToolMessage(toolCall);
       const executionContext = this.createExecutionContext(
         sessionId,
         toolMessage.additional_kwargs._gyshellMessageId as string,
-        config
-      )
-      const messageHistory: BaseMessage[] = state.messages
-      let result = ''
+        config,
+      );
+      const messageHistory: BaseMessage[] = state.messages;
+      let result = "";
       switch (toolCall.name) {
-        case 'skill': {
-          let args: any = toolCall.args || {}
-          if (typeof args === 'string') {
+        case "skill": {
+          let args: any = toolCall.args || {};
+          if (typeof args === "string") {
             try {
-              args = this.helpers.parseStrictJsonObject(args)
+              args = this.helpers.parseStrictJsonObject(args);
             } catch {
-              args = {}
+              args = {};
             }
           }
-          const messageId = toolMessage.additional_kwargs._gyshellMessageId as string
+          const messageId = toolMessage.additional_kwargs
+            ._gyshellMessageId as string;
           this.helpers.sendEvent(sessionId, {
             messageId,
-            type: 'sub_tool_started',
-            title: 'Skill',
-            hint: `${args.name || 'unknown'}...`,
-            input: JSON.stringify(args)
-          })
-          const outcome = await runSkillTool(args, this.skillService, config?.signal)
-          result = outcome.message
+            type: "sub_tool_started",
+            title: "Skill",
+            hint: `${args.name || "unknown"}...`,
+            input: JSON.stringify(args),
+          });
+          const outcome = await runSkillTool(
+            args,
+            this.skillService,
+            config?.signal,
+          );
+          result = outcome.message;
 
           // Only emit content delta on success: error messages do not contain USEFUL_SKILL_TAG
           // and splitting by it would yield undefined at index [1].
-          if (outcome.kind === 'text') {
-            const skillContent = result.split(USEFUL_SKILL_TAG)[1].trim()
+          if (outcome.kind === "text") {
+            const skillContent = result.split(USEFUL_SKILL_TAG)[1].trim();
             this.helpers.sendEvent(sessionId, {
               messageId,
-              type: 'sub_tool_delta',
-              outputDelta: skillContent
-            })
+              type: "sub_tool_delta",
+              outputDelta: skillContent,
+            });
           }
 
           this.helpers.sendEvent(sessionId, {
             messageId,
-            type: 'sub_tool_finished'
-          })
-          break
+            type: "sub_tool_finished",
+          });
+          break;
         }
-        case 'create_skill': {
-          let args: any = toolCall.args || {}
-          if (typeof args === 'string') {
+        case "create_skill": {
+          let args: any = toolCall.args || {};
+          if (typeof args === "string") {
             try {
-              args = this.helpers.parseStrictJsonObject(args)
+              args = this.helpers.parseStrictJsonObject(args);
             } catch {
-              args = {}
+              args = {};
             }
           }
-          const messageId = toolMessage.additional_kwargs._gyshellMessageId as string
-          const outcome = await toolImplementations.runCreateSkillTool(args, this.skillService, config?.signal)
-          result = outcome.message
-          
+          const messageId = toolMessage.additional_kwargs
+            ._gyshellMessageId as string;
+          const outcome = await toolImplementations.runCreateSkillTool(
+            args,
+            this.skillService,
+            config?.signal,
+          );
+          result = outcome.message;
+
           // Force a reload of the graph to pick up the new tool definition if needed,
           // though the dynamic fetching in model_request node should handle it.
           // But we must ensure the local toolsForModel is updated if we use it elsewhere.
-          
+
           this.helpers.sendEvent(sessionId, {
             messageId,
-            type: 'tool_call',
-            toolName: 'create_skill',
+            type: "tool_call",
+            toolName: "create_skill",
             input: JSON.stringify(args),
-            output: result
-          })
-          break
+            output: result,
+          });
+          break;
         }
-        case 'read_terminal_tab': {
+        case "read_terminal_tab": {
           try {
-            const validatedArgs = readTerminalTabSchema.parse(toolCall.args || {})
-            result = await toolImplementations.readTerminalTab(validatedArgs, executionContext)
+            const validatedArgs = readTerminalTabSchema.parse(
+              toolCall.args || {},
+            );
+            result = await toolImplementations.readTerminalTab(
+              validatedArgs,
+              executionContext,
+            );
           } catch (err) {
-            result = `Parameter validation error for read_terminal_tab: ${(err as Error).message}`
+            result = `Parameter validation error for read_terminal_tab: ${(err as Error).message}`;
           }
-          break
+          break;
         }
-        case 'read_command_output': {
+        case "read_command_output": {
           try {
-            const validatedArgs = readCommandOutputSchema.parse(toolCall.args || {})
-            result = await toolImplementations.readCommandOutput(validatedArgs, executionContext)
+            const validatedArgs = readCommandOutputSchema.parse(
+              toolCall.args || {},
+            );
+            result = await toolImplementations.readCommandOutput(
+              validatedArgs,
+              executionContext,
+            );
           } catch (err) {
-            result = `Parameter validation error for read_command_output: ${(err as Error).message}`
+            result = `Parameter validation error for read_command_output: ${(err as Error).message}`;
           }
-          break
+          break;
         }
-        case 'write_stdin': {
+        case "write_stdin": {
           try {
-            const validatedArgs = writeStdinSchema.parse(toolCall.args || {})
+            const validatedArgs = writeStdinSchema.parse(toolCall.args || {});
             // const messageId = toolMessage.additional_kwargs._gyshellMessageId as string
 
-            if (state.writeStdinActionModelEnabled !== false && sessionBinding.actionModel) {
+            if (
+              state.writeStdinActionModelEnabled !== false &&
+              sessionBinding.actionModel
+            ) {
               // Build temporary history for action model
-              const finalActionMessages = this.helpers.buildActionModelHistory(state.messages as BaseMessage[])
+              const finalActionMessages = this.helpers.buildActionModelHistory(
+                state.messages as BaseMessage[],
+              );
 
               // Call action model for write_stdin policy check
-              const user = createWriteStdinPolicyUserPrompt({ chars: validatedArgs.sequence ?? [] })
-              const finalMessagesForActionModel = [...finalActionMessages, user]
+              const user = createWriteStdinPolicyUserPrompt({
+                chars: validatedArgs.sequence ?? [],
+              });
+              const finalMessagesForActionModel = [
+                ...finalActionMessages,
+                user,
+              ];
 
-              let decision: z.infer<typeof WRITE_STDIN_POLICY_DECISION_SCHEMA>
+              let decision: z.infer<typeof WRITE_STDIN_POLICY_DECISION_SCHEMA>;
               try {
                 decision = await this.getActionModelPolicyDecision(
                   sessionId,
                   finalMessagesForActionModel,
                   WRITE_STDIN_POLICY_DECISION_SCHEMA,
                   config?.signal,
-                  'write_stdin'
-                )
+                  "write_stdin",
+                );
               } catch (err: any) {
-                console.warn('[AgentService_v2] Action model decision for write_stdin failed after retries, falling back to allow:', err)
-                decision = { decision: 'allow', reason: 'Action model error' }
+                console.warn(
+                  "[AgentService_v2] Action model decision for write_stdin failed after retries, falling back to allow:",
+                  err,
+                );
+                decision = { decision: "allow", reason: "Action model error" };
               }
 
-              if (decision.decision === 'block') {
-                const blockReason = `This call was blocked because the auditor found issues: ${decision.reason}\n\nActually, your intention might be different. Please re-read the description of the write_stdin tool to confirm what you really want to do, and then call write_stdin again with the correct parameters.`
-                console.log('[AgentService_v2] Action model decision for write_stdin blocked:', blockReason)
-                toolMessage.content = blockReason
+              if (decision.decision === "block") {
+                const blockReason = `This call was blocked because the auditor found issues: ${decision.reason}\n\nActually, your intention might be different. Please re-read the description of the write_stdin tool to confirm what you really want to do, and then call write_stdin again with the correct parameters.`;
+                console.log(
+                  "[AgentService_v2] Action model decision for write_stdin blocked:",
+                  blockReason,
+                );
+                toolMessage.content = blockReason;
                 return {
                   messages: [...state.messages, toolMessage],
                   sessionId,
-                  pendingToolCalls: queue.slice(1)
-                }
+                  pendingToolCalls: queue.slice(1),
+                };
               }
             }
 
-            result = await toolImplementations.writeStdin(validatedArgs, executionContext)
+            result = await toolImplementations.writeStdin(
+              validatedArgs,
+              executionContext,
+            );
           } catch (err) {
-            result = `Parameter validation error for write_stdin: ${(err as Error).message}`
+            result = `Parameter validation error for write_stdin: ${(err as Error).message}`;
           }
-          break
+          break;
         }
-        case 'wait': {
+        case "wait": {
           try {
-            const validatedArgs = waitSchema.parse(toolCall.args || {})
-            result = await toolImplementations.wait(validatedArgs, executionContext)
+            const validatedArgs = waitSchema.parse(toolCall.args || {});
+            result = await toolImplementations.wait(
+              validatedArgs,
+              executionContext,
+            );
           } catch (err) {
-            result = `Parameter validation error for wait: ${(err as Error).message}`
+            result = `Parameter validation error for wait: ${(err as Error).message}`;
           }
-          break
+          break;
         }
-        case 'wait_terminal_idle': {
+        case "wait_terminal_idle": {
           try {
-            const validatedArgs = waitTerminalIdleSchema.parse(toolCall.args || {})
-            result = await toolImplementations.waitTerminalIdle(validatedArgs, executionContext)
+            const validatedArgs = waitTerminalIdleSchema.parse(
+              toolCall.args || {},
+            );
+            result = await toolImplementations.waitTerminalIdle(
+              validatedArgs,
+              executionContext,
+            );
           } catch (err) {
-            result = `Parameter validation error for wait_terminal_idle: ${(err as Error).message}`
+            result = `Parameter validation error for wait_terminal_idle: ${(err as Error).message}`;
           }
-          break
+          break;
         }
-        case 'wait_command_end': {
+        case "wait_command_end": {
           try {
-            const validatedArgs = waitCommandEndSchema.parse(toolCall.args || {})
-            result = await toolImplementations.waitCommandEnd(validatedArgs, executionContext)
+            const validatedArgs = waitCommandEndSchema.parse(
+              toolCall.args || {},
+            );
+            result = await toolImplementations.waitCommandEnd(
+              validatedArgs,
+              executionContext,
+            );
           } catch (err) {
-            result = `Parameter validation error for wait_command_end: ${(err as Error).message}`
+            result = `Parameter validation error for wait_command_end: ${(err as Error).message}`;
           }
-          break
+          break;
         }
         default:
-          result = `Tool "${toolCall.name}" is not supported.`
+          result = `Tool "${toolCall.name}" is not supported.`;
       }
 
-      toolMessage.content = result
+      toolMessage.content = result;
       return {
         messages: [...messageHistory, toolMessage],
         sessionId,
-        pendingToolCalls: queue.slice(1)
-      }
-    })
+        pendingToolCalls: queue.slice(1),
+      };
+    });
   }
 
   private createCommandToolsNode() {
     return RunnableLambda.from(async (state: any, config: any) => {
-      const sessionId = state.sessionId
-      if (!sessionId) throw new Error('No session ID in state')
+      const sessionId = state.sessionId;
+      if (!sessionId) throw new Error("No session ID in state");
 
-      const queue: any[] = Array.isArray(state.pendingToolCalls) ? state.pendingToolCalls : []
-      const toolCall = queue[0]
-      if (!toolCall || toolCall.name !== 'exec_command') return state
+      const queue: any[] = Array.isArray(state.pendingToolCalls)
+        ? state.pendingToolCalls
+        : [];
+      const toolCall = queue[0];
+      if (!toolCall || toolCall.name !== "exec_command") return state;
 
-      const toolMessage = this.createToolMessage(toolCall)
-      const executionContext = this.createExecutionContext(sessionId, toolMessage.additional_kwargs._gyshellMessageId as string, config)
-      const messageHistory: BaseMessage[] = state.messages
+      const toolMessage = this.createToolMessage(toolCall);
+      const executionContext = this.createExecutionContext(
+        sessionId,
+        toolMessage.additional_kwargs._gyshellMessageId as string,
+        config,
+      );
+      const messageHistory: BaseMessage[] = state.messages;
 
-      let validated: z.infer<typeof execCommandSchema>
+      let validated: z.infer<typeof execCommandSchema>;
       try {
-        validated = execCommandSchema.parse(toolCall.args || {})
+        validated = execCommandSchema.parse(toolCall.args || {});
       } catch (err) {
-        toolMessage.content = `Parameter validation error for exec_command: ${(err as Error).message}`
-        return { 
-            messages: [...messageHistory, toolMessage], 
-            sessionId, 
-            pendingToolCalls: queue.slice(1) 
-        }
+        toolMessage.content = `Parameter validation error for exec_command: ${(err as Error).message}`;
+        return {
+          messages: [...messageHistory, toolMessage],
+          sessionId,
+          pendingToolCalls: queue.slice(1),
+        };
       }
 
-      const { found, bestMatch } = this.terminalService.resolveTerminal(validated.tabIdOrName)
+      const { found, bestMatch } = this.terminalService.resolveTerminal(
+        validated.tabIdOrName,
+      );
       if (!bestMatch) {
-        toolMessage.content = found.length > 1
+        toolMessage.content =
+          found.length > 1
             ? `Error: Multiple terminal tabs found with name "${validated.tabIdOrName}".`
-            : `Error: Terminal tab "${validated.tabIdOrName}" not found.`
-        return { 
-            messages: [...messageHistory, toolMessage], 
-            sessionId, 
-            pendingToolCalls: queue.slice(1) 
-        }
+            : `Error: Terminal tab "${validated.tabIdOrName}" not found.`;
+        return {
+          messages: [...messageHistory, toolMessage],
+          sessionId,
+          pendingToolCalls: queue.slice(1),
+        };
       }
 
-      let resultText = ''
-      if (validated.waitMode === 'nowait') {
-        const res = await toolImplementations.runCommandNowait(validated, executionContext)
-        resultText = res + "\nThis command may hang, so it is run asynchronously. Please use read_terminal_tab to check the result/status!"
+      let resultText = "";
+      if (validated.waitMode === "nowait") {
+        const res = await toolImplementations.runCommandNowait(
+          validated,
+          executionContext,
+        );
+        resultText =
+          res +
+          "\nThis command may hang, so it is run asynchronously. Please use read_terminal_tab to check the result/status!";
       } else {
-        const recent = this.terminalService.getRecentOutput(bestMatch.id) || ''
+        const recent = this.terminalService.getRecentOutput(bestMatch.id) || "";
 
-        let autoSwitchToNowait = false
-        let autoSwitchReason = ''
-        let waitActive = true
+        let autoSwitchToNowait = false;
+        let autoSwitchReason = "";
+        let waitActive = true;
 
-        const actionDecisionController = new AbortController()
-        const forwardAbortToActionModel = () => actionDecisionController.abort()
+        const actionDecisionController = new AbortController();
+        const forwardAbortToActionModel = () =>
+          actionDecisionController.abort();
         if (config?.signal) {
           if (config.signal.aborted) {
-            actionDecisionController.abort()
+            actionDecisionController.abort();
           } else {
-            config.signal.addEventListener('abort', forwardAbortToActionModel, { once: true })
+            config.signal.addEventListener("abort", forwardAbortToActionModel, {
+              once: true,
+            });
           }
         }
 
-        const actionDecisionTask = state.execCommandActionModelEnabled !== false
-          ? (async () => {
-              // Keep action-model judgment independent: do not include global waitMode choice in prompt.
-              const finalActionMessages = this.helpers.buildActionModelHistory(state.messages as BaseMessage[])
-              const user = createCommandPolicyUserPrompt({
-                tabTitle: bestMatch.title,
-                tabId: bestMatch.id,
-                tabType: bestMatch.type,
-                command: validated.command,
-                recentOutput: recent
-              })
-              const finalMessagesForActionModel = [...finalActionMessages, user]
+        const actionDecisionTask =
+          state.execCommandActionModelEnabled !== false
+            ? (async () => {
+                // Keep action-model judgment independent: do not include global waitMode choice in prompt.
+                const finalActionMessages =
+                  this.helpers.buildActionModelHistory(
+                    state.messages as BaseMessage[],
+                  );
+                const user = createCommandPolicyUserPrompt({
+                  tabTitle: bestMatch.title,
+                  tabId: bestMatch.id,
+                  tabType: bestMatch.type,
+                  command: validated.command,
+                  recentOutput: recent,
+                });
+                const finalMessagesForActionModel = [
+                  ...finalActionMessages,
+                  user,
+                ];
 
-              const decision = await this.getActionModelPolicyDecision(
-                sessionId,
-                finalMessagesForActionModel,
-                COMMAND_POLICY_DECISION_SCHEMA,
-                actionDecisionController.signal,
-                'exec_command_parallel_audit'
-              )
+                const decision = await this.getActionModelPolicyDecision(
+                  sessionId,
+                  finalMessagesForActionModel,
+                  COMMAND_POLICY_DECISION_SCHEMA,
+                  actionDecisionController.signal,
+                  "exec_command_parallel_audit",
+                );
 
-              const decisionReason = this.normalizeLogReason(decision.reason)
-              if (decision.decision === 'nowait') {
-                console.log(
-                  `[AgentService_v2][exec_command_guard] Triggered nowait switch. reason=${decisionReason}`
-                )
-              } else {
-                console.log(
-                  `[AgentService_v2][exec_command_guard] Decision kept wait mode. reason=${decisionReason}`
-                )
-              }
-
-              if (waitActive && decision.decision === 'nowait') {
-                autoSwitchToNowait = true
-                autoSwitchReason = String(decision.reason || '').trim()
-              }
-            })()
-              .catch((err: any) => {
-                if (this.helpers.isAbortError(err) || actionDecisionController.signal.aborted) {
-                  console.log('[AgentService_v2][exec_command_guard] Abort trigger received. keep wait mode.')
-                  return
+                const decisionReason = this.normalizeLogReason(decision.reason);
+                if (decision.decision === "nowait") {
+                  console.log(
+                    `[AgentService_v2][exec_command_guard] Triggered nowait switch. reason=${decisionReason}`,
+                  );
+                } else {
+                  console.log(
+                    `[AgentService_v2][exec_command_guard] Decision kept wait mode. reason=${decisionReason}`,
+                  );
                 }
-                console.log('[AgentService_v2][exec_command_guard] Decision skipped, keep wait mode.')
+
+                if (waitActive && decision.decision === "nowait") {
+                  autoSwitchToNowait = true;
+                  autoSwitchReason = String(decision.reason || "").trim();
+                }
+              })().catch((err: any) => {
+                if (
+                  this.helpers.isAbortError(err) ||
+                  actionDecisionController.signal.aborted
+                ) {
+                  console.log(
+                    "[AgentService_v2][exec_command_guard] Abort trigger received. keep wait mode.",
+                  );
+                  return;
+                }
+                console.log(
+                  "[AgentService_v2][exec_command_guard] Decision skipped, keep wait mode.",
+                );
               })
-          : Promise.resolve()
+            : Promise.resolve();
 
         try {
-          resultText = await toolImplementations.runCommand(validated, executionContext, {
-            shouldSkipWait: () => autoSwitchToNowait,
-            getSkipWaitReason: () => (autoSwitchToNowait ? (autoSwitchReason || 'action model decided this command should not block') : undefined)
-          })
+          resultText = await toolImplementations.runCommand(
+            validated,
+            executionContext,
+            {
+              shouldSkipWait: () => autoSwitchToNowait,
+              getSkipWaitReason: () =>
+                autoSwitchToNowait
+                  ? autoSwitchReason ||
+                    "action model decided this command should not block"
+                  : undefined,
+            },
+          );
         } finally {
-          waitActive = false
-          actionDecisionController.abort()
+          waitActive = false;
+          actionDecisionController.abort();
           if (config?.signal) {
-            config.signal.removeEventListener('abort', forwardAbortToActionModel)
+            config.signal.removeEventListener(
+              "abort",
+              forwardAbortToActionModel,
+            );
           }
-          await actionDecisionTask
+          await actionDecisionTask;
         }
       }
 
-      toolMessage.content = resultText
-      return { 
-          messages: [...messageHistory, toolMessage], 
-          sessionId, 
-          pendingToolCalls: queue.slice(1) 
-      }
-    })
+      toolMessage.content = resultText;
+      return {
+        messages: [...messageHistory, toolMessage],
+        sessionId,
+        pendingToolCalls: queue.slice(1),
+      };
+    });
   }
 
   private createFileToolsNode() {
     return RunnableLambda.from(async (state: any, config: any) => {
-      const sessionId = state.sessionId
-      if (!sessionId) throw new Error('No session ID in state')
+      const sessionId = state.sessionId;
+      if (!sessionId) throw new Error("No session ID in state");
 
-      const queue: any[] = Array.isArray(state.pendingToolCalls) ? state.pendingToolCalls : []
-      const toolCall = queue[0]
-      if (!toolCall || toolCall.name !== 'create_or_edit') return state
+      const queue: any[] = Array.isArray(state.pendingToolCalls)
+        ? state.pendingToolCalls
+        : [];
+      const toolCall = queue[0];
+      if (!toolCall || toolCall.name !== "create_or_edit") return state;
 
-      const toolMessage = this.createToolMessage(toolCall)
-      const executionContext = this.createExecutionContext(sessionId, toolMessage.additional_kwargs._gyshellMessageId as string, config)
-      const messageHistory: BaseMessage[] = state.messages
+      const toolMessage = this.createToolMessage(toolCall);
+      const executionContext = this.createExecutionContext(
+        sessionId,
+        toolMessage.additional_kwargs._gyshellMessageId as string,
+        config,
+      );
+      const messageHistory: BaseMessage[] = state.messages;
 
-      let result: string
+      let result: string;
       try {
-        const validatedArgs = writeAndEditSchema.parse(toolCall.args || {})
-        result = await toolImplementations.writeAndEdit(validatedArgs, executionContext)
+        const validatedArgs = writeAndEditSchema.parse(toolCall.args || {});
+        result = await toolImplementations.writeAndEdit(
+          validatedArgs,
+          executionContext,
+        );
       } catch (err) {
-        result = `Parameter validation or execution error for create_or_edit: ${(err as Error).message}`
+        result = `Parameter validation or execution error for create_or_edit: ${(err as Error).message}`;
       }
 
-      toolMessage.content = result
-      return { 
-          messages: [...messageHistory, toolMessage], 
-          sessionId, 
-          pendingToolCalls: queue.slice(1) 
-      }
-    })
+      toolMessage.content = result;
+      return {
+        messages: [...messageHistory, toolMessage],
+        sessionId,
+        pendingToolCalls: queue.slice(1),
+      };
+    });
   }
 
   private createReadFileNode() {
     return RunnableLambda.from(async (state: any, config: any) => {
-      const sessionId = state.sessionId
-      if (!sessionId) throw new Error('No session ID in state')
-      const sessionBinding = this.getSessionModelBinding(sessionId)
+      const sessionId = state.sessionId;
+      if (!sessionId) throw new Error("No session ID in state");
+      const sessionBinding = this.getSessionModelBinding(sessionId);
 
-      const queue: any[] = Array.isArray(state.pendingToolCalls) ? state.pendingToolCalls : []
-      const toolCall = queue[0]
-      if (!toolCall || toolCall.name !== 'read_file') return state
+      const queue: any[] = Array.isArray(state.pendingToolCalls)
+        ? state.pendingToolCalls
+        : [];
+      const toolCall = queue[0];
+      if (!toolCall || toolCall.name !== "read_file") return state;
 
-      const toolMessage = this.createToolMessage(toolCall)
-      const messageId = toolMessage.additional_kwargs._gyshellMessageId as string
-      const executionContext = this.createExecutionContext(sessionId, messageId, config)
-      const messageHistory: BaseMessage[] = state.messages
+      const toolMessage = this.createToolMessage(toolCall);
+      const messageId = toolMessage.additional_kwargs
+        ._gyshellMessageId as string;
+      const executionContext = this.createExecutionContext(
+        sessionId,
+        messageId,
+        config,
+      );
+      const messageHistory: BaseMessage[] = state.messages;
 
-      let resultText: string
-      let imageMessage: HumanMessage | null = null
-      let meaningLessAIMessage: AIMessage | null = null
+      let resultText: string;
+      let imageMessage: HumanMessage | null = null;
+      let meaningLessAIMessage: AIMessage | null = null;
 
       try {
-        const validatedArgs = readFileSchema.parse(toolCall.args || {})
+        const validatedArgs = readFileSchema.parse(toolCall.args || {});
         const result = await toolImplementations.runReadFile(
           validatedArgs,
           executionContext,
-          sessionBinding.readFileSupport
-        )
-        resultText = result.resultText
-        imageMessage = result.imageMessage ?? null
-        meaningLessAIMessage = result.meaningLessAIMessage ?? null
+          sessionBinding.readFileSupport,
+        );
+        resultText = result.resultText;
+        imageMessage = result.imageMessage ?? null;
+        meaningLessAIMessage = result.meaningLessAIMessage ?? null;
       } catch (err) {
-        resultText = err instanceof Error ? err.message : String(err)
+        resultText = err instanceof Error ? err.message : String(err);
         // Ensure frontend gets a banner even on validation errors / unexpected failures.
         this.helpers.sendEvent(sessionId, {
           messageId,
-          type: 'file_read',
-          level: 'warning',
-          filePath: String((toolCall.args as any)?.filePath || 'unknown file'),
+          type: "file_read",
+          level: "warning",
+          filePath: String((toolCall.args as any)?.filePath || "unknown file"),
           input: JSON.stringify(toolCall.args || {}),
-          output: resultText
-        })
+          output: resultText,
+        });
       }
 
-      toolMessage.content = resultText
+      toolMessage.content = resultText;
 
       const updates = imageMessage
         ? [toolMessage, meaningLessAIMessage, imageMessage]
-        : [toolMessage]
+        : [toolMessage];
 
       return {
         messages: [...messageHistory, ...updates],
         sessionId,
-        pendingToolCalls: queue.slice(1)
-      }
-    })
+        pendingToolCalls: queue.slice(1),
+      };
+    });
   }
 
   private createMcpToolsNode() {
     return RunnableLambda.from(async (state: any, config: any) => {
-      const sessionId = state.sessionId
-      if (!sessionId) throw new Error('No session ID in state')
+      const sessionId = state.sessionId;
+      if (!sessionId) throw new Error("No session ID in state");
 
-      const queue: any[] = Array.isArray(state.pendingToolCalls) ? state.pendingToolCalls : []
-      const toolCall = queue[0]
-      if (!toolCall || !this.mcpToolService.isMcpToolName(toolCall.name)) return state
+      const queue: any[] = Array.isArray(state.pendingToolCalls)
+        ? state.pendingToolCalls
+        : [];
+      const toolCall = queue[0];
+      if (!toolCall || !this.mcpToolService.isMcpToolName(toolCall.name))
+        return state;
 
-      const toolMessage = this.createToolMessage(toolCall)
-      const messageId = toolMessage.additional_kwargs._gyshellMessageId as string
-      const messageHistory: BaseMessage[] = state.messages
+      const toolMessage = this.createToolMessage(toolCall);
+      const messageId = toolMessage.additional_kwargs
+        ._gyshellMessageId as string;
+      const messageHistory: BaseMessage[] = state.messages;
 
-      let args: any = toolCall.args || {}
-      if (typeof args === 'string') {
+      let args: any = toolCall.args || {};
+      if (typeof args === "string") {
         try {
-          args = this.helpers.parseStrictJsonObject(args)
+          args = this.helpers.parseStrictJsonObject(args);
         } catch {}
       }
 
-      const signal = config?.signal
-      let resultText: string
+      const signal = config?.signal;
+      let resultText: string;
       try {
-        const result = await this.mcpToolService.invokeTool(toolCall.name, args, signal)
-        resultText = typeof result === 'string' ? result : JSON.stringify(result, null, 2)
+        const result = await this.mcpToolService.invokeTool(
+          toolCall.name,
+          args,
+          signal,
+        );
+        resultText =
+          typeof result === "string" ? result : JSON.stringify(result, null, 2);
       } catch (err) {
-        if (this.helpers.isAbortError(err)) throw err
-        resultText = err instanceof Error ? err.message : String(err)
+        if (this.helpers.isAbortError(err)) throw err;
+        resultText = err instanceof Error ? err.message : String(err);
       }
 
       this.helpers.sendEvent(sessionId, {
         messageId,
-        type: 'tool_call',
+        type: "tool_call",
         toolName: toolCall.name,
         input: JSON.stringify(args ?? {}),
-        output: resultText
-      })
+        output: resultText,
+      });
 
-      toolMessage.content = resultText
-      return { 
-          messages: [...messageHistory, toolMessage], 
-          sessionId, 
-          pendingToolCalls: queue.slice(1) 
-      }
-    })
+      toolMessage.content = resultText;
+      return {
+        messages: [...messageHistory, toolMessage],
+        sessionId,
+        pendingToolCalls: queue.slice(1),
+      };
+    });
   }
 
   private createTaskCompletionGuardNode() {
     return RunnableLambda.from(async (state: any, config: any) => {
-      const sessionId = state.sessionId
-      if (!sessionId) throw new Error('No session ID in state')
+      const sessionId = state.sessionId;
+      if (!sessionId) throw new Error("No session ID in state");
 
-      const messages: BaseMessage[] = [...state.messages]
-      const lastMessage = messages[messages.length - 1]
+      const messages: BaseMessage[] = [...state.messages];
+      const lastMessage = messages[messages.length - 1];
 
       if (!AIMessage.isInstance(lastMessage)) {
         return {
           messages,
           sessionId,
           pendingToolCalls: [],
-          completionGuardDecision: 'end' as const
-        }
+          completionGuardDecision: "end" as const,
+        };
       }
 
-      const toolCalls: any[] = Array.isArray((lastMessage as any).tool_calls) ? (lastMessage as any).tool_calls : []
+      const toolCalls: any[] = Array.isArray((lastMessage as any).tool_calls)
+        ? (lastMessage as any).tool_calls
+        : [];
       if (toolCalls.length > 0) {
         return {
           messages,
           sessionId,
           pendingToolCalls: [],
-          completionGuardDecision: 'continue' as const
-        }
+          completionGuardDecision: "continue" as const,
+        };
       }
 
-      let completionDecision: z.infer<typeof TASK_COMPLETION_DECISION_SCHEMA>
+      let completionDecision: z.infer<typeof TASK_COMPLETION_DECISION_SCHEMA>;
       try {
         completionDecision = await this.getThinkingModelDecision(
           sessionId,
           [...messages, createTaskCompletionDecisionUserPrompt()],
           TASK_COMPLETION_DECISION_SCHEMA,
           config?.signal,
-          'task_completion_guard'
-        )
+          "task_completion_guard",
+        );
       } catch (err) {
         if (this.helpers.isAbortError(err) || config?.signal?.aborted) {
-          console.log('[AgentService_v2][task_guard] Abort trigger received during completion audit.')
-          throw err
+          console.log(
+            "[AgentService_v2][task_guard] Abort trigger received during completion audit.",
+          );
+          throw err;
         }
-        console.log('[AgentService_v2][task_guard] Completion audit unavailable. fallback=end.')
+        console.log(
+          "[AgentService_v2][task_guard] Completion audit unavailable. fallback=end.",
+        );
         completionDecision = {
           is_fully_completed: true,
-          reason: 'Completion audit unavailable'
-        }
+          reason: "Completion audit unavailable",
+        };
       }
 
       if (completionDecision.is_fully_completed) {
         console.log(
-          `[AgentService_v2][task_guard] Completion confirmed. reason=${this.normalizeLogReason(completionDecision.reason)}`
-        )
+          `[AgentService_v2][task_guard] Completion confirmed. reason=${this.normalizeLogReason(completionDecision.reason)}`,
+        );
         return {
           messages,
           sessionId,
           pendingToolCalls: [],
-          completionGuardDecision: 'end' as const
-        }
+          completionGuardDecision: "end" as const,
+        };
       }
       console.log(
-        `[AgentService_v2][task_guard] Triggered continue. reason=${this.normalizeLogReason(completionDecision.reason)}`
-      )
+        `[AgentService_v2][task_guard] Triggered continue. reason=${this.normalizeLogReason(completionDecision.reason)}`,
+      );
 
-      let continueInstruction: z.infer<typeof TASK_CONTINUE_INSTRUCTION_SCHEMA>
+      let continueInstruction: z.infer<typeof TASK_CONTINUE_INSTRUCTION_SCHEMA>;
       try {
         continueInstruction = await this.getThinkingModelDecision(
           sessionId,
@@ -1345,52 +1642,58 @@ export class AgentService_v2 {
             ...messages,
             createTaskCompletionDecisionUserPrompt(),
             new AIMessage({
-              content: JSON.stringify(completionDecision)
+              content: JSON.stringify(completionDecision),
             }),
-            createTaskContinueInstructionUserPrompt({ completionReason: completionDecision.reason })
+            createTaskContinueInstructionUserPrompt({
+              completionReason: completionDecision.reason,
+            }),
           ],
           TASK_CONTINUE_INSTRUCTION_SCHEMA,
           config?.signal,
-          'task_continue_instruction'
-        )
+          "task_continue_instruction",
+        );
       } catch (err) {
         if (this.helpers.isAbortError(err) || config?.signal?.aborted) {
-          console.log('[AgentService_v2][task_guard] Abort trigger received during continue-instruction generation.')
-          throw err
+          console.log(
+            "[AgentService_v2][task_guard] Abort trigger received during continue-instruction generation.",
+          );
+          throw err;
         }
-        console.log('[AgentService_v2][task_guard] Continue instruction generation unavailable. use generic instruction.')
+        console.log(
+          "[AgentService_v2][task_guard] Continue instruction generation unavailable. use generic instruction.",
+        );
         continueInstruction = {
           continue_instruction:
-            'Continue the task. Re-check unmet requirements, choose the next best tool/approach, execute it, and verify result.'
-        }
+            "Continue the task. Re-check unmet requirements, choose the next best tool/approach, execute it, and verify result.",
+        };
       }
 
-      const removedBackendMessageId = (lastMessage as any)?.additional_kwargs?._gyshellMessageId as string | undefined
+      const removedBackendMessageId = (lastMessage as any)?.additional_kwargs
+        ?._gyshellMessageId as string | undefined;
 
       if (removedBackendMessageId) {
         this.helpers.sendEvent(sessionId, {
-          type: 'remove_message',
-          messageId: removedBackendMessageId
-        })
+          type: "remove_message",
+          messageId: removedBackendMessageId,
+        });
       }
 
       const continueMessage = new HumanMessage(
-        `${CONTINUE_INSTRUCTION_TAG}${continueInstruction.continue_instruction}`
-      )
-      ;(continueMessage as any).additional_kwargs = {
+        `${CONTINUE_INSTRUCTION_TAG}${continueInstruction.continue_instruction}`,
+      );
+      (continueMessage as any).additional_kwargs = {
         _gyshellMessageId: uuidv4(),
-        input_kind: 'continue_instruction'
-      }
+        input_kind: "continue_instruction",
+      };
 
       return {
         messages: [...messages, continueMessage],
         sessionId,
         pendingToolCalls: [],
-        completionGuardDecision: 'continue' as const
-      }
-    })
+        completionGuardDecision: "continue" as const,
+      };
+    });
   }
-
 
   private createFinalOutputNode() {
     return RunnableLambda.from(async (state: any) => {
@@ -1399,34 +1702,41 @@ export class AgentService_v2 {
 
       // Persist UI history at task boundary (avoid sync disk writes during streaming).
       try {
-        this.uiHistoryService.flush(sessionId)
+        this.uiHistoryService.flush(sessionId);
       } catch (e) {
-        console.warn('[AgentService_v2] Failed to flush UI history on done:', e)
+        console.warn(
+          "[AgentService_v2] Failed to flush UI history on done:",
+          e,
+        );
       }
 
-      this.helpers.sendEvent(sessionId, { 
-        type: 'debug_history', 
-        history: JSON.parse(JSON.stringify(state.messages)) 
-      })
-      this.helpers.sendEvent(sessionId, { type: 'done' })
-      return state
-    })
+      this.helpers.sendEvent(sessionId, {
+        type: "debug_history",
+        history: JSON.parse(JSON.stringify(state.messages)),
+      });
+      this.helpers.sendEvent(sessionId, { type: "done" });
+      return state;
+    });
   }
 
   // --- Helpers ---
 
   private createToolMessage(toolCall: any): ToolMessage {
     const toolMessage = new ToolMessage({
-      content: '',
-      tool_call_id: toolCall.id || '',
-      name: toolCall.name
-    })
-    const messageId = uuidv4()
-    ;(toolMessage as any).additional_kwargs = { _gyshellMessageId: messageId }
-    return toolMessage
+      content: "",
+      tool_call_id: toolCall.id || "",
+      name: toolCall.name,
+    });
+    const messageId = uuidv4();
+    (toolMessage as any).additional_kwargs = { _gyshellMessageId: messageId };
+    return toolMessage;
   }
 
-  private createExecutionContext(sessionId: string, messageId: string, config: any): ToolExecutionContext {
+  private createExecutionContext(
+    sessionId: string,
+    messageId: string,
+    config: any,
+  ): ToolExecutionContext {
     return {
       sessionId,
       messageId,
@@ -1434,150 +1744,165 @@ export class AgentService_v2 {
       sendEvent: this.helpers.sendEvent.bind(this.helpers),
       waitForFeedback: this.waitForFeedback ?? undefined,
       commandPolicyService: this.commandPolicyService,
-      commandPolicyMode: this.settings?.commandPolicyMode || 'standard',
-      signal: config?.signal
-    }
+      commandPolicyMode: this.settings?.commandPolicyMode || "standard",
+      signal: config?.signal,
+    };
   }
 
   private async tryCompactHistory(
     sessionId: string,
     messages: BaseMessage[],
-    signal: AbortSignal | undefined
+    signal: AbortSignal | undefined,
   ): Promise<{ changed: boolean; messages: BaseMessage[] }> {
     if (!sessionId) {
-      return { changed: false, messages }
+      return { changed: false, messages };
     }
 
-    const insertionIndex = this.findCompactionInsertionIndex(messages)
+    const insertionIndex = this.findCompactionInsertionIndex(messages);
     if (insertionIndex < 0) {
       console.log(
-        `[TokenManager] Overflow remains but compaction skipped: fewer than ${COMPACTION_PROTECTED_NORMAL_USER_ROUNDS + 1} normal user rounds (sessionId=${sessionId}).`
-      )
-      return { changed: false, messages }
+        `[TokenManager] Overflow remains but compaction skipped: fewer than ${COMPACTION_PROTECTED_NORMAL_USER_ROUNDS + 1} normal user rounds (sessionId=${sessionId}).`,
+      );
+      return { changed: false, messages };
     }
     if (this.hasCompactionMarkerAtInsertion(messages, insertionIndex)) {
       console.log(
-        `[TokenManager] Overflow remains but compaction skipped: insertion index=${insertionIndex} already compacted once (sessionId=${sessionId}).`
-      )
-      return { changed: false, messages }
+        `[TokenManager] Overflow remains but compaction skipped: insertion index=${insertionIndex} already compacted once (sessionId=${sessionId}).`,
+      );
+      return { changed: false, messages };
     }
 
-    const compactionMessageId = uuidv4()
+    const compactionMessageId = uuidv4();
     this.helpers.sendEvent(sessionId, {
       messageId: compactionMessageId,
-      type: 'sub_tool_started',
-      title: 'Compaction...',
-      level: 'info'
-    })
+      type: "sub_tool_started",
+      title: "Compaction...",
+      level: "info",
+    });
 
-    const historyBeforeProtectedRounds = messages.slice(0, insertionIndex)
-    let summaryDecision: z.infer<typeof COMPACTION_SUMMARY_SCHEMA>
+    const historyBeforeProtectedRounds = messages.slice(0, insertionIndex);
+    let summaryDecision: z.infer<typeof COMPACTION_SUMMARY_SCHEMA>;
     try {
       summaryDecision = await this.getCompactionModelDecision(
         sessionId,
         [
           ...historyBeforeProtectedRounds,
           createCompactionSummaryUserPrompt({
-            protectedRounds: COMPACTION_PROTECTED_NORMAL_USER_ROUNDS
-          })
+            protectedRounds: COMPACTION_PROTECTED_NORMAL_USER_ROUNDS,
+          }),
         ],
         COMPACTION_SUMMARY_SCHEMA,
         signal,
-        'history_compaction'
-      )
+        "history_compaction",
+      );
     } catch (error) {
       if (this.helpers.isAbortError(error) || signal?.aborted) {
-        console.log('[AgentService_v2][history_compaction_guard] Abort trigger received.')
+        console.log(
+          "[AgentService_v2][history_compaction_guard] Abort trigger received.",
+        );
         this.helpers.sendEvent(sessionId, {
           messageId: compactionMessageId,
-          type: 'sub_tool_finished'
-        })
-        throw error
+          type: "sub_tool_finished",
+        });
+        throw error;
       }
-      console.log('[AgentService_v2][history_compaction_guard] Summary generation unavailable. skip compaction.')
+      console.log(
+        "[AgentService_v2][history_compaction_guard] Summary generation unavailable. skip compaction.",
+      );
       this.helpers.sendEvent(sessionId, {
         messageId: compactionMessageId,
-        type: 'sub_tool_finished'
-      })
-      return { changed: false, messages }
+        type: "sub_tool_finished",
+      });
+      return { changed: false, messages };
     }
 
-    const summaryText = String(summaryDecision.summary || '').trim()
+    const summaryText = String(summaryDecision.summary || "").trim();
     if (!summaryText) {
       this.helpers.sendEvent(sessionId, {
         messageId: compactionMessageId,
-        type: 'sub_tool_finished'
-      })
-      return { changed: false, messages }
+        type: "sub_tool_finished",
+      });
+      return { changed: false, messages };
     }
 
-    const summaryMessage = new HumanMessage(`${WHAT_HAVE_DONE_IN_THE_PAST_TAG}${summaryText}`)
-    ;(summaryMessage as any).additional_kwargs = {
+    const summaryMessage = new HumanMessage(
+      `${WHAT_HAVE_DONE_IN_THE_PAST_TAG}${summaryText}`,
+    );
+    (summaryMessage as any).additional_kwargs = {
       _gyshellMessageId: uuidv4(),
-      [TokenManager.LAST_COMPACTION_FLAG_KEY]: true
-    }
+      [TokenManager.LAST_COMPACTION_FLAG_KEY]: true,
+    };
 
     const compactedMessages = [
       ...messages.slice(0, insertionIndex),
       summaryMessage,
-      ...messages.slice(insertionIndex)
-    ]
+      ...messages.slice(insertionIndex),
+    ];
 
     console.log(
-      `[TokenManager] Compaction inserted summary at index=${insertionIndex} (sessionId=${sessionId}).`
-    )
+      `[TokenManager] Compaction inserted summary at index=${insertionIndex} (sessionId=${sessionId}).`,
+    );
     this.helpers.sendEvent(sessionId, {
       messageId: compactionMessageId,
-      type: 'sub_tool_finished'
-    })
-    return { changed: true, messages: compactedMessages }
+      type: "sub_tool_finished",
+    });
+    return { changed: true, messages: compactedMessages };
   }
 
   private findCompactionInsertionIndex(messages: BaseMessage[]): number {
-    const normalUserRoundIndices: number[] = []
+    const normalUserRoundIndices: number[] = [];
     for (let i = 0; i < messages.length; i++) {
-      const message = messages[i]
-      if (message.type !== 'human') continue
+      const message = messages[i];
+      if (message.type !== "human") continue;
       if (hasAnyNormalUserInputTag(message.content)) {
-        normalUserRoundIndices.push(i)
+        normalUserRoundIndices.push(i);
       }
     }
-    if (normalUserRoundIndices.length <= COMPACTION_PROTECTED_NORMAL_USER_ROUNDS) {
-      return -1
+    if (
+      normalUserRoundIndices.length <= COMPACTION_PROTECTED_NORMAL_USER_ROUNDS
+    ) {
+      return -1;
     }
 
     // Insert before the earliest message of the protected tail rounds.
-    return normalUserRoundIndices[normalUserRoundIndices.length - COMPACTION_PROTECTED_NORMAL_USER_ROUNDS]
+    return normalUserRoundIndices[
+      normalUserRoundIndices.length - COMPACTION_PROTECTED_NORMAL_USER_ROUNDS
+    ];
   }
 
-  private hasCompactionMarkerAtInsertion(messages: BaseMessage[], insertionIndex: number): boolean {
+  private hasCompactionMarkerAtInsertion(
+    messages: BaseMessage[],
+    insertionIndex: number,
+  ): boolean {
     if (insertionIndex < 0 || insertionIndex > messages.length) {
-      return false
+      return false;
     }
 
     const markerAtInsertion =
-      insertionIndex < messages.length && TokenManager.hasLastCompactionFlag(messages[insertionIndex])
+      insertionIndex < messages.length &&
+      TokenManager.hasLastCompactionFlag(messages[insertionIndex]);
     const markerBeforeInsertion =
-      insertionIndex > 0 && TokenManager.hasLastCompactionFlag(messages[insertionIndex - 1])
+      insertionIndex > 0 &&
+      TokenManager.hasLastCompactionFlag(messages[insertionIndex - 1]);
 
-    return markerAtInsertion || markerBeforeInsertion
+    return markerAtInsertion || markerBeforeInsertion;
   }
 
   private spawnSelfCorrectionAudit(
     sessionId: string,
     messages: BaseMessage[],
     parentSignal: AbortSignal | undefined,
-    passCount: number
+    passCount: number,
   ): void {
-    const controller = new AbortController()
-    this.selfCorrectionRuntimeManager.addController(sessionId, controller)
+    const controller = new AbortController();
+    this.selfCorrectionRuntimeManager.addController(sessionId, controller);
 
-    const forwardAbort = () => controller.abort()
+    const forwardAbort = () => controller.abort();
     if (parentSignal) {
       if (parentSignal.aborted) {
-        controller.abort()
+        controller.abort();
       } else {
-        parentSignal.addEventListener('abort', forwardAbort, { once: true })
+        parentSignal.addEventListener("abort", forwardAbort, { once: true });
       }
     }
 
@@ -1587,12 +1912,12 @@ export class AgentService_v2 {
         [...messages, createSelfCorrectionAuditDecisionUserPrompt()],
         SELF_CORRECTION_AUDIT_DECISION_SCHEMA,
         controller.signal,
-        'self_correction_audit'
-      )
-      if (auditDecision.is_on_reasonable_path) return
+        "self_correction_audit",
+      );
+      if (auditDecision.is_on_reasonable_path) return;
       console.log(
-        `[AgentService_v2][self_correction_guard] Triggered correction. reason=${this.normalizeLogReason(auditDecision.reason)}`
-      )
+        `[AgentService_v2][self_correction_guard] Triggered correction. reason=${this.normalizeLogReason(auditDecision.reason)}`,
+      );
 
       const correctionInstruction = await this.getThinkingModelDecision(
         sessionId,
@@ -1600,110 +1925,131 @@ export class AgentService_v2 {
           ...messages,
           createSelfCorrectionAuditDecisionUserPrompt(),
           new AIMessage({ content: JSON.stringify(auditDecision) }),
-          createSelfCorrectionInstructionUserPrompt({ auditReason: auditDecision.reason })
+          createSelfCorrectionInstructionUserPrompt({
+            auditReason: auditDecision.reason,
+          }),
         ],
         SELF_CORRECTION_INSTRUCTION_SCHEMA,
         controller.signal,
-        'self_correction_instruction'
-      )
+        "self_correction_instruction",
+      );
 
-      const instructionText = String(correctionInstruction.correction_instruction || '').trim()
-      if (!instructionText) return
+      const instructionText = String(
+        correctionInstruction.correction_instruction || "",
+      ).trim();
+      if (!instructionText) return;
 
       this.selfCorrectionRuntimeManager.setPendingInstruction(sessionId, {
         passCount,
-        instruction: instructionText
-      })
+        instruction: instructionText,
+      });
       console.log(
-        `[AgentService_v2][self_correction_guard] Correction instruction queued. pass=${passCount}`
-      )
+        `[AgentService_v2][self_correction_guard] Correction instruction queued. pass=${passCount}`,
+      );
     })()
       .catch((err) => {
         if (this.helpers.isAbortError(err) || controller.signal.aborted) {
-          console.log('[AgentService_v2][self_correction_guard] Abort trigger received.')
-          return
+          console.log(
+            "[AgentService_v2][self_correction_guard] Abort trigger received.",
+          );
+          return;
         }
-        console.log('[AgentService_v2][self_correction_guard] Audit unavailable. skip this round.')
+        console.log(
+          "[AgentService_v2][self_correction_guard] Audit unavailable. skip this round.",
+        );
       })
       .finally(() => {
-        this.selfCorrectionRuntimeManager.removeController(sessionId, controller)
+        this.selfCorrectionRuntimeManager.removeController(
+          sessionId,
+          controller,
+        );
         if (parentSignal) {
-          parentSignal.removeEventListener('abort', forwardAbort)
+          parentSignal.removeEventListener("abort", forwardAbort);
         }
-      })
+      });
   }
 
   private routeModelOutput = (state: any): string => {
-    const queue: any[] = Array.isArray(state.pendingToolCalls) ? state.pendingToolCalls : []
-    const first = queue[0]
-    
+    const queue: any[] = Array.isArray(state.pendingToolCalls)
+      ? state.pendingToolCalls
+      : [];
+    const first = queue[0];
+
     if (first?.name) {
       // Security: Double-check if the tool is actually enabled before routing.
       // This prevents the Agent from calling tools that were disabled during the session.
       if (this.builtInToolEnabled[first.name] === false) {
-        console.warn(`[AgentService_v2] LLM tried to call disabled tool: ${first.name}`)
-        return 'final_output'
+        console.warn(
+          `[AgentService_v2] LLM tried to call disabled tool: ${first.name}`,
+        );
+        return "final_output";
       }
 
-      if (first.name === 'skill' || first.name === 'create_skill') return 'tools'
-      if (this.mcpToolService.isMcpToolName(first.name)) return 'mcp_tools'
-      if (first.name === 'exec_command') return 'command_tools'
-      if (first.name === 'create_or_edit') return 'file_tools'
-      if (first.name === 'read_file') return 'read_file'
-      return 'tools'
+      if (first.name === "skill" || first.name === "create_skill")
+        return "tools";
+      if (this.mcpToolService.isMcpToolName(first.name)) return "mcp_tools";
+      if (first.name === "exec_command") return "command_tools";
+      if (first.name === "create_or_edit") return "file_tools";
+      if (first.name === "read_file") return "read_file";
+      return "tools";
     }
 
     if (state.taskFinishGuardEnabled !== false) {
-      return 'task_completion_guard'
+      return "task_completion_guard";
     }
-    return 'final_output'
-  }
+    return "final_output";
+  };
 
   private routeCompletionGuardOutput = (state: any): string => {
-    return state.completionGuardDecision === 'continue' ? 'token_pruner_runtime' : 'final_output'
-  }
+    return state.completionGuardDecision === "continue"
+      ? "token_pruner_runtime"
+      : "final_output";
+  };
 
   private routeAfterToolCall = (state: any): string => {
-    const queue: any[] = Array.isArray(state.pendingToolCalls) ? state.pendingToolCalls : []
-    const first = queue[0]
+    const queue: any[] = Array.isArray(state.pendingToolCalls)
+      ? state.pendingToolCalls
+      : [];
+    const first = queue[0];
     if (!first) {
-      return 'token_pruner_runtime'
+      return "token_pruner_runtime";
     }
     if (first?.name) {
-      if (this.mcpToolService.isMcpToolName(first.name)) return 'mcp_tools'
-      if (first.name === 'exec_command') return 'command_tools'
-      if (first.name === 'create_or_edit') return 'file_tools'
-      if (first.name === 'read_file') return 'read_file'
-      if (first.name === 'skill' || first.name === 'create_skill') return 'tools'
-      return 'tools'
+      if (this.mcpToolService.isMcpToolName(first.name)) return "mcp_tools";
+      if (first.name === "exec_command") return "command_tools";
+      if (first.name === "create_or_edit") return "file_tools";
+      if (first.name === "read_file") return "read_file";
+      if (first.name === "skill" || first.name === "create_skill")
+        return "tools";
+      return "tools";
     }
-    return 'token_pruner_runtime'
-  }
+    return "token_pruner_runtime";
+  };
 
   private cleanupModelToolCallMetadata(msg: any, keepToolCalls: any[]): void {
     // Keep only chosen tool calls (0/1/many) while removing tool-call chunk/invalid artifacts.
     if (Array.isArray(msg?.tool_calls)) {
-      msg.tool_calls = Array.isArray(keepToolCalls) ? keepToolCalls : []
+      msg.tool_calls = Array.isArray(keepToolCalls) ? keepToolCalls : [];
     }
     if (Array.isArray(msg?.invalid_tool_calls)) {
-      msg.invalid_tool_calls = []
+      msg.invalid_tool_calls = [];
     }
     if (Array.isArray(msg?.tool_call_chunks)) {
-      msg.tool_call_chunks = []
+      msg.tool_call_chunks = [];
     }
     if (msg?.additional_kwargs?.tool_calls) {
-      delete msg.additional_kwargs.tool_calls
+      delete msg.additional_kwargs.tool_calls;
     }
   }
 
   private shouldKeepDebugPayloadInPersistence(): boolean {
-    return this.settings?.debugMode === true
+    return this.settings?.debugMode === true;
   }
 
   private normalizeLogReason(reason: unknown): string {
-    const text = typeof reason === 'string' ? reason : String(reason ?? '')
-    const compact = text.replace(/\s+/g, ' ').trim()
-    return compact || 'no reason provided'
+    const text = typeof reason === "string" ? reason : String(reason ?? "");
+    const compact = text.replace(/\s+/g, " ").trim();
+    return compact || "no reason provided";
   }
 
   private async getActionModelPolicyDecision<T extends z.ZodTypeAny>(
@@ -1711,26 +2057,32 @@ export class AgentService_v2 {
     messages: BaseMessage[],
     schema: T,
     signal: AbortSignal | undefined,
-    decisionName: string
+    decisionName: string,
   ): Promise<z.infer<T>> {
-    const sessionBinding = this.getSessionModelBinding(sessionId)
-    const actionModel = sessionBinding.actionModel
+    const sessionBinding = this.getSessionModelBinding(sessionId);
+    const actionModel = sessionBinding.actionModel;
     if (sessionBinding.actionModelSupportsStructuredOutput) {
-      const structuredModel = actionModel.withStructuredOutput(schema, { method: 'jsonSchema' })
+      const structuredModel = actionModel.withStructuredOutput(schema, {
+        method: "jsonSchema",
+      });
       return await invokeWithRetryAndSanitizedInput({
         helpers: this.helpers,
         messages,
         modelSupportsImage: sessionBinding.readFileSupport.image,
         signal,
         operation: async (sanitizedMessages) => {
-          return await structuredModel.invoke(sanitizedMessages, { signal }) as any
+          return (await structuredModel.invoke(sanitizedMessages, {
+            signal,
+          })) as any;
         },
         onRetry: (attempt) => {
-          console.log(`[AgentService_v2] Retrying action model decision for ${decisionName} (attempt ${attempt + 1})...`)
+          console.log(
+            `[AgentService_v2] Retrying action model decision for ${decisionName} (attempt ${attempt + 1})...`,
+          );
         },
         maxRetries: MODEL_RETRY_MAX,
-        delaysMs: MODEL_RETRY_DELAYS_MS
-      })
+        delaysMs: MODEL_RETRY_DELAYS_MS,
+      });
     }
 
     if (sessionBinding.actionModelSupportsObjectToolChoice) {
@@ -1739,8 +2091,8 @@ export class AgentService_v2 {
         messages,
         schema,
         signal,
-        decisionName
-      )
+        decisionName,
+      );
     }
 
     return await this.invokeModelDecisionByPlainToolCall(
@@ -1749,35 +2101,43 @@ export class AgentService_v2 {
       schema,
       signal,
       decisionName,
-      'action'
-    )
+      "action",
+    );
   }
 
-  private async invokeActionModelPolicyDecisionWithoutSchema<T extends z.ZodTypeAny>(
+  private async invokeActionModelPolicyDecisionWithoutSchema<
+    T extends z.ZodTypeAny,
+  >(
     sessionId: string,
     messages: BaseMessage[],
     schema: T,
     signal: AbortSignal | undefined,
-    decisionName: string
+    decisionName: string,
   ): Promise<z.infer<T>> {
-    const sessionBinding = this.getSessionModelBinding(sessionId)
-    const actionModel = sessionBinding.actionModel
-    const functionCallingModel = actionModel.withStructuredOutput(schema, { method: 'functionCalling' })
+    const sessionBinding = this.getSessionModelBinding(sessionId);
+    const actionModel = sessionBinding.actionModel;
+    const functionCallingModel = actionModel.withStructuredOutput(schema, {
+      method: "functionCalling",
+    });
     const result = await invokeWithRetryAndSanitizedInput({
       helpers: this.helpers,
       messages,
       modelSupportsImage: sessionBinding.readFileSupport.image,
       signal,
       operation: async (sanitizedMessages) => {
-        return await functionCallingModel.invoke(sanitizedMessages, { signal }) as any
+        return (await functionCallingModel.invoke(sanitizedMessages, {
+          signal,
+        })) as any;
       },
       onRetry: (attempt) => {
-        console.log(`[AgentService_v2] Retrying tool-call action model decision for ${decisionName} (attempt ${attempt + 1})...`)
+        console.log(
+          `[AgentService_v2] Retrying tool-call action model decision for ${decisionName} (attempt ${attempt + 1})...`,
+        );
       },
       maxRetries: MODEL_RETRY_MAX,
-      delaysMs: MODEL_RETRY_DELAYS_MS
-    })
-    return result as z.infer<T>
+      delaysMs: MODEL_RETRY_DELAYS_MS,
+    });
+    return result as z.infer<T>;
   }
 
   private async getThinkingModelDecision<T extends z.ZodTypeAny>(
@@ -1785,48 +2145,60 @@ export class AgentService_v2 {
     messages: BaseMessage[],
     schema: T,
     signal: AbortSignal | undefined,
-    decisionName: string
+    decisionName: string,
   ): Promise<z.infer<T>> {
-    const sessionBinding = this.getSessionModelBinding(sessionId)
-    const model = sessionBinding.thinkingModel || sessionBinding.model
+    const sessionBinding = this.getSessionModelBinding(sessionId);
+    const model = sessionBinding.thinkingModel || sessionBinding.model;
     const processedMessages = buildDynamicRequestHistory(messages, {
-      modelSupportsImage: sessionBinding.readFileSupport.image
-    })
+      modelSupportsImage: sessionBinding.readFileSupport.image,
+    });
 
     if (sessionBinding.thinkingModelSupportsStructuredOutput) {
-      const structuredModel = model.withStructuredOutput(schema, { method: 'jsonSchema' })
+      const structuredModel = model.withStructuredOutput(schema, {
+        method: "jsonSchema",
+      });
       return await invokeWithRetryAndSanitizedInput({
         helpers: this.helpers,
         messages: processedMessages,
         modelSupportsImage: sessionBinding.readFileSupport.image,
         signal,
         operation: async (sanitizedMessages) => {
-          return await structuredModel.invoke(sanitizedMessages, { signal }) as any
+          return (await structuredModel.invoke(sanitizedMessages, {
+            signal,
+          })) as any;
         },
         onRetry: (attempt) => {
-          console.log(`[AgentService_v2] Retrying thinking model decision for ${decisionName} (attempt ${attempt + 1})...`)
+          console.log(
+            `[AgentService_v2] Retrying thinking model decision for ${decisionName} (attempt ${attempt + 1})...`,
+          );
         },
         maxRetries: MODEL_RETRY_MAX,
-        delaysMs: MODEL_RETRY_DELAYS_MS
-      })
+        delaysMs: MODEL_RETRY_DELAYS_MS,
+      });
     }
 
     if (sessionBinding.thinkingModelSupportsObjectToolChoice) {
-      const functionCallingModel = model.withStructuredOutput(schema, { method: 'functionCalling' })
+      const functionCallingModel = model.withStructuredOutput(schema, {
+        method: "functionCalling",
+      });
       return await invokeWithRetryAndSanitizedInput({
         helpers: this.helpers,
         messages: processedMessages,
         modelSupportsImage: sessionBinding.readFileSupport.image,
         signal,
         operation: async (sanitizedMessages) => {
-          return await functionCallingModel.invoke(sanitizedMessages, { signal }) as any
+          return (await functionCallingModel.invoke(sanitizedMessages, {
+            signal,
+          })) as any;
         },
         onRetry: (attempt) => {
-          console.log(`[AgentService_v2] Retrying tool-call thinking decision for ${decisionName} (attempt ${attempt + 1})...`)
+          console.log(
+            `[AgentService_v2] Retrying tool-call thinking decision for ${decisionName} (attempt ${attempt + 1})...`,
+          );
         },
         maxRetries: MODEL_RETRY_MAX,
-        delaysMs: MODEL_RETRY_DELAYS_MS
-      })
+        delaysMs: MODEL_RETRY_DELAYS_MS,
+      });
     }
 
     return await this.invokeModelDecisionByPlainToolCall(
@@ -1835,8 +2207,8 @@ export class AgentService_v2 {
       schema,
       signal,
       decisionName,
-      'thinking'
-    )
+      "thinking",
+    );
   }
 
   private async getCompactionModelDecision<T extends z.ZodTypeAny>(
@@ -1844,48 +2216,60 @@ export class AgentService_v2 {
     messages: BaseMessage[],
     schema: T,
     signal: AbortSignal | undefined,
-    decisionName: string
+    decisionName: string,
   ): Promise<z.infer<T>> {
-    const sessionBinding = this.getSessionModelBinding(sessionId)
-    const model = sessionBinding.compactionModel
+    const sessionBinding = this.getSessionModelBinding(sessionId);
+    const model = sessionBinding.compactionModel;
     const processedMessages = buildDynamicRequestHistory(messages, {
-      modelSupportsImage: sessionBinding.readFileSupport.image
-    })
+      modelSupportsImage: sessionBinding.readFileSupport.image,
+    });
 
     if (sessionBinding.compactionModelSupportsStructuredOutput) {
-      const structuredModel = model.withStructuredOutput(schema, { method: 'jsonSchema' })
+      const structuredModel = model.withStructuredOutput(schema, {
+        method: "jsonSchema",
+      });
       return await invokeWithRetryAndSanitizedInput({
         helpers: this.helpers,
         messages: processedMessages,
         modelSupportsImage: sessionBinding.readFileSupport.image,
         signal,
         operation: async (sanitizedMessages) => {
-          return await structuredModel.invoke(sanitizedMessages, { signal }) as any
+          return (await structuredModel.invoke(sanitizedMessages, {
+            signal,
+          })) as any;
         },
         onRetry: (attempt) => {
-          console.log(`[AgentService_v2] Retrying compaction model decision for ${decisionName} (attempt ${attempt + 1})...`)
+          console.log(
+            `[AgentService_v2] Retrying compaction model decision for ${decisionName} (attempt ${attempt + 1})...`,
+          );
         },
         maxRetries: MODEL_RETRY_MAX,
-        delaysMs: MODEL_RETRY_DELAYS_MS
-      })
+        delaysMs: MODEL_RETRY_DELAYS_MS,
+      });
     }
 
     if (sessionBinding.compactionModelSupportsObjectToolChoice) {
-      const functionCallingModel = model.withStructuredOutput(schema, { method: 'functionCalling' })
+      const functionCallingModel = model.withStructuredOutput(schema, {
+        method: "functionCalling",
+      });
       return await invokeWithRetryAndSanitizedInput({
         helpers: this.helpers,
         messages: processedMessages,
         modelSupportsImage: sessionBinding.readFileSupport.image,
         signal,
         operation: async (sanitizedMessages) => {
-          return await functionCallingModel.invoke(sanitizedMessages, { signal }) as any
+          return (await functionCallingModel.invoke(sanitizedMessages, {
+            signal,
+          })) as any;
         },
         onRetry: (attempt) => {
-          console.log(`[AgentService_v2] Retrying tool-call compaction decision for ${decisionName} (attempt ${attempt + 1})...`)
+          console.log(
+            `[AgentService_v2] Retrying tool-call compaction decision for ${decisionName} (attempt ${attempt + 1})...`,
+          );
         },
         maxRetries: MODEL_RETRY_MAX,
-        delaysMs: MODEL_RETRY_DELAYS_MS
-      })
+        delaysMs: MODEL_RETRY_DELAYS_MS,
+      });
     }
 
     return await this.invokeModelDecisionByPlainToolCall(
@@ -1894,8 +2278,8 @@ export class AgentService_v2 {
       schema,
       signal,
       decisionName,
-      'compaction'
-    )
+      "compaction",
+    );
   }
 
   private async invokeModelDecisionByPlainToolCall<T extends z.ZodTypeAny>(
@@ -1904,28 +2288,30 @@ export class AgentService_v2 {
     schema: T,
     signal: AbortSignal | undefined,
     decisionName: string,
-    kind: 'action' | 'thinking' | 'compaction'
+    kind: "action" | "thinking" | "compaction",
   ): Promise<z.infer<T>> {
-    const sessionBinding = this.getSessionModelBinding(sessionId)
-    const model = kind === 'action'
-      ? sessionBinding.actionModel
-      : kind === 'compaction'
-        ? sessionBinding.compactionModel
-      : (sessionBinding.thinkingModel || sessionBinding.model)
-    const toolName = `decision_${decisionName.replace(/[^a-zA-Z0-9_]/g, '_')}`.slice(0, 60)
+    const sessionBinding = this.getSessionModelBinding(sessionId);
+    const model =
+      kind === "action"
+        ? sessionBinding.actionModel
+        : kind === "compaction"
+          ? sessionBinding.compactionModel
+          : sessionBinding.thinkingModel || sessionBinding.model;
+    const toolName =
+      `decision_${decisionName.replace(/[^a-zA-Z0-9_]/g, "_")}`.slice(0, 60);
     const tool = convertToOpenAITool({
       name: toolName,
       description: `Return the structured decision payload for ${decisionName}.`,
-      schema
-    } as any)
-    const modelWithTool = model.bindTools([tool])
+      schema,
+    } as any);
+    const modelWithTool = model.bindTools([tool]);
     const mustUseToolCallPrompt = new HumanMessage(
       [
         `You must return the decision by calling tool "${toolName}".`,
-        'Do not return plain text. Return only one tool call.'
-      ].join('\n')
-    )
-    const decisionMessages = [...messages, mustUseToolCallPrompt]
+        "Do not return plain text. Return only one tool call.",
+      ].join("\n"),
+    );
+    const decisionMessages = [...messages, mustUseToolCallPrompt];
 
     return await invokeWithRetryAndSanitizedInput({
       helpers: this.helpers,
@@ -1933,191 +2319,242 @@ export class AgentService_v2 {
       modelSupportsImage: sessionBinding.readFileSupport.image,
       signal,
       operation: async (sanitizedMessages) => {
-        const stream = await modelWithTool.stream(sanitizedMessages, { signal })
-        let response: any = null
+        const stream = await modelWithTool.stream(sanitizedMessages, {
+          signal,
+        });
+        let response: any = null;
         for await (const chunk of stream) {
-          response = response ? response.concat(chunk) : chunk
+          response = response ? response.concat(chunk) : chunk;
         }
 
         if (!response) {
-          throw new Error(`No response was returned for ${decisionName}`)
+          throw new Error(`No response was returned for ${decisionName}`);
         }
 
-        const toolCalls = Array.isArray(response?.tool_calls) ? response.tool_calls : []
-        const call = toolCalls.find((item: any) => item?.name === toolName) || toolCalls[0]
+        const toolCalls = Array.isArray(response?.tool_calls)
+          ? response.tool_calls
+          : [];
+        const call =
+          toolCalls.find((item: any) => item?.name === toolName) ||
+          toolCalls[0];
         if (call) {
-          const rawArgs = typeof call.args === 'string'
-            ? this.helpers.parseStrictJsonObject(call.args)
-            : call.args
-          return schema.parse(rawArgs) as z.infer<T>
+          const rawArgs =
+            typeof call.args === "string"
+              ? this.helpers.parseStrictJsonObject(call.args)
+              : call.args;
+          return schema.parse(rawArgs) as z.infer<T>;
         }
 
-        const responseText = String(this.helpers.extractText(response?.content) || '').slice(0, 2000)
-        const rawToolCalls = Array.isArray(response?.additional_kwargs?.tool_calls)
+        const responseText = String(
+          this.helpers.extractText(response?.content) || "",
+        ).slice(0, 2000);
+        const rawToolCalls = Array.isArray(
+          response?.additional_kwargs?.tool_calls,
+        )
           ? response.additional_kwargs.tool_calls
-          : []
+          : [];
         const invalidToolCalls = Array.isArray(response?.invalid_tool_calls)
           ? response.invalid_tool_calls
-          : []
+          : [];
 
-        const firstRawFunctionArguments = rawToolCalls[0]?.function?.arguments
-        console.warn('[AgentService_v2] No tool call returned for schema decision.', {
-          decisionName,
-          kind,
-          modelToolName: toolName,
-          strategy: 'plain_tool_call_without_tool_choice_stream',
-          responseText,
-          parsedToolCalls: toolCalls,
-          rawToolCalls,
-          invalidToolCalls,
-          firstRawFunctionArguments
-        })
-        throw new Error(`No tool call was returned for ${decisionName}`)
+        const firstRawFunctionArguments = rawToolCalls[0]?.function?.arguments;
+        console.warn(
+          "[AgentService_v2] No tool call returned for schema decision.",
+          {
+            decisionName,
+            kind,
+            modelToolName: toolName,
+            strategy: "plain_tool_call_without_tool_choice_stream",
+            responseText,
+            parsedToolCalls: toolCalls,
+            rawToolCalls,
+            invalidToolCalls,
+            firstRawFunctionArguments,
+          },
+        );
+        throw new Error(`No tool call was returned for ${decisionName}`);
       },
       onRetry: (attempt) => {
-        console.log(`[AgentService_v2] Retrying plain-tool-stream ${kind} decision for ${decisionName} (attempt ${attempt + 1})...`)
+        console.log(
+          `[AgentService_v2] Retrying plain-tool-stream ${kind} decision for ${decisionName} (attempt ${attempt + 1})...`,
+        );
       },
       maxRetries: MODEL_RETRY_MAX,
-      delaysMs: MODEL_RETRY_DELAYS_MS
-    })
+      delaysMs: MODEL_RETRY_DELAYS_MS,
+    });
   }
-
 
   // --- Execution Core ---
 
-  async run(context: any, input: StartTaskInput, signal: AbortSignal, startMode: 'normal' | 'inserted' = 'normal'): Promise<void> {
-    if (!this.graph) throw new Error('Graph not initialized')
+  async run(
+    context: any,
+    input: StartTaskInput,
+    signal: AbortSignal,
+    startMode: "normal" | "inserted" = "normal",
+  ): Promise<void> {
+    if (!this.graph) throw new Error("Graph not initialized");
 
-    this.lastAbortedMessage = null
-    const { sessionId } = context
-    const lockedProfileId = String(context.lockedProfileId || '')
+    this.lastAbortedMessage = null;
+    const { sessionId } = context;
+    const lockedProfileId = String(context.lockedProfileId || "");
     if (!lockedProfileId) {
-      throw new Error(`Missing locked profile for session ${sessionId}`)
+      throw new Error(`Missing locked profile for session ${sessionId}`);
     }
-    this.selfCorrectionRuntimeManager.clearSession(sessionId)
-    const sessionBinding = this.ensureSessionModelBinding(sessionId, lockedProfileId)
-    const currentRunMaxTokens = this.getEffectiveMaxTokensFromBinding(sessionBinding)
-    const recursionLimit = this.settings?.recursionLimit ?? 200
-    const loadedSession = this.chatHistoryService.loadSession(sessionId)
+    this.selfCorrectionRuntimeManager.clearSession(sessionId);
+    const sessionBinding = this.ensureSessionModelBinding(
+      sessionId,
+      lockedProfileId,
+    );
+    const currentRunMaxTokens =
+      this.getEffectiveMaxTokensFromBinding(sessionBinding);
+    const recursionLimit = this.settings?.recursionLimit ?? 200;
+    const loadedSession = this.chatHistoryService.loadSession(sessionId);
     let baseMessages = loadedSession
-      ? mapStoredMessagesToChatMessages(Array.from(loadedSession.messages.values()))
-      : []
+      ? mapStoredMessagesToChatMessages(
+          Array.from(loadedSession.messages.values()),
+        )
+      : [];
 
     const shouldResetCompressionArtifacts =
       !!loadedSession &&
-      (typeof loadedSession.lastProfileMaxTokens !== 'number' ||
-        currentRunMaxTokens > loadedSession.lastProfileMaxTokens)
+      (typeof loadedSession.lastProfileMaxTokens !== "number" ||
+        currentRunMaxTokens > loadedSession.lastProfileMaxTokens);
     if (shouldResetCompressionArtifacts && baseMessages.length > 0) {
-      const reset = clearAllCompressionArtifacts(baseMessages)
+      const reset = clearAllCompressionArtifacts(baseMessages);
       if (reset.changed) {
-        baseMessages = reset.messages
+        baseMessages = reset.messages;
         console.log(
-          `[AgentService_v2] Cleared compression artifacts before run (sessionId=${sessionId}, prevMaxTokens=${loadedSession?.lastProfileMaxTokens ?? 'unknown'}, nextMaxTokens=${currentRunMaxTokens}).`
-        )
+          `[AgentService_v2] Cleared compression artifacts before run (sessionId=${sessionId}, prevMaxTokens=${loadedSession?.lastProfileMaxTokens ?? "unknown"}, nextMaxTokens=${currentRunMaxTokens}).`,
+        );
       }
     }
-    const runExperimentalFlags = resolveRunExperimentalFlags(context, this.settings)
+    const runExperimentalFlags = resolveRunExperimentalFlags(
+      context,
+      this.settings,
+    );
 
     const initialState = {
       messages: [...baseMessages],
       sessionId: sessionId,
       startup_input: input,
       startup_mode: startMode,
-      runtimeThinkingCorrectionEnabled: runExperimentalFlags.runtimeThinkingCorrectionEnabled,
+      runtimeThinkingCorrectionEnabled:
+        runExperimentalFlags.runtimeThinkingCorrectionEnabled,
       taskFinishGuardEnabled: runExperimentalFlags.taskFinishGuardEnabled,
-      firstTurnThinkingModelEnabled: runExperimentalFlags.firstTurnThinkingModelEnabled,
-      execCommandActionModelEnabled: runExperimentalFlags.execCommandActionModelEnabled,
-      writeStdinActionModelEnabled: runExperimentalFlags.writeStdinActionModelEnabled
-    }
+      firstTurnThinkingModelEnabled:
+        runExperimentalFlags.firstTurnThinkingModelEnabled,
+      execCommandActionModelEnabled:
+        runExperimentalFlags.execCommandActionModelEnabled,
+      writeStdinActionModelEnabled:
+        runExperimentalFlags.writeStdinActionModelEnabled,
+    };
 
     try {
       const result = await this.graph.invoke(initialState, {
         recursionLimit: recursionLimit,
         signal,
-        configurable: { thread_id: sessionId }
-      })
+        configurable: { thread_id: sessionId },
+      });
 
       // Persistence
       if (result && result.messages) {
-        const finalMessages = result.messages
+        const finalMessages = result.messages;
         const sessionToSave = loadedSession || {
           id: sessionId,
-          title: 'New Session',
+          title: "New Session",
           messages: new Map(),
           lastCheckpointOffset: 0,
-          lastProfileMaxTokens: currentRunMaxTokens
-        }
-        this.updateSessionFromMessages(sessionToSave, finalMessages as BaseMessage[], currentRunMaxTokens)
-        this.chatHistoryService.saveSession(sessionToSave)
+          lastProfileMaxTokens: currentRunMaxTokens,
+        };
+        this.updateSessionFromMessages(
+          sessionToSave,
+          finalMessages as BaseMessage[],
+          currentRunMaxTokens,
+        );
+        this.chatHistoryService.saveSession(sessionToSave);
       }
     } catch (err: any) {
-      const isAbort = this.helpers.isAbortError(err)
+      const isAbort = this.helpers.isAbortError(err);
 
       // For any stop path or internal failure, try to save all history in the current Checkpoint.
-      await this.trySaveSessionFromCheckpoint(sessionId)
+      await this.trySaveSessionFromCheckpoint(sessionId);
 
       if (isAbort) {
-        console.log(`[AgentService_v2] Run abort trigger received (sessionId=${sessionId}).`)
-        return
+        console.log(
+          `[AgentService_v2] Run abort trigger received (sessionId=${sessionId}).`,
+        );
+        return;
       }
 
-      console.error(`[AgentService_v2] Run task failed (sessionId=${sessionId}):`, err)
+      console.error(
+        `[AgentService_v2] Run task failed (sessionId=${sessionId}):`,
+        err,
+      );
       // Use our new detail extraction helper
-      const errorDetails = this.helpers.extractErrorDetails(err)
-      const errorMessage = err.message || String(err)
-      
+      const errorDetails = this.helpers.extractErrorDetails(err);
+      const errorMessage = err.message || String(err);
+
       // Broadcast with full details
       this.helpers.sendEvent(sessionId, {
-        type: 'error',
+        type: "error",
         message: errorMessage,
-        details: errorDetails
-      })
+        details: errorDetails,
+      });
 
-      throw err // Throw to Gateway for UI notification
+      throw err; // Throw to Gateway for UI notification
     } finally {
-      this.selfCorrectionRuntimeManager.clearSession(sessionId)
-      await this.clearCheckpoint(sessionId)
+      this.selfCorrectionRuntimeManager.clearSession(sessionId);
+      await this.clearCheckpoint(sessionId);
     }
   }
 
   private async clearCheckpoint(sessionId: string): Promise<void> {
     try {
       // Clear MemorySaver state for this thread after task completion/error.
-      await this.checkpointer.deleteThread(sessionId)
+      await this.checkpointer.deleteThread(sessionId);
     } catch {
       // best-effort cleanup
     }
   }
 
   private async trySaveSessionFromCheckpoint(sessionId: string): Promise<void> {
-    if (!this.graph) return
+    if (!this.graph) return;
     try {
-      const snapshot = await this.graph.getState({ configurable: { thread_id: sessionId } })
-      let messages = (snapshot as any)?.values?.messages as BaseMessage[] | undefined
-      if (!messages || messages.length === 0) return
-      
+      const snapshot = await this.graph.getState({
+        configurable: { thread_id: sessionId },
+      });
+      let messages = (snapshot as any)?.values?.messages as
+        | BaseMessage[]
+        | undefined;
+      if (!messages || messages.length === 0) return;
+
       // Check if there's an aborted message captured in the instance variable
       if (this.lastAbortedMessage) {
-        console.log('[AgentService_v2] Appending aborted message from instance variable to history.')
-        messages = [...messages, this.lastAbortedMessage]
-        this.lastAbortedMessage = null // Clear after use
+        console.log(
+          "[AgentService_v2] Appending aborted message from instance variable to history.",
+        );
+        messages = [...messages, this.lastAbortedMessage];
+        this.lastAbortedMessage = null; // Clear after use
       }
-      
+
       const session = this.chatHistoryService.loadSession(sessionId) || {
         id: sessionId,
-        title: 'New Session',
+        title: "New Session",
         messages: new Map(),
         lastCheckpointOffset: 0,
-        lastProfileMaxTokens: this.getEffectiveMaxTokensForSession(sessionId)
-      }
+        lastProfileMaxTokens: this.getEffectiveMaxTokensForSession(sessionId),
+      };
       this.updateSessionFromMessages(
         session,
         messages,
-        this.getEffectiveMaxTokensForSession(sessionId)
-      )
-      this.chatHistoryService.saveSession(session)
+        this.getEffectiveMaxTokensForSession(sessionId),
+      );
+      this.chatHistoryService.saveSession(session);
     } catch (error) {
-      console.warn('[AgentService_v2] Failed to save session from checkpoint:', error)
+      console.warn(
+        "[AgentService_v2] Failed to save session from checkpoint:",
+        error,
+      );
     }
   }
 
@@ -2126,15 +2563,15 @@ export class AgentService_v2 {
   private updateSessionFromMessages(
     session: ChatSession,
     messages: BaseMessage[],
-    lastProfileMaxTokens?: number
+    lastProfileMaxTokens?: number,
   ): void {
-    let persisted = messages.filter((m) => !this.helpers.isEphemeral(m))
-    const toolCallCleanResult = removeUnmatchedToolCallsFromHistory(persisted)
-    persisted = toolCallCleanResult.messages
+    let persisted = messages.filter((m) => !this.helpers.isEphemeral(m));
+    const toolCallCleanResult = removeUnmatchedToolCallsFromHistory(persisted);
+    persisted = toolCallCleanResult.messages;
     if (toolCallCleanResult.removedToolCallCount > 0) {
       console.warn(
-        `[AgentService_v2] Removed ${toolCallCleanResult.removedToolCallCount} orphan tool_calls before history persistence.`
-      )
+        `[AgentService_v2] Removed ${toolCallCleanResult.removedToolCallCount} orphan tool_calls before history persistence.`,
+      );
     }
 
     // Check if the last message is an empty AI message and remove it if so
@@ -2149,94 +2586,119 @@ export class AgentService_v2 {
     //   }
     // }
 
-    const storedMessages = mapChatMessagesToStoredMessages(persisted)
+    const storedMessages = mapChatMessagesToStoredMessages(persisted);
     if (!this.shouldKeepDebugPayloadInPersistence()) {
-      stripRawResponseFromStoredMessages(storedMessages as any[])
+      stripRawResponseFromStoredMessages(storedMessages as any[]);
     }
-    const newMessagesMap = new Map<string, typeof storedMessages[0]>()
+    const newMessagesMap = new Map<string, (typeof storedMessages)[0]>();
 
     for (const msg of storedMessages) {
       const msgId =
         (msg as any)?.data?.additional_kwargs?._gyshellMessageId ||
         (msg as any)?.additional_kwargs?._gyshellMessageId ||
-        uuidv4()
-      newMessagesMap.set(msgId, msg)
+        uuidv4();
+      newMessagesMap.set(msgId, msg);
     }
 
-    session.messages = newMessagesMap
-    if (typeof lastProfileMaxTokens === 'number') {
-      session.lastProfileMaxTokens = lastProfileMaxTokens
+    session.messages = newMessagesMap;
+    if (typeof lastProfileMaxTokens === "number") {
+      session.lastProfileMaxTokens = lastProfileMaxTokens;
     }
   }
 
   loadChatSession(sessionId: string): ChatSession | null {
-    return this.chatHistoryService.loadSession(sessionId)
+    return this.chatHistoryService.loadSession(sessionId);
   }
 
   listStoredChatSessions(): StoredChatSession[] {
-    return this.chatHistoryService.getAllSessions()
+    return this.chatHistoryService.getAllSessions();
+  }
+
+  listStoredChatSessionSummaries() {
+    return this.chatHistoryService.getAllSessionSummaries();
   }
 
   deleteChatSession(sessionId: string): void {
-    this.releaseSessionModelBinding(sessionId)
-    this.chatHistoryService.deleteSession(sessionId)
-    this.uiHistoryService.deleteSession(sessionId)
+    this.releaseSessionModelBinding(sessionId);
+    this.chatHistoryService.deleteSession(sessionId);
+    this.uiHistoryService.deleteSession(sessionId);
+  }
+
+  deleteChatSessions(sessionIds: string[]): void {
+    const ids = Array.from(
+      new Set(sessionIds.filter((id) => id.trim().length > 0)),
+    );
+    if (ids.length === 0) {
+      return;
+    }
+    ids.forEach((id) => this.releaseSessionModelBinding(id));
+    this.chatHistoryService.deleteSessions(ids);
+    this.uiHistoryService.deleteSessions(ids);
   }
 
   renameChatSession(sessionId: string, newTitle: string): void {
-    this.chatHistoryService.renameSession(sessionId, newTitle)
-    this.uiHistoryService.renameSession(sessionId, newTitle)
+    this.chatHistoryService.renameSession(sessionId, newTitle);
+    this.uiHistoryService.renameSession(sessionId, newTitle);
   }
 
   exportChatSession(sessionId: string): any | null {
-    return this.chatHistoryService.exportSession(sessionId)
+    return this.chatHistoryService.exportSession(sessionId);
   }
 
-  rollbackToMessage(sessionId: string, messageId: string): { ok: boolean; removedCount: number } {
-    const session = this.chatHistoryService.loadSession(sessionId)
+  rollbackToMessage(
+    sessionId: string,
+    messageId: string,
+  ): { ok: boolean; removedCount: number } {
+    const session = this.chatHistoryService.loadSession(sessionId);
     if (!session) {
-      return { ok: false, removedCount: 0 }
+      return { ok: false, removedCount: 0 };
     }
 
-    const entries = Array.from(session.messages.entries())
+    const entries = Array.from(session.messages.entries());
     const idx = entries.findIndex(([id, msg]) => {
-      if (id === messageId) return true
-      const storedId = (msg as any)?.data?.additional_kwargs?._gyshellMessageId
-      return storedId === messageId
-    })
+      if (id === messageId) return true;
+      const storedId = (msg as any)?.data?.additional_kwargs?._gyshellMessageId;
+      return storedId === messageId;
+    });
     if (idx === -1) {
-      return { ok: false, removedCount: 0 }
+      return { ok: false, removedCount: 0 };
     }
 
-    const kept = entries.slice(0, idx)
-    const keptStoredMessages = kept.map(([, msg]) => msg)
-    const keptMessages = mapStoredMessagesToChatMessages(keptStoredMessages as any[])
+    const kept = entries.slice(0, idx);
+    const keptStoredMessages = kept.map(([, msg]) => msg);
+    const keptMessages = mapStoredMessagesToChatMessages(
+      keptStoredMessages as any[],
+    );
     const rollbackSanitized = sanitizeCompressionAfterRollback(keptMessages, {
       pruneToolWindow: 10,
-      protectedNormalRounds: COMPACTION_PROTECTED_NORMAL_USER_ROUNDS
-    })
+      protectedNormalRounds: COMPACTION_PROTECTED_NORMAL_USER_ROUNDS,
+    });
 
     this.updateSessionFromMessages(
       session,
       rollbackSanitized.messages,
-      session.lastProfileMaxTokens
-    )
-    this.chatHistoryService.saveSession(session)
+      session.lastProfileMaxTokens,
+    );
+    this.chatHistoryService.saveSession(session);
 
-    return { ok: true, removedCount: entries.length - idx }
+    return { ok: true, removedCount: entries.length - idx };
   }
 
   getAllChatHistory() {
-    const backendSessions = this.chatHistoryService.getAllSessions()
-    const uiSessions = this.uiHistoryService.getAllSessions()
+    const backendSessions = this.chatHistoryService.getAllSessionSummaries();
+    const uiSessions = this.uiHistoryService.getAllSessionSummaries();
+    const uiById = new Map(
+      uiSessions.map((session) => [session.id, session] as const),
+    );
 
     return backendSessions.map((backend) => {
-      const ui = uiSessions.find((u) => u.id === backend.id)
+      const ui = uiById.get(backend.id);
       return {
         ...backend,
         title: ui?.title || backend.title,
-        messagesCount: ui?.messages.length || 0
-      }
-    })
+        messagesCount: ui?.messagesCount || 0,
+        lastMessagePreview: ui?.lastMessagePreview || "",
+      };
+    });
   }
 }

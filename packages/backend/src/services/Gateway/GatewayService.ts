@@ -1,5 +1,5 @@
-import { v4 as uuidv4 } from 'uuid';
-import { EventEmitter } from 'events';
+import { v4 as uuidv4 } from "uuid";
+import { EventEmitter } from "events";
 import type {
   IGatewayRuntime,
   GatewayEvent,
@@ -9,19 +9,18 @@ import type {
   StartTaskOptions,
   StartTaskInput,
   GatewaySessionSnapshot,
-  GatewaySessionSummary
-} from './types';
-import type { UIHistoryService } from '../UIHistoryService';
-import type { StoredChatSession } from '../ChatHistoryService';
+  GatewaySessionSummary,
+} from "./types";
+import type { UIHistoryService } from "../UIHistoryService";
 import type {
   IAgentRuntime,
   ICommandPolicyRuntime,
   IGatewayTerminalRuntime,
   IMcpRuntime,
-  ISettingsRuntime
-} from '../runtimeContracts';
-import { getRunExperimentalFlagsFromSettings } from '../AgentHelper/utils/experimental_flags';
-import { TransportHub } from './TransportHub';
+  ISettingsRuntime,
+} from "../runtimeContracts";
+import { getRunExperimentalFlagsFromSettings } from "../AgentHelper/utils/experimental_flags";
+import { TransportHub } from "./TransportHub";
 
 export class GatewayService extends EventEmitter implements IGatewayRuntime {
   private sessions: Map<string, SessionContext> = new Map();
@@ -36,23 +35,27 @@ export class GatewayService extends EventEmitter implements IGatewayRuntime {
     private uiHistoryService: UIHistoryService,
     private commandPolicyService: ICommandPolicyRuntime,
     private settingsService: ISettingsRuntime,
-    private mcpToolService: IMcpRuntime
+    private mcpToolService: IMcpRuntime,
   ) {
     super();
 
-    this.terminalService.setRawEventPublisher((channel, data) => this.broadcastRaw(channel, data));
+    this.terminalService.setRawEventPublisher((channel, data) =>
+      this.broadcastRaw(channel, data),
+    );
     this.agentService.setEventPublisher((sessionId, event) => {
       this.broadcast({
-        type: 'agent:event',
+        type: "agent:event",
         sessionId,
-        payload: event
+        payload: event,
       });
     });
-    this.agentService.setFeedbackWaiter((messageId, timeoutMs) => this.waitForFeedback(messageId, timeoutMs));
-    this.commandPolicyService.setFeedbackWaiter((messageId, timeoutMs) =>
-      this.waitForFeedback(messageId, timeoutMs)
+    this.agentService.setFeedbackWaiter((messageId, timeoutMs) =>
+      this.waitForFeedback(messageId, timeoutMs),
     );
-    
+    this.commandPolicyService.setFeedbackWaiter((messageId, timeoutMs) =>
+      this.waitForFeedback(messageId, timeoutMs),
+    );
+
     this.setupInternalSubscriptions();
     this.setupServiceSubscriptions();
   }
@@ -67,18 +70,21 @@ export class GatewayService extends EventEmitter implements IGatewayRuntime {
 
   private setupServiceSubscriptions() {
     // MCP tool status updates
-    this.mcpToolService.on('updated', (summary) => {
-      this.transportHub.send('tools:mcpUpdated', summary);
+    this.mcpToolService.on("updated", (summary) => {
+      this.transportHub.send("tools:mcpUpdated", summary);
     });
   }
 
   private setupInternalSubscriptions() {
     // UIHistoryService subscribes to all agent events for persistence
-    this.subscribe('agent:event', (event) => {
-      const actions = this.uiHistoryService.recordEvent(event.sessionId!, event.payload);
-      
+    this.subscribe("agent:event", (event) => {
+      const actions = this.uiHistoryService.recordEvent(
+        event.sessionId!,
+        event.payload,
+      );
+
       // 1. Send processed UI Actions (for core UI like message list)
-      actions.forEach(action => this.transportHub.sendUIUpdate(action));
+      actions.forEach((action) => this.transportHub.sendUIUpdate(action));
       // 2. Send raw Agent Event (for auxiliary components like Banners, status lights, etc.)
       this.transportHub.emitEvent(event);
     });
@@ -95,7 +101,11 @@ export class GatewayService extends EventEmitter implements IGatewayRuntime {
     return this.sessions.get(sessionId);
   }
 
-  async dispatchTask(sessionId: string, input: StartTaskInput, options?: StartTaskOptions): Promise<void> {
+  async dispatchTask(
+    sessionId: string,
+    input: StartTaskInput,
+    options?: StartTaskOptions,
+  ): Promise<void> {
     let context = this.sessions.get(sessionId);
     if (!context) {
       context = this.createEmptySessionContext(sessionId);
@@ -104,10 +114,10 @@ export class GatewayService extends EventEmitter implements IGatewayRuntime {
 
     this.ensureSessionProfileLock(context);
 
-    if (context.status !== 'idle') {
+    if (context.status !== "idle") {
       await this.stopTask(sessionId, {
         waitForCompletion: true,
-        preserveProfileLock: true
+        preserveProfileLock: true,
       });
     } else {
       // Handle race: status already idle but previous run finalization not finished yet.
@@ -123,23 +133,32 @@ export class GatewayService extends EventEmitter implements IGatewayRuntime {
 
     context.activeRunId = runId;
     context.abortController = abortController;
-    context.status = 'running';
+    context.status = "running";
     context.metadata.runCompletion = runCompletion;
     context.metadata.runId = runId;
 
     try {
       // AgentService has been refactored as stateless run
-      await this.agentService.run(context, input, abortController.signal, options?.startMode || 'normal');
+      await this.agentService.run(
+        context,
+        input,
+        abortController.signal,
+        options?.startMode || "normal",
+      );
     } catch (error: any) {
       const isAbortError =
-        typeof this.agentService.isAbortError === 'function'
+        typeof this.agentService.isAbortError === "function"
           ? this.agentService.isAbortError(error)
-          : (error instanceof Error && (error.name === 'AbortError' || error.message === 'AbortError'));
+          : error instanceof Error &&
+            (error.name === "AbortError" || error.message === "AbortError");
       if (isAbortError) {
         // User stopped manually, not treated as an error, handled by stopTask
         return;
       }
-      console.error(`[GatewayService] Task execution error (sessionId=${sessionId}):`, error);
+      console.error(
+        `[GatewayService] Task execution error (sessionId=${sessionId}):`,
+        error,
+      );
       // Error broadcasting is now handled inside agentService.run for better detail capture,
       // but we keep a fallback here just in case.
     } finally {
@@ -154,10 +173,14 @@ export class GatewayService extends EventEmitter implements IGatewayRuntime {
         this.clearRunState(context);
         this.releaseSessionProfileLock(context);
         // 1. Send DONE action (for UI state like isThinking)
-        this.broadcast({ type: 'agent:event', sessionId, payload: { type: 'done' } });
+        this.broadcast({
+          type: "agent:event",
+          sessionId,
+          payload: { type: "done" },
+        });
         // 2. Send SESSION_READY action (for admission control and queue scheduling)
         // This MUST be sent after clearRunState to ensure backend is truly idle
-        this.transportHub.sendUIUpdate({ type: 'SESSION_READY', sessionId });
+        this.transportHub.sendUIUpdate({ type: "SESSION_READY", sessionId });
         this.uiHistoryService.flush(sessionId);
       }
     }
@@ -165,11 +188,13 @@ export class GatewayService extends EventEmitter implements IGatewayRuntime {
 
   async stopTask(
     sessionId: string,
-    options?: { waitForCompletion?: boolean; preserveProfileLock?: boolean }
+    options?: { waitForCompletion?: boolean; preserveProfileLock?: boolean },
   ): Promise<void> {
     const context = this.sessions.get(sessionId);
     if (context && context.abortController) {
-      const runCompletion = context.metadata.runCompletion as Promise<void> | undefined;
+      const runCompletion = context.metadata.runCompletion as
+        | Promise<void>
+        | undefined;
       context.abortController.abort();
       this.clearRunState(context);
       if (!options?.preserveProfileLock) {
@@ -179,8 +204,12 @@ export class GatewayService extends EventEmitter implements IGatewayRuntime {
       // For inserted-message restart flow, dispatchTask will continue with a new run immediately,
       // so we intentionally avoid emitting SESSION_READY here.
       if (!options?.preserveProfileLock) {
-        this.broadcast({ type: 'agent:event', sessionId, payload: { type: 'done' } });
-        this.transportHub.sendUIUpdate({ type: 'SESSION_READY', sessionId });
+        this.broadcast({
+          type: "agent:event",
+          sessionId,
+          payload: { type: "done" },
+        });
+        this.transportHub.sendUIUpdate({ type: "SESSION_READY", sessionId });
         this.uiHistoryService.flush(sessionId);
       }
       if (options?.waitForCompletion && runCompletion) {
@@ -189,7 +218,9 @@ export class GatewayService extends EventEmitter implements IGatewayRuntime {
       return;
     }
     if (context && options?.waitForCompletion) {
-      const runCompletion = context.metadata.runCompletion as Promise<void> | undefined;
+      const runCompletion = context.metadata.runCompletion as
+        | Promise<void>
+        | undefined;
       if (runCompletion) {
         await runCompletion.catch(() => undefined);
       }
@@ -204,17 +235,17 @@ export class GatewayService extends EventEmitter implements IGatewayRuntime {
     const uiSummaryById = new Map(
       this.uiHistoryService
         .getAllSessionSummaries()
-        .map((session) => [session.id, session] as const)
+        .map((session) => [session.id, session] as const),
     );
     const storedById = new Map(
       this.agentService
-        .listStoredChatSessions()
-        .map((session) => [session.id, session] as const)
+        .listStoredChatSessionSummaries()
+        .map((session) => [session.id, session] as const),
     );
     const knownSessionIds = new Set<string>([
       ...uiSummaryById.keys(),
       ...storedById.keys(),
-      ...this.sessions.keys()
+      ...this.sessions.keys(),
     ]);
 
     return Array.from(knownSessionIds)
@@ -222,27 +253,31 @@ export class GatewayService extends EventEmitter implements IGatewayRuntime {
         const uiSummary = uiSummaryById.get(sessionId);
         const storedSession = storedById.get(sessionId);
         const context = this.sessions.get(sessionId);
-        const isBusy = context ? context.status !== 'idle' : false;
-        const lockedProfileId = isBusy && context ? context.lockedProfileId || null : null;
+        const isBusy = context ? context.status !== "idle" : false;
+        const lockedProfileId =
+          isBusy && context ? context.lockedProfileId || null : null;
 
         return {
           id: sessionId,
           title: this.resolveSessionTitle(
             uiSummary?.title,
             storedSession?.title,
-            context
+            context,
           ),
           updatedAt: this.resolveSessionUpdatedAt(
             uiSummary?.updatedAt,
             storedSession?.updatedAt,
-            context
+            context,
           ),
-          messagesCount: this.resolveSessionMessageCount(uiSummary, storedSession),
+          messagesCount: this.resolveSessionMessageCount(
+            uiSummary,
+            storedSession,
+          ),
           lastMessagePreview: this.normalizeSessionPreview(
-            uiSummary?.lastMessagePreview || ''
+            uiSummary?.lastMessagePreview || "",
           ),
           isBusy,
-          lockedProfileId
+          lockedProfileId,
         };
       })
       .sort((left, right) => right.updatedAt - left.updatedAt);
@@ -255,26 +290,26 @@ export class GatewayService extends EventEmitter implements IGatewayRuntime {
     if (!session && !storedSession && !context) return null;
 
     const resolvedSessionId = session?.id || storedSession?.id || sessionId;
-    const isBusy = context ? context.status !== 'idle' : false;
+    const isBusy = context ? context.status !== "idle" : false;
     const lockedProfileId = isBusy ? context?.lockedProfileId || null : null;
     return {
       id: resolvedSessionId,
       title: this.resolveSessionTitle(
         session?.title,
         storedSession?.title,
-        context
+        context,
       ),
       updatedAt: this.resolveSessionUpdatedAt(
         session?.updatedAt,
         storedSession?.updatedAt,
-        context
+        context,
       ),
       messages: (session?.messages || []).map((message) => ({
         ...message,
-        metadata: message.metadata ? { ...message.metadata } : undefined
+        metadata: message.metadata ? { ...message.metadata } : undefined,
       })),
       isBusy,
-      lockedProfileId
+      lockedProfileId,
     };
   }
 
@@ -287,8 +322,19 @@ export class GatewayService extends EventEmitter implements IGatewayRuntime {
   async deleteChatSession(sessionId: string): Promise<void> {
     await this.stopTask(sessionId);
     this.agentService.deleteChatSession(sessionId);
-    this.uiHistoryService.deleteSession(sessionId);
     this.sessions.delete(sessionId);
+  }
+
+  async deleteChatSessions(sessionIds: string[]): Promise<void> {
+    const ids = Array.from(
+      new Set(sessionIds.filter((id) => id.trim().length > 0)),
+    );
+    if (ids.length === 0) {
+      return;
+    }
+    await Promise.all(ids.map((id) => this.stopTask(id)));
+    this.agentService.deleteChatSessions(ids);
+    ids.forEach((id) => this.sessions.delete(id));
   }
 
   renameSession(sessionId: string, newTitle: string): void {
@@ -297,16 +343,16 @@ export class GatewayService extends EventEmitter implements IGatewayRuntime {
 
   async rollbackSessionToMessage(
     sessionId: string,
-    messageId: string
+    messageId: string,
   ): Promise<{ ok: boolean; removedCount: number }> {
     await this.stopTask(sessionId);
     this.broadcast({
-      type: 'agent:event',
+      type: "agent:event",
       sessionId,
       payload: {
-        type: 'rollback',
-        messageId
-      }
+        type: "rollback",
+        messageId,
+      },
     });
     return this.agentService.rollbackToMessage(sessionId, messageId);
   }
@@ -314,14 +360,16 @@ export class GatewayService extends EventEmitter implements IGatewayRuntime {
   private async waitForRunCompletionIfAny(sessionId: string): Promise<void> {
     const context = this.sessions.get(sessionId);
     if (!context) return;
-    const runCompletion = context.metadata.runCompletion as Promise<void> | undefined;
+    const runCompletion = context.metadata.runCompletion as
+      | Promise<void>
+      | undefined;
     if (runCompletion) {
       await runCompletion.catch(() => undefined);
     }
   }
 
   private clearRunState(context: SessionContext) {
-    context.status = 'idle';
+    context.status = "idle";
     context.activeRunId = null;
     context.abortController = null;
     // Clean up cache for this session's messages if any remain
@@ -344,58 +392,69 @@ export class GatewayService extends EventEmitter implements IGatewayRuntime {
       lockedProfileId: null,
       lockedExperimentalFlags: null,
       abortController: null,
-      status: 'idle',
+      status: "idle",
       metadata: {
-        createdAt: Date.now()
-      }
+        createdAt: Date.now(),
+      },
     };
   }
 
   private resolveSessionTitle(
     uiTitle?: string,
     storedTitle?: string,
-    context?: SessionContext
+    context?: SessionContext,
   ): string {
-    const preferredTitle = [uiTitle, storedTitle]
-      .find((value) => typeof value === 'string' && value.trim().length > 0);
+    const preferredTitle = [uiTitle, storedTitle].find(
+      (value) => typeof value === "string" && value.trim().length > 0,
+    );
     if (preferredTitle) {
       return preferredTitle;
     }
     if (context) {
-      return 'New Chat';
+      return "New Chat";
     }
-    return 'Recovered Session';
+    return "Recovered Session";
   }
 
   private resolveSessionUpdatedAt(
     uiUpdatedAt?: number,
     storedUpdatedAt?: number,
-    context?: SessionContext
+    context?: SessionContext,
   ): number {
-    if (typeof uiUpdatedAt === 'number' && Number.isFinite(uiUpdatedAt)) {
+    if (typeof uiUpdatedAt === "number" && Number.isFinite(uiUpdatedAt)) {
       return uiUpdatedAt;
     }
-    if (typeof storedUpdatedAt === 'number' && Number.isFinite(storedUpdatedAt)) {
+    if (
+      typeof storedUpdatedAt === "number" &&
+      Number.isFinite(storedUpdatedAt)
+    ) {
       return storedUpdatedAt;
     }
     const contextCreatedAt = context?.metadata?.createdAt;
-    if (typeof contextCreatedAt === 'number' && Number.isFinite(contextCreatedAt)) {
+    if (
+      typeof contextCreatedAt === "number" &&
+      Number.isFinite(contextCreatedAt)
+    ) {
       return contextCreatedAt;
     }
     return Date.now();
   }
 
   private resolveSessionMessageCount(
-    uiSummary:
-      | { messagesCount?: number }
-      | undefined,
-    storedSession?: StoredChatSession
+    uiSummary: { messagesCount?: number } | undefined,
+    storedSession?: { messages?: unknown[]; messagesCount?: number },
   ): number {
     if (
-      typeof uiSummary?.messagesCount === 'number' &&
+      typeof uiSummary?.messagesCount === "number" &&
       Number.isFinite(uiSummary.messagesCount)
     ) {
       return uiSummary.messagesCount;
+    }
+    if (
+      typeof storedSession?.messagesCount === "number" &&
+      Number.isFinite(storedSession.messagesCount)
+    ) {
+      return storedSession.messagesCount;
     }
     if (Array.isArray(storedSession?.messages)) {
       return storedSession.messages.length;
@@ -406,18 +465,19 @@ export class GatewayService extends EventEmitter implements IGatewayRuntime {
   private ensureSessionProfileLock(context: SessionContext): void {
     if (context.lockedProfileId) return;
     const settings = this.settingsService.getSettings();
-    context.lockedProfileId = settings.models.activeProfileId || '';
-    context.lockedExperimentalFlags = getRunExperimentalFlagsFromSettings(settings);
+    context.lockedProfileId = settings.models.activeProfileId || "";
+    context.lockedExperimentalFlags =
+      getRunExperimentalFlagsFromSettings(settings);
     this.transportHub.sendUIUpdate({
-      type: 'SESSION_PROFILE_LOCKED',
+      type: "SESSION_PROFILE_LOCKED",
       sessionId: context.sessionId,
-      lockedProfileId: context.lockedProfileId || null
+      lockedProfileId: context.lockedProfileId || null,
     });
   }
 
   async pauseTask(sessionId: string): Promise<void> {
     const context = this.sessions.get(sessionId);
-    if (context) context.status = 'paused';
+    if (context) context.status = "paused";
   }
 
   async resumeTask(_sessionId: string): Promise<void> {
@@ -425,11 +485,11 @@ export class GatewayService extends EventEmitter implements IGatewayRuntime {
   }
 
   // Event distribution method, renamed to broadcast to avoid conflict with EventEmitter's emit
-  broadcast(event: Omit<GatewayEvent, 'id' | 'timestamp'>): void {
+  broadcast(event: Omit<GatewayEvent, "id" | "timestamp">): void {
     const fullEvent: GatewayEvent = {
       ...event,
       id: uuidv4(),
-      timestamp: Date.now()
+      timestamp: Date.now(),
     };
 
     // 1. Internal bus distribution (for other Services like UIHistoryService)
@@ -438,7 +498,7 @@ export class GatewayService extends EventEmitter implements IGatewayRuntime {
     // 2. Send to frontend via all transports.
     // agent:event is emitted by the internal subscription path after UI action generation,
     // so we skip direct fan-out here to avoid duplicate delivery.
-    if (fullEvent.type !== 'agent:event') {
+    if (fullEvent.type !== "agent:event") {
       this.transportHub.emitEvent(fullEvent);
     }
   }
@@ -448,17 +508,25 @@ export class GatewayService extends EventEmitter implements IGatewayRuntime {
     this.transportHub.send(channel, data);
   }
 
-  subscribe(type: GatewayEventType, handler: (event: GatewayEvent) => void): () => void {
+  subscribe(
+    type: GatewayEventType,
+    handler: (event: GatewayEvent) => void,
+  ): () => void {
     this.eventBus.on(type, handler);
     return () => this.eventBus.off(type, handler);
   }
 
-  async waitForFeedback<T>(messageId: string, timeoutMs: number = 120000): Promise<T | null> {
+  async waitForFeedback<T>(
+    messageId: string,
+    timeoutMs: number = 120000,
+  ): Promise<T | null> {
     // 1. Check cache first (in case frontend replied before backend started waiting)
     if (this.feedbackCache.has(messageId)) {
       const cached = this.feedbackCache.get(messageId);
       this.feedbackCache.delete(messageId);
-      console.log(`[GatewayService] Using cached feedback for messageId=${messageId}`);
+      console.log(
+        `[GatewayService] Using cached feedback for messageId=${messageId}`,
+      );
       return cached as T;
     }
 
@@ -481,8 +549,8 @@ export class GatewayService extends EventEmitter implements IGatewayRuntime {
   }
 
   private normalizeSessionPreview(input: string): string {
-    return String(input || '')
-      .replace(/\s+/g, ' ')
+    return String(input || "")
+      .replace(/\s+/g, " ")
       .trim()
       .slice(0, 160);
   }

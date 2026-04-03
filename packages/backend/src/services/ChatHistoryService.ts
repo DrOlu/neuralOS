@@ -1,82 +1,57 @@
-import Store from 'electron-store'
-import type { ChatSession } from '../types'
+import type { ChatSession } from "../types";
+import type {
+  ChatSessionSummaryRecord,
+  StoredChatSessionRecord,
+} from "./history/historyTypes";
+import { HistorySqliteStore } from "./history/HistorySqliteStore";
 
-export interface StoredChatSession {
-  id: string
-  title: string
-  messages: Array<{
-    id: string
-    type: string
-    data: any
-  }>
-  lastCheckpointOffset: number
-  lastProfileMaxTokens?: number
-  createdAt: number
-  updatedAt: number
-}
+export type StoredChatSession = StoredChatSessionRecord;
 
 export interface StoredChatHistory {
-  sessions: StoredChatSession[]
+  sessions: StoredChatSession[];
 }
 
-const DEFAULT_HISTORY: StoredChatHistory = {
-  sessions: []
+interface ChatHistoryServiceOptions {
+  store?: HistorySqliteStore;
 }
 
 export class ChatHistoryService {
-  private store: Store<StoredChatHistory>
+  private readonly store: HistorySqliteStore;
 
-  constructor() {
-    const storeOptions: any = {
-      defaults: DEFAULT_HISTORY,
-      name: 'gyshell-chat-history',
-      projectName: 'gyshell'
-    }
-    if (process.env.GYSHELL_STORE_DIR) {
-      storeOptions.cwd = process.env.GYSHELL_STORE_DIR
-    }
-    this.store = new Store<StoredChatHistory>(storeOptions)
+  constructor(options?: ChatHistoryServiceOptions) {
+    this.store = options?.store || new HistorySqliteStore();
   }
 
   saveSession(session: ChatSession): void {
-    const sessions = this.store.get('sessions') as StoredChatSession[]
-    const sessionIndex = sessions.findIndex((s: StoredChatSession) => s.id === session.id)
-    const existing = sessionIndex >= 0 ? sessions[sessionIndex] : null
-    
-    const storedSession: StoredChatSession = {
+    const existing = this.store.loadChatSession(session.id);
+    const now = Date.now();
+
+    this.store.saveChatSession({
       id: session.id,
       title: session.title,
-      messages: Array.from(session.messages.entries()).map(([id, msg]) => ({
+      messages: Array.from(session.messages.entries()).map(([id, message]) => ({
         id,
-        type: (msg as any)._getType ? (msg as any)._getType() : 'unknown',
-        data: msg
+        type: (message as any)._getType
+          ? (message as any)._getType()
+          : "unknown",
+        data: message,
       })),
       lastCheckpointOffset: session.lastCheckpointOffset,
       lastProfileMaxTokens: session.lastProfileMaxTokens,
-      createdAt: existing?.createdAt || Date.now(),
-      updatedAt: Date.now()
-    }
-
-    if (sessionIndex >= 0) {
-      sessions[sessionIndex] = storedSession
-    } else {
-      sessions.push(storedSession)
-    }
-
-    this.store.set('sessions', sessions)
+      createdAt: existing?.createdAt || now,
+      updatedAt: now,
+    });
   }
 
   loadSession(sessionId: string): ChatSession | null {
-    const sessions = this.store.get('sessions') as StoredChatSession[]
-    const storedSession = sessions.find((s: StoredChatSession) => s.id === sessionId)
-    
+    const storedSession = this.store.loadChatSession(sessionId);
     if (!storedSession) {
-      return null
+      return null;
     }
 
-    const messages = new Map<string, any>()
-    for (const msg of storedSession.messages) {
-      messages.set(msg.id, msg.data)
+    const messages = new Map<string, any>();
+    for (const message of storedSession.messages) {
+      messages.set(message.id, message.data);
     }
 
     return {
@@ -84,42 +59,35 @@ export class ChatHistoryService {
       title: storedSession.title,
       messages,
       lastCheckpointOffset: storedSession.lastCheckpointOffset,
-      lastProfileMaxTokens: storedSession.lastProfileMaxTokens
-    }
+      lastProfileMaxTokens: storedSession.lastProfileMaxTokens,
+    };
   }
 
   getAllSessions(): StoredChatSession[] {
-    return this.store.get('sessions', [])
+    return this.store.listChatSessions();
+  }
+
+  getAllSessionSummaries(): ChatSessionSummaryRecord[] {
+    return this.store.listChatSessionSummaries();
   }
 
   deleteSession(sessionId: string): void {
-    const sessions = this.store.get('sessions') as StoredChatSession[]
-    const filtered = sessions.filter((s: StoredChatSession) => s.id !== sessionId)
-    this.store.set('sessions', filtered)
+    this.store.deleteChatSessions([sessionId]);
+  }
+
+  deleteSessions(sessionIds: string[]): void {
+    this.store.deleteChatSessions(sessionIds);
   }
 
   clearAll(): void {
-    this.store.set('sessions', [])
+    this.store.clearChatSessions();
   }
 
   renameSession(sessionId: string, newTitle: string): void {
-    const sessions = this.store.get('sessions') as StoredChatSession[]
-    const sessionIndex = sessions.findIndex((s: StoredChatSession) => s.id === sessionId)
-    if (sessionIndex >= 0) {
-      sessions[sessionIndex].title = newTitle
-      sessions[sessionIndex].updatedAt = Date.now()
-      this.store.set('sessions', sessions)
-    }
+    this.store.renameChatSession(sessionId, newTitle, Date.now());
   }
 
   exportSession(sessionId: string): StoredChatSession | null {
-    const sessions = this.store.get('sessions') as StoredChatSession[]
-    const storedSession = sessions.find((s: StoredChatSession) => s.id === sessionId)
-    
-    if (!storedSession) {
-      return null
-    }
-
-    return storedSession
+    return this.store.loadChatSession(sessionId);
   }
 }

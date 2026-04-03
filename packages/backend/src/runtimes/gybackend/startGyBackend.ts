@@ -1,102 +1,117 @@
-import path from 'node:path'
-import process from 'node:process'
-import fs from 'node:fs/promises'
-import { TerminalService } from '../../services/TerminalService'
-import { FileSystemService } from '../../services/FileSystemService'
-import { AgentService_v2 } from '../../services/AgentService_v2'
-import { UIHistoryService } from '../../services/UIHistoryService'
-import { ChatHistoryService } from '../../services/ChatHistoryService'
-import { GatewayService } from '../../services/Gateway/GatewayService'
-import { WebSocketGatewayAdapter } from '../../services/Gateway/WebSocketGatewayAdapter'
+import path from "node:path";
+import process from "node:process";
+import fs from "node:fs/promises";
+import { TerminalService } from "../../services/TerminalService";
+import { FileSystemService } from "../../services/FileSystemService";
+import { AgentService_v2 } from "../../services/AgentService_v2";
+import { UIHistoryService } from "../../services/UIHistoryService";
+import { ChatHistoryService } from "../../services/ChatHistoryService";
+import { GatewayService } from "../../services/Gateway/GatewayService";
+import { WebSocketGatewayAdapter } from "../../services/Gateway/WebSocketGatewayAdapter";
 import {
   WebSocketGatewayControlService,
   resolveWsGatewayAccessFromHost,
-  resolveWsGatewayPolicyFromEnv
-} from '../../services/Gateway/WebSocketGatewayControlService'
-import { NodeSettingsService } from '../../adapters/node/NodeSettingsService'
-import { NodeCommandPolicyService } from '../../adapters/node/NodeCommandPolicyService'
-import { NodeMcpToolService } from '../../adapters/node/NodeMcpToolService'
-import { NodeSkillService } from '../../adapters/node/NodeSkillService'
-import { NodeMemoryService } from '../../adapters/node/NodeMemoryService'
-import { NodeAccessTokenService } from '../../adapters/node/NodeAccessTokenService'
-import { ModelCapabilityService } from '../../services/ModelCapabilityService'
+  resolveWsGatewayPolicyFromEnv,
+} from "../../services/Gateway/WebSocketGatewayControlService";
+import { NodeSettingsService } from "../../adapters/node/NodeSettingsService";
+import { NodeCommandPolicyService } from "../../adapters/node/NodeCommandPolicyService";
+import { NodeMcpToolService } from "../../adapters/node/NodeMcpToolService";
+import { NodeSkillService } from "../../adapters/node/NodeSkillService";
+import { NodeMemoryService } from "../../adapters/node/NodeMemoryService";
+import { NodeAccessTokenService } from "../../adapters/node/NodeAccessTokenService";
+import { ModelCapabilityService } from "../../services/ModelCapabilityService";
 import {
   buildBuiltInToolStatusSummary,
-  buildSkillStatusSummary
-} from '../../services/Gateway/toolingSummary'
-import { ImageAttachmentService } from '../../services/ImageAttachmentService'
-import { TerminalStateStore } from '../../services/terminal/TerminalStateStore'
-import { createAutoTerminalConfig } from '../../services/terminal/terminalConnectionSupport'
-import { TerminalCommandDraftService } from '../../services/TerminalCommandDraftService'
+  buildSkillStatusSummary,
+} from "../../services/Gateway/toolingSummary";
+import { ImageAttachmentService } from "../../services/ImageAttachmentService";
+import { TerminalStateStore } from "../../services/terminal/TerminalStateStore";
+import { createAutoTerminalConfig } from "../../services/terminal/terminalConnectionSupport";
+import { TerminalCommandDraftService } from "../../services/TerminalCommandDraftService";
+import { HistoryStorageMigration } from "../../services/history/HistoryStorageMigration";
+import { HistorySqliteStore } from "../../services/history/HistorySqliteStore";
 
 function boolFromEnv(name: string, fallback: boolean): boolean {
-  const raw = process.env[name]
-  if (!raw) return fallback
-  return /^(1|true|yes|on)$/i.test(raw)
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  return /^(1|true|yes|on)$/i.test(raw);
 }
 
 function numberFromEnv(name: string, fallback: number): number {
-  const raw = Number(process.env[name] || '')
+  const raw = Number(process.env[name] || "");
   if (!Number.isInteger(raw) || raw <= 0 || raw >= 65536) {
-    return fallback
+    return fallback;
   }
-  return raw
+  return raw;
 }
 
 function resolveDataDir(): string {
-  const custom = (process.env.GYBACKEND_DATA_DIR || '').trim()
+  const custom = (process.env.GYBACKEND_DATA_DIR || "").trim();
   if (custom) {
-    return path.resolve(custom)
+    return path.resolve(custom);
   }
-  return path.join(process.cwd(), '.gybackend-data')
+  return path.join(process.cwd(), ".gybackend-data");
 }
 
-async function saveTempPaste(dataDir: string, content: string): Promise<string> {
-  const tmpDir = path.join(dataDir, 'tmp_pastes')
-  await fs.mkdir(tmpDir, { recursive: true })
-  const fileName = `paste_${Date.now()}_${Math.random().toString(16).slice(2, 10)}.txt`
-  const filePath = path.join(tmpDir, fileName)
-  await fs.writeFile(filePath, content, 'utf8')
-  return filePath
+async function saveTempPaste(
+  dataDir: string,
+  content: string,
+): Promise<string> {
+  const tmpDir = path.join(dataDir, "tmp_pastes");
+  await fs.mkdir(tmpDir, { recursive: true });
+  const fileName = `paste_${Date.now()}_${Math.random().toString(16).slice(2, 10)}.txt`;
+  const filePath = path.join(tmpDir, fileName);
+  await fs.writeFile(filePath, content, "utf8");
+  return filePath;
 }
 
 export async function startGyBackend(): Promise<void> {
-  const dataDir = resolveDataDir()
-  process.env.GYSHELL_STORE_DIR = dataDir
-  const defaultHost = (process.env.GYBACKEND_WS_HOST || '0.0.0.0').trim() || '0.0.0.0'
-  const defaultPort = numberFromEnv('GYBACKEND_WS_PORT', 17888)
+  const dataDir = resolveDataDir();
+  process.env.GYSHELL_STORE_DIR = dataDir;
+  const historyMigration = new HistoryStorageMigration({ baseDir: dataDir });
+  await historyMigration.run();
+  const defaultHost =
+    (process.env.GYBACKEND_WS_HOST || "0.0.0.0").trim() || "0.0.0.0";
+  const defaultPort = numberFromEnv("GYBACKEND_WS_PORT", 17888);
   const startupPolicy = resolveWsGatewayPolicyFromEnv({
     env: process.env,
     defaultPolicy: {
       access: resolveWsGatewayAccessFromHost(defaultHost),
       port: defaultPort,
-      hostOverride: defaultHost
+      hostOverride: defaultHost,
     },
-    enableVarName: 'GYBACKEND_WS_ENABLE',
-    hostVarName: 'GYBACKEND_WS_HOST',
-    portVarName: 'GYBACKEND_WS_PORT'
-  })
-  const bootstrapLocalTerminal = boolFromEnv('GYBACKEND_BOOTSTRAP_LOCAL_TERMINAL', true)
+    enableVarName: "GYBACKEND_WS_ENABLE",
+    hostVarName: "GYBACKEND_WS_HOST",
+    portVarName: "GYBACKEND_WS_PORT",
+  });
+  const bootstrapLocalTerminal = boolFromEnv(
+    "GYBACKEND_BOOTSTRAP_LOCAL_TERMINAL",
+    true,
+  );
 
-  const settingsService = new NodeSettingsService(dataDir)
-  const commandPolicyService = new NodeCommandPolicyService(dataDir)
-  const mcpToolService = new NodeMcpToolService(dataDir)
-  const skillService = new NodeSkillService(dataDir, settingsService)
-  const memoryService = new NodeMemoryService(dataDir)
-  const accessTokenService = new NodeAccessTokenService(dataDir)
-  const modelCapabilityService = new ModelCapabilityService()
-  const imageAttachmentService = new ImageAttachmentService(dataDir)
+  const settingsService = new NodeSettingsService(dataDir);
+  const commandPolicyService = new NodeCommandPolicyService(dataDir);
+  const mcpToolService = new NodeMcpToolService(dataDir);
+  const skillService = new NodeSkillService(dataDir, settingsService);
+  const memoryService = new NodeMemoryService(dataDir);
+  const accessTokenService = new NodeAccessTokenService(dataDir);
+  const modelCapabilityService = new ModelCapabilityService();
+  const imageAttachmentService = new ImageAttachmentService(dataDir);
 
-  const terminalStateStore = new TerminalStateStore(path.join(dataDir, 'terminal-tabs-state.json'))
+  const terminalStateStore = new TerminalStateStore(
+    path.join(dataDir, "terminal-tabs-state.json"),
+  );
   const terminalService = new TerminalService({
-    terminalStateStore
-  })
-  const fileSystemService = new FileSystemService(terminalService)
-  process.once('exit', () => {
-    terminalService.flushPersistedState()
-  })
-  const uiHistoryService = new UIHistoryService()
-  const chatHistoryService = new ChatHistoryService()
+    terminalStateStore,
+  });
+  const fileSystemService = new FileSystemService(terminalService);
+  const historyStore = new HistorySqliteStore();
+  process.once("exit", () => {
+    terminalService.flushPersistedState();
+    historyStore.close();
+  });
+  const uiHistoryService = new UIHistoryService({ store: historyStore });
+  const chatHistoryService = new ChatHistoryService({ store: historyStore });
   const agentService = new AgentService_v2(
     terminalService,
     commandPolicyService,
@@ -105,8 +120,8 @@ export async function startGyBackend(): Promise<void> {
     memoryService,
     uiHistoryService,
     chatHistoryService,
-    imageAttachmentService
-  )
+    imageAttachmentService,
+  );
 
   const gatewayService = new GatewayService(
     terminalService,
@@ -114,45 +129,57 @@ export async function startGyBackend(): Promise<void> {
     uiHistoryService,
     commandPolicyService,
     settingsService,
-    mcpToolService
-  )
-  const terminalCommandDraftService = new TerminalCommandDraftService(terminalService, settingsService)
+    mcpToolService,
+  );
+  const terminalCommandDraftService = new TerminalCommandDraftService(
+    terminalService,
+    settingsService,
+  );
 
-  const terminalRestoreResult = await terminalService.restorePersistedTerminals()
-  if (terminalRestoreResult.restored.length > 0 || terminalRestoreResult.failed.length > 0) {
+  const terminalRestoreResult =
+    await terminalService.restorePersistedTerminals();
+  if (
+    terminalRestoreResult.restored.length > 0 ||
+    terminalRestoreResult.failed.length > 0
+  ) {
     console.log(
-      `[gybackend] Terminal restore completed. restored=${terminalRestoreResult.restored.length} failed=${terminalRestoreResult.failed.length}`
-    )
+      `[gybackend] Terminal restore completed. restored=${terminalRestoreResult.restored.length} failed=${terminalRestoreResult.failed.length}`,
+    );
     if (terminalRestoreResult.failed.length > 0) {
       terminalRestoreResult.failed.forEach((item) => {
-        console.warn(`[gybackend] Terminal restore failed for ${item.id}: ${item.reason}`)
-      })
+        console.warn(
+          `[gybackend] Terminal restore failed for ${item.id}: ${item.reason}`,
+        );
+      });
     }
   }
 
-  agentService.updateSettings(settingsService.getSettings())
-  await skillService.reload()
-  await mcpToolService.reloadAll()
+  agentService.updateSettings(settingsService.getSettings());
+  await skillService.reload();
+  await mcpToolService.reloadAll();
 
-  if (bootstrapLocalTerminal && terminalService.getDisplayTerminals().length === 0) {
-    const terminalId = process.env.GYBACKEND_TERMINAL_ID || 'local-main'
-    const terminalTitle = process.env.GYBACKEND_TERMINAL_TITLE || 'Local'
-    const terminalCwd = process.env.GYBACKEND_TERMINAL_CWD
-    const terminalShell = process.env.GYBACKEND_TERMINAL_SHELL
+  if (
+    bootstrapLocalTerminal &&
+    terminalService.getDisplayTerminals().length === 0
+  ) {
+    const terminalId = process.env.GYBACKEND_TERMINAL_ID || "local-main";
+    const terminalTitle = process.env.GYBACKEND_TERMINAL_TITLE || "Local";
+    const terminalCwd = process.env.GYBACKEND_TERMINAL_CWD;
+    const terminalShell = process.env.GYBACKEND_TERMINAL_SHELL;
 
     try {
       await terminalService.createTerminal({
-        type: 'local',
+        type: "local",
         id: terminalId,
         title: terminalTitle,
         cols: 120,
         rows: 32,
         cwd: terminalCwd,
-        shell: terminalShell
-      })
-      console.log(`[gybackend] Bootstrapped terminal: ${terminalId}`)
+        shell: terminalShell,
+      });
+      console.log(`[gybackend] Bootstrapped terminal: ${terminalId}`);
     } catch (error) {
-      console.warn('[gybackend] Failed to bootstrap default terminal:', error)
+      console.warn("[gybackend] Failed to bootstrap default terminal:", error);
     }
   }
 
@@ -163,7 +190,7 @@ export async function startGyBackend(): Promise<void> {
         port,
         accessTokenAuth: {
           verifyToken: (token: string) => accessTokenService.verifyToken(token),
-          allowLocalhostWithoutToken: true
+          allowLocalhostWithoutToken: true,
         },
         ipFilter,
         terminalBridge: {
@@ -175,149 +202,187 @@ export async function startGyBackend(): Promise<void> {
               cols: terminal.cols,
               rows: terminal.rows,
               runtimeState: terminal.runtimeState,
-              lastExitCode: terminal.lastExitCode
+              lastExitCode: terminal.lastExitCode,
             })),
           createTab: async (config) => {
-            const snapshot = terminalService.getDisplayTerminals()
-            const normalized = createAutoTerminalConfig(snapshot, config)
-            const tab = await terminalService.createTerminal(normalized as any)
-            return { id: tab.id }
+            const snapshot = terminalService.getDisplayTerminals();
+            const normalized = createAutoTerminalConfig(snapshot, config);
+            const tab = await terminalService.createTerminal(normalized as any);
+            return { id: tab.id };
           },
           write: async (terminalId, data) => {
-            terminalService.write(terminalId, data)
+            terminalService.write(terminalId, data);
           },
           writePaths: async (terminalId, paths) => {
-            terminalService.writePaths(terminalId, paths)
+            terminalService.writePaths(terminalId, paths);
           },
           resize: async (terminalId, cols, rows) => {
-            terminalService.resize(terminalId, cols, rows)
+            terminalService.resize(terminalId, cols, rows);
           },
           kill: async (terminalId) => {
             if (terminalService.getDisplayTerminals().length <= 1) {
-              throw new Error('Cannot close the last terminal tab.')
+              throw new Error("Cannot close the last terminal tab.");
             }
-            terminalService.kill(terminalId)
+            terminalService.kill(terminalId);
           },
           setSelection: async (terminalId, selectionText) => {
-            terminalService.setSelection(terminalId, selectionText)
+            terminalService.setSelection(terminalId, selectionText);
           },
           getBufferDelta: async (terminalId, fromOffset) => {
-            const data = terminalService.getBufferDelta(terminalId, fromOffset)
-            const offset = terminalService.getCurrentOffset(terminalId)
-            return { data, offset }
+            const data = terminalService.getBufferDelta(terminalId, fromOffset);
+            const offset = terminalService.getCurrentOffset(terminalId);
+            return { data, offset };
           },
           generateCommandDraft: async (terminalId, prompt, profileId) => {
             return await terminalCommandDraftService.generateCommandDraft({
               terminalId,
               prompt,
-              profileId
-            })
-          }
+              profileId,
+            });
+          },
         },
         filesystemBridge: {
           listDirectory: async (terminalId, dirPath) => {
-            return await fileSystemService.listDirectory(terminalId, dirPath)
+            return await fileSystemService.listDirectory(terminalId, dirPath);
           },
           readTextFile: async (terminalId, filePath, options) => {
-            return await fileSystemService.readTextFile(terminalId, filePath, options)
+            return await fileSystemService.readTextFile(
+              terminalId,
+              filePath,
+              options,
+            );
           },
           readFileBase64: async (terminalId, filePath, options) => {
-            return await fileSystemService.readFileBase64(terminalId, filePath, options)
+            return await fileSystemService.readFileBase64(
+              terminalId,
+              filePath,
+              options,
+            );
           },
           writeTextFile: async (terminalId, filePath, content) => {
-            await fileSystemService.writeTextFile(terminalId, filePath, content)
+            await fileSystemService.writeTextFile(
+              terminalId,
+              filePath,
+              content,
+            );
           },
-          writeFileBase64: async (terminalId, filePath, contentBase64, options) => {
-            await fileSystemService.writeFileBase64(terminalId, filePath, contentBase64, options)
+          writeFileBase64: async (
+            terminalId,
+            filePath,
+            contentBase64,
+            options,
+          ) => {
+            await fileSystemService.writeFileBase64(
+              terminalId,
+              filePath,
+              contentBase64,
+              options,
+            );
           },
-          transferEntries: async (sourceTerminalId, sourcePaths, targetTerminalId, targetDirPath, options) => {
+          transferEntries: async (
+            sourceTerminalId,
+            sourcePaths,
+            targetTerminalId,
+            targetDirPath,
+            options,
+          ) => {
             return await fileSystemService.transferEntries(
               sourceTerminalId,
               sourcePaths,
               targetTerminalId,
               targetDirPath,
-              options
-            )
+              options,
+            );
           },
           createDirectory: async (terminalId, dirPath) => {
-            await fileSystemService.createDirectory(terminalId, dirPath)
+            await fileSystemService.createDirectory(terminalId, dirPath);
           },
           createFile: async (terminalId, filePath) => {
-            await fileSystemService.createFile(terminalId, filePath)
+            await fileSystemService.createFile(terminalId, filePath);
           },
           deletePath: async (terminalId, targetPath, options) => {
-            await fileSystemService.deletePath(terminalId, targetPath, options)
+            await fileSystemService.deletePath(terminalId, targetPath, options);
           },
           renamePath: async (terminalId, sourcePath, targetPath) => {
-            await fileSystemService.renamePath(terminalId, sourcePath, targetPath)
-          }
+            await fileSystemService.renamePath(
+              terminalId,
+              sourcePath,
+              targetPath,
+            );
+          },
         },
         profileBridge: {
           getProfiles: () => {
-            const snapshot = settingsService.getSettings()
-            const modelNameById = new Map(snapshot.models.items.map((item) => [item.id, item.model]))
+            const snapshot = settingsService.getSettings();
+            const modelNameById = new Map(
+              snapshot.models.items.map((item) => [item.id, item.model]),
+            );
             return {
               activeProfileId: snapshot.models.activeProfileId,
               profiles: snapshot.models.profiles.map((profile) => ({
                 id: profile.id,
                 name: profile.name,
                 globalModelId: profile.globalModelId,
-                modelName: modelNameById.get(profile.globalModelId)
-              }))
-            }
+                modelName: modelNameById.get(profile.globalModelId),
+              })),
+            };
           },
           setActiveProfile: (profileId: string) => {
-            const snapshot = settingsService.getSettings()
-            const exists = snapshot.models.profiles.some((profile) => profile.id === profileId)
+            const snapshot = settingsService.getSettings();
+            const exists = snapshot.models.profiles.some(
+              (profile) => profile.id === profileId,
+            );
             if (!exists) {
-              throw new Error(`Profile not found: ${profileId}`)
+              throw new Error(`Profile not found: ${profileId}`);
             }
 
             settingsService.setSettings({
               models: {
                 items: snapshot.models.items,
                 profiles: snapshot.models.profiles,
-                activeProfileId: profileId
-              }
-            })
+                activeProfileId: profileId,
+              },
+            });
 
-            const next = settingsService.getSettings()
-            agentService.updateSettings(next)
+            const next = settingsService.getSettings();
+            agentService.updateSettings(next);
 
-            const modelNameById = new Map(next.models.items.map((item) => [item.id, item.model]))
+            const modelNameById = new Map(
+              next.models.items.map((item) => [item.id, item.model]),
+            );
             return {
               activeProfileId: next.models.activeProfileId,
               profiles: next.models.profiles.map((profile) => ({
                 id: profile.id,
                 name: profile.name,
                 globalModelId: profile.globalModelId,
-                modelName: modelNameById.get(profile.globalModelId)
-              }))
-            }
+                modelName: modelNameById.get(profile.globalModelId),
+              })),
+            };
           },
           probeModel: async (model: any) => {
-            return await modelCapabilityService.probe(model)
-          }
+            return await modelCapabilityService.probe(model);
+          },
         },
         agentBridge: {
           exportHistory: async (sessionId, mode) => {
-            await gatewayService.waitForRunCompletion(sessionId)
-            const backendSession = agentService.exportChatSession(sessionId)
+            await gatewayService.waitForRunCompletion(sessionId);
+            const backendSession = agentService.exportChatSession(sessionId);
             if (!backendSession) {
-              throw new Error(`Session with ID ${sessionId} not found`)
+              throw new Error(`Session with ID ${sessionId} not found`);
             }
-            const uiSession = uiHistoryService.getSession(sessionId)
-            if (mode === 'simple') {
+            const uiSession = uiHistoryService.getSession(sessionId);
+            if (mode === "simple") {
               const markdown = uiHistoryService.toReadableMarkdown(
                 uiSession?.messages || [],
-                uiSession?.title || backendSession.title
-              )
+                uiSession?.title || backendSession.title,
+              );
               return {
                 sessionId,
                 mode,
                 title: uiSession?.title || backendSession.title,
-                content: markdown
-              }
+                content: markdown,
+              };
             }
             return {
               sessionId: backendSession.id,
@@ -330,166 +395,185 @@ export async function startGyBackend(): Promise<void> {
               backendMessages: backendSession.messages.map((msg: any) => ({
                 messageId: msg.id,
                 messageType: msg.type,
-                messageData: msg.data
-              }))
-            }
+                messageData: msg.data,
+              })),
+            };
           },
           getAllChatHistory: () => agentService.getAllChatHistory(),
-          loadChatSession: (sessionId) => agentService.loadChatSession(sessionId),
-          getUiMessages: (sessionId) => uiHistoryService.getMessages(sessionId)
+          loadChatSession: (sessionId) =>
+            agentService.loadChatSession(sessionId),
+          getUiMessages: (sessionId) => uiHistoryService.getMessages(sessionId),
         },
         systemBridge: {
           saveTempPaste: async (content: string) => {
-            return await saveTempPaste(dataDir, content)
+            return await saveTempPaste(dataDir, content);
           },
           saveImageAttachment: async (payload: {
-            dataBase64: string
-            fileName?: string
-            mimeType?: string
-            previewDataUrl?: string
+            dataBase64: string;
+            fileName?: string;
+            mimeType?: string;
+            previewDataUrl?: string;
           }) => {
-            return await imageAttachmentService.saveImageAttachment(payload)
-          }
+            return await imageAttachmentService.saveImageAttachment(payload);
+          },
         },
         skillBridge: {
           reload: async () => {
-            return await skillService.reload()
+            return await skillService.reload();
           },
           getAll: async () => {
-            return await skillService.getAll()
+            return await skillService.getAll();
           },
           getEnabled: async () => {
-            return await skillService.getEnabledSkills()
+            return await skillService.getEnabledSkills();
           },
           create: async () => {
-            return await skillService.createSkillFromTemplate()
+            return await skillService.createSkillFromTemplate();
           },
           delete: async (fileName: string) => {
-            await skillService.deleteSkillFile(fileName)
-            return await skillService.getAll()
+            await skillService.deleteSkillFile(fileName);
+            return await skillService.getAll();
           },
           listSkills: async () => {
-            const snapshot = settingsService.getSettings()
-            const enabledMap = snapshot.tools?.skills ?? {}
-            const skills = await skillService.getAll()
+            const snapshot = settingsService.getSettings();
+            const enabledMap = snapshot.tools?.skills ?? {};
+            const skills = await skillService.getAll();
             return skills.map((skill) => ({
               name: skill.name,
               description: skill.description,
-              enabled: enabledMap[skill.name] !== false
-            }))
+              enabled: enabledMap[skill.name] !== false,
+            }));
           },
           setSkillEnabled: async (name: string, enabled: boolean) => {
-            const snapshot = settingsService.getSettings()
-            const nextSkills = { ...(snapshot.tools?.skills ?? {}) }
-            nextSkills[name] = enabled
+            const snapshot = settingsService.getSettings();
+            const nextSkills = { ...(snapshot.tools?.skills ?? {}) };
+            nextSkills[name] = enabled;
 
             settingsService.setSettings({
               tools: {
                 builtIn: snapshot.tools?.builtIn ?? {},
-                skills: nextSkills
-              }
-            })
+                skills: nextSkills,
+              },
+            });
 
-            const next = settingsService.getSettings()
-            agentService.updateSettings(next)
-            const skills = await skillService.getAll()
-            const summary = buildSkillStatusSummary(skills, next.tools?.skills)
-            gatewayService.broadcastRaw('skills:updated', summary)
-            return summary
-          }
+            const next = settingsService.getSettings();
+            agentService.updateSettings(next);
+            const skills = await skillService.getAll();
+            const summary = buildSkillStatusSummary(skills, next.tools?.skills);
+            gatewayService.broadcastRaw("skills:updated", summary);
+            return summary;
+          },
         },
         memoryBridge: {
           get: async () => {
-            return await memoryService.getMemorySnapshot()
+            return await memoryService.getMemorySnapshot();
           },
           setContent: async (content: string) => {
-            const snapshot = await memoryService.writeMemory(content)
-            gatewayService.broadcastRaw('memory:updated', snapshot)
-            return snapshot
-          }
+            const snapshot = await memoryService.writeMemory(content);
+            gatewayService.broadcastRaw("memory:updated", snapshot);
+            return snapshot;
+          },
         },
         settingsBridge: {
           getSettings: () => settingsService.getSettings(),
           setSettings: async (patch) => {
             if ((patch as any)?.gateway?.ws) {
-              throw new Error('settings.gateway.ws is not configurable via websocket RPC.')
+              throw new Error(
+                "settings.gateway.ws is not configurable via websocket RPC.",
+              );
             }
-            settingsService.setSettings(patch as any)
-            const next = settingsService.getSettings()
-            agentService.updateSettings(next)
-            return next
-          }
+            settingsService.setSettings(patch as any);
+            const next = settingsService.getSettings();
+            agentService.updateSettings(next);
+            return next;
+          },
         },
         commandPolicyBridge: {
           getLists: async () => {
-            return await commandPolicyService.getLists()
+            return await commandPolicyService.getLists();
           },
           addRule: async (listName, rule) => {
-            return await commandPolicyService.addRule(listName, rule)
+            return await commandPolicyService.addRule(listName, rule);
           },
           deleteRule: async (listName, rule) => {
-            return await commandPolicyService.deleteRule(listName, rule)
-          }
+            return await commandPolicyService.deleteRule(listName, rule);
+          },
         },
         toolsBridge: {
           reloadMcp: async () => {
-            return await mcpToolService.reloadAll()
+            return await mcpToolService.reloadAll();
           },
           getMcp: () => mcpToolService.getSummaries(),
           setMcpEnabled: async (name, enabled) => {
-            return await mcpToolService.setServerEnabled(name, enabled)
+            return await mcpToolService.setServerEnabled(name, enabled);
           },
           getBuiltIn: () => {
-            const settings = settingsService.getSettings()
-            return buildBuiltInToolStatusSummary(settings.tools?.builtIn)
+            const settings = settingsService.getSettings();
+            return buildBuiltInToolStatusSummary(settings.tools?.builtIn);
           },
           setBuiltInEnabled: async (name, enabled) => {
-            const settings = settingsService.getSettings()
-            const nextBuiltIn = { ...(settings.tools?.builtIn ?? {}) }
-            nextBuiltIn[name] = enabled
-            settingsService.setSettings({ tools: { builtIn: nextBuiltIn, skills: settings.tools?.skills ?? {} } })
-            const next = settingsService.getSettings()
-            agentService.updateSettings(next)
-            const summary = buildBuiltInToolStatusSummary(next.tools?.builtIn)
-            gatewayService.broadcastRaw('tools:builtInUpdated', summary)
-            return summary
-          }
-        }
-      })
-  })
-  await wsGatewayControlService.applyPolicy(startupPolicy)
+            const settings = settingsService.getSettings();
+            const nextBuiltIn = { ...(settings.tools?.builtIn ?? {}) };
+            nextBuiltIn[name] = enabled;
+            settingsService.setSettings({
+              tools: {
+                builtIn: nextBuiltIn,
+                skills: settings.tools?.skills ?? {},
+              },
+            });
+            const next = settingsService.getSettings();
+            agentService.updateSettings(next);
+            const summary = buildBuiltInToolStatusSummary(next.tools?.builtIn);
+            gatewayService.broadcastRaw("tools:builtInUpdated", summary);
+            return summary;
+          },
+        },
+      }),
+  });
+  await wsGatewayControlService.applyPolicy(startupPolicy);
 
   const shutdown = async (signal: string): Promise<void> => {
-    console.log(`[gybackend] Received ${signal}, shutting down...`)
+    console.log(`[gybackend] Received ${signal}, shutting down...`);
     try {
-      await wsGatewayControlService.stop()
+      await wsGatewayControlService.stop();
     } catch (error) {
-      console.warn('[gybackend] Failed to stop websocket adapter cleanly:', error)
+      console.warn(
+        "[gybackend] Failed to stop websocket adapter cleanly:",
+        error,
+      );
     }
 
     for (const terminal of terminalService.getDisplayTerminals()) {
-      terminalService.kill(terminal.id)
+      terminalService.kill(terminal.id);
     }
 
-    process.exit(0)
-  }
+    process.exit(0);
+  };
 
-  process.on('SIGINT', () => {
-    void shutdown('SIGINT')
-  })
-  process.on('SIGTERM', () => {
-    void shutdown('SIGTERM')
-  })
+  process.on("SIGINT", () => {
+    void shutdown("SIGINT");
+  });
+  process.on("SIGTERM", () => {
+    void shutdown("SIGTERM");
+  });
 
-  console.log('[gybackend] Started.')
-  const wsState = wsGatewayControlService.getState()
+  console.log("[gybackend] Started.");
+  const wsState = wsGatewayControlService.getState();
   if (wsState.running && wsState.host) {
-    console.log(`[gybackend] WebSocket RPC endpoint: ws://${wsState.host}:${wsState.port}`)
+    console.log(
+      `[gybackend] WebSocket RPC endpoint: ws://${wsState.host}:${wsState.port}`,
+    );
   } else {
-    console.log('[gybackend] WebSocket RPC endpoint: disabled')
+    console.log("[gybackend] WebSocket RPC endpoint: disabled");
   }
-  console.log(`[gybackend] Data directory: ${dataDir}`)
-  console.log(`[gybackend] Settings file: ${settingsService.getSettingsPath()}`)
-  console.log(`[gybackend] Memory file: ${await memoryService.getMemoryFilePath()}`)
-  console.log(`[gybackend] Access token file: ${accessTokenService.getStorageFilePath()}`)
+  console.log(`[gybackend] Data directory: ${dataDir}`);
+  console.log(
+    `[gybackend] Settings file: ${settingsService.getSettingsPath()}`,
+  );
+  console.log(
+    `[gybackend] Memory file: ${await memoryService.getMemoryFilePath()}`,
+  );
+  console.log(
+    `[gybackend] Access token file: ${accessTokenService.getStorageFilePath()}`,
+  );
 }

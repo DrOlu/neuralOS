@@ -2,7 +2,11 @@ import { isObservable, isObservableArray } from "mobx";
 import { AppStore } from "./AppStore";
 import { ChatStore } from "./ChatStore";
 import type { LayoutTree } from "../layout";
-import { WINDOW_CONTEXT, readDetachedWindowState, stashDetachedWindowState } from "../lib/windowing";
+import {
+  WINDOW_CONTEXT,
+  readDetachedWindowState,
+  stashDetachedWindowState,
+} from "../lib/windowing";
 
 const assertCondition = (condition: unknown, message: string): void => {
   if (!condition) {
@@ -109,6 +113,35 @@ const installBootstrapWindowMock = (
   };
   (globalThis as unknown as { window: unknown }).window = {
     gyshell: {
+      historyMigration: {
+        getState: async () => ({
+          status: "done",
+          ready: true,
+          active: false,
+          blocking: false,
+          detectedLegacy: false,
+          phase: "done",
+          title: "History storage ready",
+          message: "History storage is ready.",
+          completedUnits: 1,
+          totalUnits: 1,
+          percent: 100,
+        }),
+        waitUntilSettled: async () => ({
+          status: "done",
+          ready: true,
+          active: false,
+          blocking: false,
+          detectedLegacy: false,
+          phase: "done",
+          title: "History storage ready",
+          message: "History storage is ready.",
+          completedUnits: 1,
+          totalUnits: 1,
+          percent: 100,
+        }),
+        onStateChanged: () => () => {},
+      },
       settings: {
         get: async () => ({
           themeId: "gyshell-dark",
@@ -118,6 +151,11 @@ const installBootstrapWindowMock = (
           },
         }),
         set: async () => {},
+        getCommandPolicyLists: async () => ({
+          allowlist: [],
+          denylist: [],
+          asklist: [],
+        }),
         setWsGatewayConfig: async (ws: {
           access: string;
           port: number;
@@ -151,11 +189,13 @@ const installBootstrapWindowMock = (
           if (options?.getSessionSnapshot) {
             return await options.getSessionSnapshot(sessionId);
           }
-          return options?.runtimeSnapshotsBySessionId?.[sessionId] || {
-            id: sessionId,
-            isBusy: false,
-            lockedProfileId: null,
-          };
+          return (
+            options?.runtimeSnapshotsBySessionId?.[sessionId] || {
+              id: sessionId,
+              isBusy: false,
+              lockedProfileId: null,
+            }
+          );
         },
         loadChatSession: async (sessionId: string) => {
           options?.loadChatSessionCalls?.push(sessionId);
@@ -188,10 +228,14 @@ const installBootstrapWindowMock = (
         onSnapshot: () => () => {},
       },
       tools: {
+        getMcp: async () => [],
+        getBuiltIn: async () => [],
         onMcpUpdated: () => {},
         onBuiltInUpdated: () => {},
       },
       skills: {
+        getAll: async () => [],
+        getEnabled: async () => [],
         onUpdated: () => {},
       },
       memory: {
@@ -756,7 +800,8 @@ const run = async (): Promise<void> => {
 
       try {
         installBootstrapWindowMock(buildPersistedTree());
-        (globalThis as any).window.localStorage = createStorage(localStorageState);
+        (globalThis as any).window.localStorage =
+          createStorage(localStorageState);
         (globalThis as any).window.sessionStorage =
           createStorage(sessionStorageState);
         stashDetachedWindowState(token, {
@@ -791,8 +836,7 @@ const run = async (): Promise<void> => {
         (WINDOW_CONTEXT as any).role = originalContext.role;
         (WINDOW_CONTEXT as any).detachedStateToken =
           originalContext.detachedStateToken;
-        (WINDOW_CONTEXT as any).sourceClientId =
-          originalContext.sourceClientId;
+        (WINDOW_CONTEXT as any).sourceClientId = originalContext.sourceClientId;
         (globalThis as any).window = originalWindow;
       }
     },
@@ -1053,13 +1097,20 @@ const run = async (): Promise<void> => {
       assertEqual(
         JSON.stringify(
           Array.from(
-            ((store as any).detachedVisibleTabIdsByKind.filesystem as Set<string>).values(),
+            (
+              (store as any).detachedVisibleTabIdsByKind
+                .filesystem as Set<string>
+            ).values(),
           ),
         ),
         JSON.stringify(["term-a"]),
         "terminal-only tabs should not be mirrored into detached filesystem visibility",
       );
-      assertEqual(syncCallCount, 1, "unsuppress should still trigger a single layout sync");
+      assertEqual(
+        syncCallCount,
+        1,
+        "unsuppress should still trigger a single layout sync",
+      );
     },
   );
 
@@ -1468,8 +1519,7 @@ const run = async (): Promise<void> => {
         "history reopen should unsuppress the moved chat session",
       );
       assertCondition(
-        store
-          .layout
+        store.layout
           .getPanelIdsByKind("chat")
           .some((panelId) =>
             store.layout.getPanelTabIds(panelId).includes("chat-remote"),
@@ -1541,8 +1591,7 @@ const run = async (): Promise<void> => {
         "bootstrap should drop stale chat sessions that no longer exist in backend or UI history",
       );
       assertCondition(
-        !store
-          .layout
+        !store.layout
           .getPanelIdsByKind("chat")
           .flatMap((panelId) => store.layout.getPanelTabIds(panelId))
           .includes("chat-stale"),
@@ -1926,7 +1975,8 @@ const run = async (): Promise<void> => {
   await runCase(
     "suppressing a monitor tab releases monitor retention even before layout bindings update",
     async () => {
-      const originalWindow = (globalThis as unknown as { window?: unknown }).window;
+      const originalWindow = (globalThis as unknown as { window?: unknown })
+        .window;
       const startCalls: Array<{ terminalId: string; intervalMs?: number }> = [];
       const stopCalls: string[] = [];
       const subscribeCalls: string[] = [];
@@ -2024,19 +2074,49 @@ const run = async (): Promise<void> => {
           terminalId: "term-a",
           timestamp: index,
           cpu: { usagePercent: index },
-          memory: { usagePercent: index, totalBytes: 100, usedBytes: 50, availableBytes: 50 },
-          network: [{ interface: "eth0", rxBytesPerSec: index * 10, txBytesPerSec: index * 5 }],
+          memory: {
+            usagePercent: index,
+            totalBytes: 100,
+            usedBytes: 50,
+            availableBytes: 50,
+          },
+          network: [
+            {
+              interface: "eth0",
+              rxBytesPerSec: index * 10,
+              txBytesPerSec: index * 5,
+            },
+          ],
         });
       }
 
       const state = store.getMonitorTerminalState("term-a");
-      assertCondition(state !== null, "monitor state should exist after applying snapshots");
-      assertEqual(state!.cpuHistory.length, 64, "cpu history should be bounded");
-      assertEqual(state!.memoryHistory.length, 64, "memory history should be bounded");
+      assertCondition(
+        state !== null,
+        "monitor state should exist after applying snapshots",
+      );
+      assertEqual(
+        state!.cpuHistory.length,
+        64,
+        "cpu history should be bounded",
+      );
+      assertEqual(
+        state!.memoryHistory.length,
+        64,
+        "memory history should be bounded",
+      );
       assertEqual(state!.rxHistory.length, 64, "rx history should be bounded");
       assertEqual(state!.txHistory.length, 64, "tx history should be bounded");
-      assertEqual(state!.cpuHistory[0], 16, "history should retain the most recent values");
-      assertEqual(state!.cpuHistory[63], 79, "history tail should match the latest snapshot");
+      assertEqual(
+        state!.cpuHistory[0],
+        16,
+        "history should retain the most recent values",
+      );
+      assertEqual(
+        state!.cpuHistory[63],
+        79,
+        "history tail should match the latest snapshot",
+      );
     },
   );
 
@@ -2094,7 +2174,10 @@ const run = async (): Promise<void> => {
       const originalWindow = (globalThis as any).window;
       const localStorageState = new Map<string, string>();
       const sessionStorageState = new Map<string, string>();
-      const openDetachedCalls: Array<{ token: string; sourceClientId: string }> = [];
+      const openDetachedCalls: Array<{
+        token: string;
+        sourceClientId: string;
+      }> = [];
 
       try {
         (globalThis as any).window = {
@@ -2111,24 +2194,43 @@ const run = async (): Promise<void> => {
         };
 
         const store = new AppStore();
-        const opened = await store.openDetachedFileEditorForPath("term-a", "/tmp/demo.txt");
+        const opened = await store.openDetachedFileEditorForPath(
+          "term-a",
+          "/tmp/demo.txt",
+        );
 
-        assertEqual(opened, true, "detached file editor open should succeed when IPC open succeeds");
-        assertEqual(openDetachedCalls.length, 1, "detached file editor should request exactly one window");
+        assertEqual(
+          opened,
+          true,
+          "detached file editor open should succeed when IPC open succeeds",
+        );
+        assertEqual(
+          openDetachedCalls.length,
+          1,
+          "detached file editor should request exactly one window",
+        );
         assertEqual(
           openDetachedCalls[0].sourceClientId,
           store.windowClientId,
           "detached file editor should forward the current renderer client id",
         );
 
-        const detachedState = readDetachedWindowState(openDetachedCalls[0].token);
-        assertCondition(detachedState !== null, "detached file editor should stash a detached window state");
+        const detachedState = readDetachedWindowState(
+          openDetachedCalls[0].token,
+        );
+        assertCondition(
+          detachedState !== null,
+          "detached file editor should stash a detached window state",
+        );
         assertEqual(
           detachedState!.sourceClientId,
           store.windowClientId,
           "detached file editor state should preserve the source client id",
         );
-        assertCondition(detachedState!.layoutTree.root.type === "panel", "detached file editor should use a single-panel layout");
+        assertCondition(
+          detachedState!.layoutTree.root.type === "panel",
+          "detached file editor should use a single-panel layout",
+        );
         if (detachedState!.layoutTree.root.type !== "panel") {
           throw new Error("detached file editor layout root should be a panel");
         }

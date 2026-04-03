@@ -1,701 +1,842 @@
-import Store from 'electron-store'
-import { v4 as uuidv4 } from 'uuid'
-import type { AgentEvent, AgentEventType } from '../types'
-import type { ChatMessage, UIChatSession, UIUpdateAction } from '../types/ui-chat'
+import { v4 as uuidv4 } from "uuid";
+import type { AgentEvent, AgentEventType } from "../types";
+import type {
+  ChatMessage,
+  UIChatSession,
+  UIUpdateAction,
+} from "../types/ui-chat";
+import type { UISessionSummaryRecord } from "./history/historyTypes";
+import { HistorySqliteStore } from "./history/HistorySqliteStore";
+import {
+  buildAutoSessionTitle,
+  buildUiSessionSummary,
+  sanitizeUiSession,
+} from "./history/uiHistoryHelpers";
 
-const buildAutoSessionTitle = (content: string): string => {
-  const normalized = String(content || '').replace(/\s+/g, ' ').trim()
-  return normalized || 'New Chat'
-}
+export type HistoryExportMode = "simple" | "detailed";
+export type UISessionSummary = UISessionSummaryRecord;
 
-export type HistoryExportMode = 'simple' | 'detailed'
-
-interface StoredUIHistory {
-  sessions: Record<string, UIChatSession>
-}
-
-export interface UISessionSummary {
-  id: string
-  title: string
-  updatedAt: number
-  messagesCount: number
-  lastMessagePreview: string
+interface UIHistoryServiceOptions {
+  store?: HistorySqliteStore;
 }
 
 export class UIHistoryService {
-  private store: Store<StoredUIHistory>
-  // Keep UI history hot in memory to avoid sync electron-store overhead on every stream chunk.
-  private sessionsCache: Record<string, UIChatSession>
-  private sessionSummaryCache: Record<string, UISessionSummary>
-  private dirtySessions: Set<string> = new Set()
+  private readonly store: HistorySqliteStore;
+  private sessionsCache: Record<string, UIChatSession> = {};
+  private sessionSummaryCache: Record<string, UISessionSummary> = {};
+  private dirtySessions: Set<string> = new Set();
 
-  constructor() {
-    const storeOptions: any = {
-      name: 'gyshell-ui-history',
-      projectName: 'gyshell',
-      defaults: { sessions: {} }
-    }
-    if (process.env.GYSHELL_STORE_DIR) {
-      storeOptions.cwd = process.env.GYSHELL_STORE_DIR
-    }
-    this.store = new Store<StoredUIHistory>(storeOptions)
-    this.sessionsCache = this.sanitizeSessions(this.store.get('sessions') || {})
-    this.sessionSummaryCache = this.buildSessionSummaryCache(this.sessionsCache)
-    this.saveSessions(this.sessionsCache)
+  constructor(options?: UIHistoryServiceOptions) {
+    this.store = options?.store || new HistorySqliteStore();
+    this.sessionSummaryCache = this.buildSessionSummaryCache(
+      this.store.listUiSessionSummaries(),
+    );
   }
 
-  private buildSessionSummaryCache(sessions: Record<string, UIChatSession>): Record<string, UISessionSummary> {
-    const summaryCache: Record<string, UISessionSummary> = {}
-    for (const [sessionId, session] of Object.entries(sessions)) {
-      summaryCache[sessionId] = this.buildSessionSummary(session)
+  private buildSessionSummaryCache(
+    summaries: UISessionSummary[],
+  ): Record<string, UISessionSummary> {
+    const cache: Record<string, UISessionSummary> = {};
+    for (const summary of summaries) {
+      cache[summary.id] = summary;
     }
-    return summaryCache
+    return cache;
   }
 
-  private buildSessionSummary(session: UIChatSession): UISessionSummary {
-    return {
-      id: session.id,
-      title: session.title,
-      updatedAt: session.updatedAt,
-      messagesCount: session.messages.length,
-      lastMessagePreview: this.getLastVisiblePreview(session.messages)
+  private getOrLoadSession(sessionId: string): UIChatSession | null {
+    const cached = this.sessionsCache[sessionId];
+    if (cached) {
+      return cached;
     }
-  }
-
-  private getLastVisiblePreview(messages: ChatMessage[]): string {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const message = messages[i]
-      if (message.type === 'tokens_count') continue
-      const imagePreview =
-        Array.isArray(message.metadata?.inputImages) && message.metadata.inputImages.length > 0
-          ? message.metadata.inputImages
-              .map((item) => item.fileName || item.attachmentId || 'image')
-              .join(', ')
-          : ''
-      const preview = String(message.content || message.metadata?.output || imagePreview || '')
-      if (preview) return preview
-      return ''
+    const loaded = this.store.loadUiSession(sessionId);
+    if (!loaded) {
+      return null;
     }
-    return ''
+    const sanitized = sanitizeUiSession(loaded);
+    this.sessionsCache[sessionId] = sanitized;
+    this.syncSessionSummary(sessionId);
+    return sanitized;
   }
 
   private syncSessionSummary(sessionId: string): void {
-    const session = this.sessionsCache[sessionId]
+    const session = this.sessionsCache[sessionId];
     if (!session) {
-      delete this.sessionSummaryCache[sessionId]
-      return
+      delete this.sessionSummaryCache[sessionId];
+      return;
     }
-    this.sessionSummaryCache[sessionId] = this.buildSessionSummary(session)
-  }
-
-  private sanitizeSessions(sessions: Record<string, UIChatSession>): Record<string, UIChatSession> {
-    const sanitized = JSON.parse(JSON.stringify(sessions)) as Record<string, UIChatSession>
-    Object.values(sanitized).forEach(session => {
-      session.messages = session.messages.filter(m => m.type !== 'ask') // Remove all hanging ask banners
-      session.messages.forEach(m => {
-        if (m.type === 'command' && m.streaming) {
-          m.streaming = false
-          if (m.metadata && m.metadata.exitCode === undefined) {
-            m.metadata.exitCode = -1 // Mark as failed/interrupted
-            m.metadata.output = (m.metadata.output || '') + '\n[Session closed before command finished]'
-          }
-        }
-      })
-      this.restoreLegacyAutoTitleIfTruncated(session)
-    })
-    return sanitized
-  }
-
-  private restoreLegacyAutoTitleIfTruncated(session: UIChatSession): void {
-    const firstUserText = session.messages.find((m) => m.role === 'user')?.content
-    if (!firstUserText) return
-
-    const fullAutoTitle = buildAutoSessionTitle(firstUserText)
-    const currentTitle = String(session.title || '').trim()
-    if (!currentTitle || currentTitle === 'New Chat') {
-      session.title = fullAutoTitle
-      return
-    }
-
-    // Backward-compatible migration for historical truncated titles like "xxxxx..."
-    if (currentTitle.endsWith('...')) {
-      const prefix = currentTitle.slice(0, -3)
-      if (prefix && fullAutoTitle.startsWith(prefix)) {
-        session.title = fullAutoTitle
-      }
-    }
-  }
-
-  private saveSessions(sessions: Record<string, UIChatSession>): void {
-    this.store.set('sessions', this.sanitizeSessions(sessions))
+    this.sessionSummaryCache[sessionId] = buildUiSessionSummary(session);
   }
 
   recordEvent(sessionId: string, event: AgentEvent): UIUpdateAction[] {
-    if (!this.sessionsCache[sessionId]) {
-      this.sessionsCache[sessionId] = {
+    let session = this.getOrLoadSession(sessionId);
+    if (!session) {
+      session = {
         id: sessionId,
-        title: 'New Chat',
+        title: "New Chat",
         messages: [],
-        updatedAt: Date.now()
-      }
+        updatedAt: Date.now(),
+      };
+      this.sessionsCache[sessionId] = session;
     }
-    const session = this.sessionsCache[sessionId]
-    session.updatedAt = Date.now()
+    session.updatedAt = Date.now();
 
-    const actions = this.processEvent(session, event, sessionId)
-    this.syncSessionSummary(sessionId)
-    // Mark dirty but do not persist immediately (critical for smooth streaming UX).
-    this.dirtySessions.add(sessionId)
-    return actions
+    const actions = this.processEvent(session, event, sessionId);
+    this.syncSessionSummary(sessionId);
+    this.dirtySessions.add(sessionId);
+    return actions;
   }
 
-  /**
-   * Flush UI history to disk. By design we persist at low frequency
-   * (e.g. on task completion / error / delete / rollback), not on every event.
-   */
   flush(sessionId?: string): void {
-    if (sessionId) {
-      // Only flush if this session has changes; still writes full sessions map
-      // because electron-store persists the underlying JSON file as a whole.
-      if (!this.dirtySessions.has(sessionId)) return
-    } else if (this.dirtySessions.size === 0) {
-      return
+    const sessionIds = sessionId
+      ? this.dirtySessions.has(sessionId)
+        ? [sessionId]
+        : []
+      : Array.from(this.dirtySessions);
+    if (sessionIds.length === 0) {
+      return;
     }
 
-    this.saveSessions(this.sessionsCache)
-    if (sessionId) this.dirtySessions.delete(sessionId)
-    else this.dirtySessions.clear()
+    const entries: Array<{
+      session: UIChatSession;
+      summary: UISessionSummary;
+    }> = [];
+    sessionIds.forEach((id) => {
+      const session = this.sessionsCache[id];
+      if (!session) {
+        this.dirtySessions.delete(id);
+        return;
+      }
+      const sanitized = sanitizeUiSession(session);
+      this.sessionsCache[id] = sanitized;
+      const summary = buildUiSessionSummary(sanitized);
+      this.sessionSummaryCache[id] = summary;
+      entries.push({ session: sanitized, summary });
+    });
+    if (entries.length > 0) {
+      this.store.saveUiSessions(entries);
+    }
+    sessionIds.forEach((id) => this.dirtySessions.delete(id));
   }
 
-  private processEvent(session: UIChatSession, event: AgentEvent, sessionId: string): UIUpdateAction[] {
-    const type = event.type as AgentEventType
-    const actions: UIUpdateAction[] = []
+  private processEvent(
+    session: UIChatSession,
+    event: AgentEvent,
+    sessionId: string,
+  ): UIUpdateAction[] {
+    const type = event.type as AgentEventType;
+    const actions: UIUpdateAction[] = [];
 
-    if (type === 'user_input') {
-      const message = this.createMessage({
-        role: 'user',
-        type: 'text',
-        content: event.content || '',
-        metadata: {
-          inputKind: event.inputKind || 'normal',
-          ...(Array.isArray(event.inputImages) && event.inputImages.length > 0
-            ? { inputImages: event.inputImages }
-            : {})
+    if (type === "user_input") {
+      const message = this.createMessage(
+        {
+          role: "user",
+          type: "text",
+          content: event.content || "",
+          metadata: {
+            inputKind: event.inputKind || "normal",
+            ...(Array.isArray(event.inputImages) && event.inputImages.length > 0
+              ? { inputImages: event.inputImages }
+              : {}),
+          },
+          backendMessageId: event.messageId,
         },
-        backendMessageId: event.messageId
-      }, sessionId)
-      session.messages.push(message)
-      this.checkAutoTitle(session, 'user', event.content || '')
-      actions.push({ type: 'ADD_MESSAGE', sessionId, message })
-    } else if (type === 'say') {
-      const lastMsg = session.messages[session.messages.length - 1]
-      const delta = event.content || event.outputDelta || ''
-      if (lastMsg && lastMsg.role === 'assistant' && lastMsg.type === 'text' && lastMsg.streaming) {
-        lastMsg.content += delta
-        actions.push({ type: 'APPEND_CONTENT', sessionId, messageId: lastMsg.id, content: delta })
-      } else {
-        const stopAction = this.stopLatestStreaming(session, sessionId)
-        if (stopAction) actions.push(stopAction)
-
-        const message = this.createMessage({
-          role: 'assistant',
-          type: 'text',
+        sessionId,
+      );
+      session.messages.push(message);
+      this.checkAutoTitle(session, "user", event.content || "");
+      actions.push({ type: "ADD_MESSAGE", sessionId, message });
+    } else if (type === "say") {
+      const lastMessage = session.messages[session.messages.length - 1];
+      const delta = event.content || event.outputDelta || "";
+      if (
+        lastMessage &&
+        lastMessage.role === "assistant" &&
+        lastMessage.type === "text" &&
+        lastMessage.streaming
+      ) {
+        lastMessage.content += delta;
+        actions.push({
+          type: "APPEND_CONTENT",
+          sessionId,
+          messageId: lastMessage.id,
           content: delta,
+        });
+      } else {
+        const stopAction = this.stopLatestStreaming(session, sessionId);
+        if (stopAction) actions.push(stopAction);
+
+        const message = this.createMessage(
+          {
+            role: "assistant",
+            type: "text",
+            content: delta,
+            streaming: true,
+            backendMessageId: event.messageId,
+          },
+          sessionId,
+        );
+        session.messages.push(message);
+        actions.push({ type: "ADD_MESSAGE", sessionId, message });
+      }
+    } else if (type === "command_started") {
+      const stopAction = this.stopLatestStreaming(session, sessionId);
+      if (stopAction) actions.push(stopAction);
+
+      const existingIndex = session.messages.findIndex(
+        (message) =>
+          message.backendMessageId === event.messageId &&
+          message.type === "ask",
+      );
+      if (existingIndex !== -1) {
+        session.messages.splice(existingIndex, 1);
+      }
+
+      const message = this.createMessage(
+        {
+          role: "assistant",
+          type: "command",
+          content: event.command || "",
+          metadata: {
+            commandId: event.commandId,
+            tabName: event.tabName || "Terminal",
+            output: "",
+            isNowait: !!(event as any).isNowait,
+            collapsed: false,
+          },
           streaming: true,
-          backendMessageId: event.messageId
-        }, sessionId)
-        session.messages.push(message)
-        actions.push({ type: 'ADD_MESSAGE', sessionId, message })
-      }
-    } else if (type === 'command_started') {
-      const stopAction = this.stopLatestStreaming(session, sessionId)
-      if (stopAction) actions.push(stopAction)
-
-      // CRITICAL FIX: If there was a pending 'ask' message with the same backendMessageId, 
-      // remove it from history to prevent it from reappearing on reload.
-      const existingIdx = session.messages.findIndex(m => m.backendMessageId === event.messageId && m.type === 'ask')
-      if (existingIdx !== -1) {
-        session.messages.splice(existingIdx, 1)
-      }
-
-      const message = this.createMessage({
-        role: 'assistant',
-        type: 'command',
-        content: event.command || '',
-        metadata: {
-          commandId: event.commandId,
-          tabName: event.tabName || 'Terminal',
-          output: '',
-          isNowait: !!(event as any).isNowait,
-          collapsed: false
+          backendMessageId: event.messageId,
         },
-        streaming: true,
-        backendMessageId: event.messageId
-      }, sessionId)
-      session.messages.push(message)
-      actions.push({ type: 'ADD_MESSAGE', sessionId, message })
-    } else if (type === 'command_finished') {
-      // If this is a finished event for a rejected command, we might need to clear the ask message too
-      const existingIdx = session.messages.findIndex(m => m.backendMessageId === event.messageId && m.type === 'ask')
-      if (existingIdx !== -1) {
-        session.messages.splice(existingIdx, 1)
+        sessionId,
+      );
+      session.messages.push(message);
+      actions.push({ type: "ADD_MESSAGE", sessionId, message });
+    } else if (type === "command_finished") {
+      const existingIndex = session.messages.findIndex(
+        (message) =>
+          message.backendMessageId === event.messageId &&
+          message.type === "ask",
+      );
+      if (existingIndex !== -1) {
+        session.messages.splice(existingIndex, 1);
       }
 
-      const msg = event.commandId
-        ? session.messages.find((m) => m.metadata?.commandId === event.commandId)
-        : [...session.messages].reverse().find((m) => m.type === 'command' && m.streaming)
+      const message = event.commandId
+        ? session.messages.find(
+            (entry) => entry.metadata?.commandId === event.commandId,
+          )
+        : [...session.messages]
+            .reverse()
+            .find((entry) => entry.type === "command" && entry.streaming);
 
-      if (msg) {
+      if (message) {
         const patch = {
           metadata: {
-            ...msg.metadata,
+            ...message.metadata,
             exitCode: event.exitCode,
-            output: (msg.metadata?.output || '') + (event.outputDelta || '') + (event.message ? `\nError: ${event.message}` : ''),
-            isNowait: (event as any).isNowait ?? msg.metadata?.isNowait
+            output:
+              (message.metadata?.output || "") +
+              (event.outputDelta || "") +
+              (event.message ? `\nError: ${event.message}` : ""),
+            isNowait: (event as any).isNowait ?? message.metadata?.isNowait,
           },
-          streaming: false
-        }
-        Object.assign(msg, patch)
-        actions.push({ type: 'UPDATE_MESSAGE', sessionId, messageId: msg.id, patch })
+          streaming: false,
+        };
+        Object.assign(message, patch);
+        actions.push({
+          type: "UPDATE_MESSAGE",
+          sessionId,
+          messageId: message.id,
+          patch,
+        });
       }
-    } else if (type === 'tool_call') {
-      const stopAction = this.stopLatestStreaming(session, sessionId)
-      if (stopAction) actions.push(stopAction)
+    } else if (type === "tool_call") {
+      const stopAction = this.stopLatestStreaming(session, sessionId);
+      if (stopAction) actions.push(stopAction);
 
-      const message = this.createMessage({
-        role: 'assistant',
-        type: 'tool_call',
-        content: event.input || '',
-        metadata: {
-          output: event.output || '',
-          toolName: event.toolName || 'Tool Call'
+      const message = this.createMessage(
+        {
+          role: "assistant",
+          type: "tool_call",
+          content: event.input || "",
+          metadata: {
+            output: event.output || "",
+            toolName: event.toolName || "Tool Call",
+          },
+          streaming: false,
+          backendMessageId: event.messageId,
         },
-        streaming: false,
-        backendMessageId: event.messageId
-      }, sessionId)
-      session.messages.push(message)
-      actions.push({ type: 'ADD_MESSAGE', sessionId, message })
-    } else if (type === 'file_edit') {
-      const stopAction = this.stopLatestStreaming(session, sessionId)
-      if (stopAction) actions.push(stopAction)
+        sessionId,
+      );
+      session.messages.push(message);
+      actions.push({ type: "ADD_MESSAGE", sessionId, message });
+    } else if (type === "file_edit") {
+      const stopAction = this.stopLatestStreaming(session, sessionId);
+      if (stopAction) actions.push(stopAction);
 
-      const message = this.createMessage({
-        role: 'assistant',
-        type: 'file_edit',
-        content: event.output || '',
-        metadata: {
-          toolName: event.toolName || 'create_or_edit',
-          filePath: event.filePath,
-          action: event.action || 'edited',
-          diff: event.diff || '',
-          output: event.output || ''
+      const message = this.createMessage(
+        {
+          role: "assistant",
+          type: "file_edit",
+          content: event.output || "",
+          metadata: {
+            toolName: event.toolName || "create_or_edit",
+            filePath: event.filePath,
+            action: event.action || "edited",
+            diff: event.diff || "",
+            output: event.output || "",
+          },
+          streaming: false,
+          backendMessageId: event.messageId,
         },
-        streaming: false,
-        backendMessageId: event.messageId
-      }, sessionId)
-      session.messages.push(message)
-      actions.push({ type: 'ADD_MESSAGE', sessionId, message })
-    } else if (type === 'file_read') {
-      const stopAction = this.stopLatestStreaming(session, sessionId)
-      if (stopAction) actions.push(stopAction)
+        sessionId,
+      );
+      session.messages.push(message);
+      actions.push({ type: "ADD_MESSAGE", sessionId, message });
+    } else if (type === "file_read") {
+      const stopAction = this.stopLatestStreaming(session, sessionId);
+      if (stopAction) actions.push(stopAction);
 
-      const message = this.createMessage({
-        role: 'assistant',
-        type: 'sub_tool',
-        content: event.output || '',
-        metadata: {
-          subToolTitle: `Read: ${event.filePath || 'unknown'}`,
-          subToolLevel: event.level || (String(event.output || '').startsWith('Error:') ? 'warning' : 'info'),
-          output: event.output || '',
-          collapsed: true
+      const message = this.createMessage(
+        {
+          role: "assistant",
+          type: "sub_tool",
+          content: event.output || "",
+          metadata: {
+            subToolTitle: `Read: ${event.filePath || "unknown"}`,
+            subToolLevel:
+              event.level ||
+              (String(event.output || "").startsWith("Error:")
+                ? "warning"
+                : "info"),
+            output: event.output || "",
+            collapsed: true,
+          },
+          streaming: false,
+          backendMessageId: event.messageId,
         },
-        streaming: false,
-        backendMessageId: event.messageId
-      }, sessionId)
-      session.messages.push(message)
-      actions.push({ type: 'ADD_MESSAGE', sessionId, message })
-    } else if (type === 'command_ask') {
-      const stopAction = this.stopLatestStreaming(session, sessionId)
-      if (stopAction) actions.push(stopAction)
+        sessionId,
+      );
+      session.messages.push(message);
+      actions.push({ type: "ADD_MESSAGE", sessionId, message });
+    } else if (type === "command_ask") {
+      const stopAction = this.stopLatestStreaming(session, sessionId);
+      if (stopAction) actions.push(stopAction);
 
-      const message = this.createMessage({
-        role: 'system',
-        type: 'ask',
-        content: event.command || '',
-        metadata: {
-          approvalId: event.approvalId,
-          toolName: event.toolName || 'Command',
-          command: event.command || '',
-          decision: (event as any).decision
+      const message = this.createMessage(
+        {
+          role: "system",
+          type: "ask",
+          content: event.command || "",
+          metadata: {
+            approvalId: event.approvalId,
+            toolName: event.toolName || "Command",
+            command: event.command || "",
+            decision: (event as any).decision,
+          },
+          streaming: false,
+          backendMessageId: event.messageId,
         },
-        streaming: false,
-        backendMessageId: event.messageId
-      }, sessionId)
-      session.messages.push(message)
-      actions.push({ type: 'ADD_MESSAGE', sessionId, message })
-    } else if (type === 'sub_tool_started') {
-      const stopAction = this.stopLatestStreaming(session, sessionId)
-      if (stopAction) actions.push(stopAction)
-      const messageType = this.getSubToolMessageType(event)
+        sessionId,
+      );
+      session.messages.push(message);
+      actions.push({ type: "ADD_MESSAGE", sessionId, message });
+    } else if (type === "sub_tool_started") {
+      const stopAction = this.stopLatestStreaming(session, sessionId);
+      if (stopAction) actions.push(stopAction);
+      const messageType = this.getSubToolMessageType(event);
 
-      const message = this.createMessage({
-        role: 'assistant',
-        type: messageType,
-        content: '',
-        metadata: {
-          subToolTitle: event.title || event.toolName || 'Sub Tool',
-          subToolHint: event.hint,
-          output: '',
-          subToolLevel: event.level || 'info',
-          collapsed: true
+      const message = this.createMessage(
+        {
+          role: "assistant",
+          type: messageType,
+          content: "",
+          metadata: {
+            subToolTitle: event.title || event.toolName || "Sub Tool",
+            subToolHint: event.hint,
+            output: "",
+            subToolLevel: event.level || "info",
+            collapsed: true,
+          },
+          streaming: true,
+          backendMessageId: event.messageId,
         },
-        streaming: true,
-        backendMessageId: event.messageId
-      }, sessionId)
-      session.messages.push(message)
-      actions.push({ type: 'ADD_MESSAGE', sessionId, message })
-    } else if (type === 'sub_tool_delta') {
-      const msg = event.messageId
-        ? session.messages.find((m) => m.backendMessageId === event.messageId)
+        sessionId,
+      );
+      session.messages.push(message);
+      actions.push({ type: "ADD_MESSAGE", sessionId, message });
+    } else if (type === "sub_tool_delta") {
+      const message = event.messageId
+        ? session.messages.find(
+            (entry) => entry.backendMessageId === event.messageId,
+          )
         : [...session.messages]
             .reverse()
-            .find((m) => (m.type === 'sub_tool' || m.type === 'reasoning' || m.type === 'compaction') && m.streaming)
+            .find(
+              (entry) =>
+                (entry.type === "sub_tool" ||
+                  entry.type === "reasoning" ||
+                  entry.type === "compaction") &&
+                entry.streaming,
+            );
 
-      if (msg) {
-        const delta = event.outputDelta || ''
-        msg.metadata = {
-          ...msg.metadata,
-          output: (msg.metadata?.output || '') + delta
-        }
-        actions.push({ type: 'APPEND_OUTPUT', sessionId, messageId: msg.id, outputDelta: delta })
+      if (message) {
+        const delta = event.outputDelta || "";
+        message.metadata = {
+          ...message.metadata,
+          output: (message.metadata?.output || "") + delta,
+        };
+        actions.push({
+          type: "APPEND_OUTPUT",
+          sessionId,
+          messageId: message.id,
+          outputDelta: delta,
+        });
       }
-    } else if (type === 'sub_tool_finished') {
-      const msg = event.messageId
-        ? session.messages.find((m) => m.backendMessageId === event.messageId)
+    } else if (type === "sub_tool_finished") {
+      const message = event.messageId
+        ? session.messages.find(
+            (entry) => entry.backendMessageId === event.messageId,
+          )
         : [...session.messages]
             .reverse()
-            .find((m) => (m.type === 'sub_tool' || m.type === 'reasoning' || m.type === 'compaction') && m.streaming)
-      if (msg) {
-        msg.streaming = false
-        actions.push({ type: 'UPDATE_MESSAGE', sessionId, messageId: msg.id, patch: { streaming: false } })
+            .find(
+              (entry) =>
+                (entry.type === "sub_tool" ||
+                  entry.type === "reasoning" ||
+                  entry.type === "compaction") &&
+                entry.streaming,
+            );
+      if (message) {
+        message.streaming = false;
+        actions.push({
+          type: "UPDATE_MESSAGE",
+          sessionId,
+          messageId: message.id,
+          patch: { streaming: false },
+        });
       }
-    } else if (type === 'remove_message') {
-      const msg = event.messageId
+    } else if (type === "remove_message") {
+      const message = event.messageId
         ? [...session.messages]
             .reverse()
-            .find((m) => m.backendMessageId === event.messageId && m.role === 'assistant')
-        : [...session.messages].reverse().find((m) => m.role === 'assistant')
-      if (msg) {
-        session.messages = session.messages.filter((m) => m.id !== msg.id)
-        actions.push({ type: 'REMOVE_MESSAGE', sessionId, messageId: msg.id })
+            .find(
+              (entry) =>
+                entry.backendMessageId === event.messageId &&
+                entry.role === "assistant",
+            )
+        : [...session.messages]
+            .reverse()
+            .find((entry) => entry.role === "assistant");
+      if (message) {
+        session.messages = session.messages.filter(
+          (entry) => entry.id !== message.id,
+        );
+        actions.push({
+          type: "REMOVE_MESSAGE",
+          sessionId,
+          messageId: message.id,
+        });
       }
-    } else if (type === 'done') {
-      const stopAction = this.stopLatestStreaming(session, sessionId)
-      if (stopAction) actions.push(stopAction)
-      actions.push({ type: 'DONE', sessionId })
-      // Ensure no messages are in streaming state under done status
-      session.messages.forEach(m => { m.streaming = false; });
-    } else if (type === 'alert') {
-      const stopAction = this.stopLatestStreaming(session, sessionId)
-      if (stopAction) actions.push(stopAction)
+    } else if (type === "done") {
+      const stopAction = this.stopLatestStreaming(session, sessionId);
+      if (stopAction) actions.push(stopAction);
+      actions.push({ type: "DONE", sessionId });
+      session.messages.forEach((message) => {
+        message.streaming = false;
+      });
+    } else if (type === "alert") {
+      const stopAction = this.stopLatestStreaming(session, sessionId);
+      if (stopAction) actions.push(stopAction);
 
-      const message = this.createMessage({
-        role: 'system',
-        type: 'alert',
-        content: event.message || 'Unknown alert',
-        metadata: {
-          subToolLevel: event.level || 'warning'
+      const message = this.createMessage(
+        {
+          role: "system",
+          type: "alert",
+          content: event.message || "Unknown alert",
+          metadata: {
+            subToolLevel: event.level || "warning",
+          },
+          backendMessageId: event.messageId,
         },
-        backendMessageId: event.messageId
-      }, sessionId)
-      session.messages.push(message)
-      actions.push({ type: 'ADD_MESSAGE', sessionId, message })
-    } else if (type === 'error') {
-      const stopAction = this.stopLatestStreaming(session, sessionId)
-      if (stopAction) actions.push(stopAction)
+        sessionId,
+      );
+      session.messages.push(message);
+      actions.push({ type: "ADD_MESSAGE", sessionId, message });
+    } else if (type === "error") {
+      const stopAction = this.stopLatestStreaming(session, sessionId);
+      if (stopAction) actions.push(stopAction);
 
-      const message = this.createMessage({
-        role: 'system',
-        type: 'error',
-        content: event.message || 'Unknown error',
-        metadata: {
-          details: (event as any).details || ''
+      const message = this.createMessage(
+        {
+          role: "system",
+          type: "error",
+          content: event.message || "Unknown error",
+          metadata: {
+            details: (event as any).details || "",
+          },
+          backendMessageId: event.messageId,
         },
-        backendMessageId: event.messageId
-      }, sessionId)
-      session.messages.push(message)
-      actions.push({ type: 'ADD_MESSAGE', sessionId, message })
-      actions.push({ type: 'DONE', sessionId })
-    } else if (type === 'tokens_count') {
-      const message = this.createMessage({
-        role: 'system',
-        type: 'tokens_count',
-        content: '',
-        metadata: {
-          modelName: event.modelName,
-          totalTokens: event.totalTokens,
-          maxTokens: event.maxTokens
-        }
-      }, sessionId)
-      session.messages.push(message)
-      actions.push({ type: 'ADD_MESSAGE', sessionId, message })
-    } else if ((type as string) === 'rollback') {
-      // Core: handle rollback of memory cache
-      const mid = (event as any).messageId;
-      const idx = session.messages.findIndex(m => m.backendMessageId === mid);
-      if (idx !== -1) {
-        session.messages = session.messages.slice(0, idx);
+        sessionId,
+      );
+      session.messages.push(message);
+      actions.push({ type: "ADD_MESSAGE", sessionId, message });
+      actions.push({ type: "DONE", sessionId });
+    } else if (type === "tokens_count") {
+      const message = this.createMessage(
+        {
+          role: "system",
+          type: "tokens_count",
+          content: "",
+          metadata: {
+            modelName: event.modelName,
+            totalTokens: event.totalTokens,
+            maxTokens: event.maxTokens,
+          },
+        },
+        sessionId,
+      );
+      session.messages.push(message);
+      actions.push({ type: "ADD_MESSAGE", sessionId, message });
+    } else if ((type as string) === "rollback") {
+      const backendMessageId = (event as any).messageId;
+      const index = session.messages.findIndex(
+        (message) => message.backendMessageId === backendMessageId,
+      );
+      if (index !== -1) {
+        session.messages = session.messages.slice(0, index);
         this.dirtySessions.add(sessionId);
-        // Notify frontend UI to execute corresponding rollback Action
-        actions.push({ type: 'ROLLBACK' as any, sessionId, messageId: mid } as any);
+        actions.push({
+          type: "ROLLBACK" as any,
+          sessionId,
+          messageId: backendMessageId,
+        } as any);
       }
     }
-    return actions
+    return actions;
   }
 
-  private stopLatestStreaming(session: UIChatSession, sessionId: string): UIUpdateAction | null {
-    const messages = session.messages
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].streaming) {
-        messages[i].streaming = false
-        return { type: 'UPDATE_MESSAGE', sessionId, messageId: messages[i].id, patch: { streaming: false } }
+  private stopLatestStreaming(
+    session: UIChatSession,
+    sessionId: string,
+  ): UIUpdateAction | null {
+    for (let index = session.messages.length - 1; index >= 0; index -= 1) {
+      if (!session.messages[index].streaming) {
+        continue;
       }
+      session.messages[index].streaming = false;
+      return {
+        type: "UPDATE_MESSAGE",
+        sessionId,
+        messageId: session.messages[index].id,
+        patch: { streaming: false },
+      };
     }
-    return null
+    return null;
   }
 
-  private createMessage(msg: Omit<ChatMessage, 'id' | 'timestamp'>, _sessionId?: string): ChatMessage {
+  private createMessage(
+    message: Omit<ChatMessage, "id" | "timestamp">,
+    _sessionId?: string,
+  ): ChatMessage {
     return {
-      ...msg,
+      ...message,
       id: uuidv4(),
-      timestamp: Date.now()
-    }
+      timestamp: Date.now(),
+    };
   }
 
-  private getSubToolMessageType(event: AgentEvent): ChatMessage['type'] {
-    const rawTitle = String(event.title || event.toolName || '').trim().toLowerCase()
-    if (rawTitle.startsWith('reasoning')) return 'reasoning'
-    if (rawTitle.startsWith('compaction')) return 'compaction'
-    return 'sub_tool'
+  private getSubToolMessageType(event: AgentEvent): ChatMessage["type"] {
+    const rawTitle = String(event.title || event.toolName || "")
+      .trim()
+      .toLowerCase();
+    if (rawTitle.startsWith("reasoning")) return "reasoning";
+    if (rawTitle.startsWith("compaction")) return "compaction";
+    return "sub_tool";
   }
 
-  private checkAutoTitle(session: UIChatSession, role: string, content: string): void {
-    if (role === 'user' && session.messages.filter((m) => m.role === 'user').length === 1) {
-      session.title = buildAutoSessionTitle(content)
+  private checkAutoTitle(
+    session: UIChatSession,
+    role: string,
+    content: string,
+  ): void {
+    if (
+      role === "user" &&
+      session.messages.filter((message) => message.role === "user").length === 1
+    ) {
+      session.title = buildAutoSessionTitle(content);
     }
   }
 
   getMessages(sessionId: string): ChatMessage[] {
-    return this.sessionsCache[sessionId]?.messages || []
+    return this.getOrLoadSession(sessionId)?.messages || [];
   }
 
   getSession(sessionId: string): UIChatSession | null {
-    return this.sessionsCache[sessionId] || null
+    return this.getOrLoadSession(sessionId);
   }
 
   getAllSessions(): UIChatSession[] {
-    return Object.values(this.sessionsCache).sort((a, b) => b.updatedAt - a.updatedAt)
+    return this.store
+      .listUiSessions()
+      .map((session) => sanitizeUiSession(session));
   }
 
   getAllSessionSummaries(): UISessionSummary[] {
-    return Object.values(this.sessionSummaryCache).sort((a, b) => b.updatedAt - a.updatedAt)
+    return Object.values(this.sessionSummaryCache).sort(
+      (left, right) => right.updatedAt - left.updatedAt,
+    );
   }
 
   deleteSession(sessionId: string): void {
-    delete this.sessionsCache[sessionId]
-    delete this.sessionSummaryCache[sessionId]
-    this.dirtySessions.delete(sessionId)
-    this.saveSessions(this.sessionsCache)
+    this.deleteSessions([sessionId]);
+  }
+
+  deleteSessions(sessionIds: string[]): void {
+    const ids = Array.from(
+      new Set(sessionIds.filter((id) => id.trim().length > 0)),
+    );
+    if (ids.length === 0) {
+      return;
+    }
+    ids.forEach((id) => {
+      delete this.sessionsCache[id];
+      delete this.sessionSummaryCache[id];
+      this.dirtySessions.delete(id);
+    });
+    this.store.deleteUiSessions(ids);
   }
 
   renameSession(sessionId: string, newTitle: string): void {
-    if (this.sessionsCache[sessionId]) {
-      this.sessionsCache[sessionId].title = newTitle
-      this.sessionsCache[sessionId].updatedAt = Date.now()
-      this.syncSessionSummary(sessionId)
-      this.dirtySessions.add(sessionId)
-      this.flush(sessionId)
+    const updatedAt = Date.now();
+    const session = this.getOrLoadSession(sessionId);
+    if (session) {
+      session.title = newTitle;
+      session.updatedAt = updatedAt;
+      this.syncSessionSummary(sessionId);
+      this.dirtySessions.add(sessionId);
+      this.flush(sessionId);
+      return;
     }
+
+    const summary = this.sessionSummaryCache[sessionId];
+    if (!summary) {
+      return;
+    }
+    this.sessionSummaryCache[sessionId] = {
+      ...summary,
+      title: newTitle,
+      updatedAt,
+    };
+    this.store.renameUiSession(sessionId, newTitle, updatedAt);
   }
 
   rollbackToMessage(sessionId: string, backendMessageId: string): number {
-    const session = this.sessionsCache[sessionId]
-    if (!session) return 0
+    const session = this.getOrLoadSession(sessionId);
+    if (!session) return 0;
 
-    const idx = session.messages.findIndex((m) => m.backendMessageId === backendMessageId)
-    if (idx === -1) return 0
+    const index = session.messages.findIndex(
+      (message) => message.backendMessageId === backendMessageId,
+    );
+    if (index === -1) return 0;
 
-    const removedCount = session.messages.length - idx
-    session.messages = session.messages.slice(0, idx)
-    this.syncSessionSummary(sessionId)
-    this.dirtySessions.add(sessionId)
-    // Rollback is user-driven and low-frequency; persist immediately.
-    this.flush(sessionId)
-    return removedCount
+    const removedCount = session.messages.length - index;
+    session.messages = session.messages.slice(0, index);
+    this.syncSessionSummary(sessionId);
+    this.dirtySessions.add(sessionId);
+    this.flush(sessionId);
+    return removedCount;
   }
 
   toReadableMarkdown(messages: ChatMessage[], title: string): string {
-    const lines: string[] = []
-    lines.push(`# ${title || 'Conversation'}`)
-    lines.push('')
-    lines.push(`Exported at: ${new Date().toISOString()}`)
-    lines.push('')
+    const lines: string[] = [];
+    lines.push(`# ${title || "Conversation"}`);
+    lines.push("");
+    lines.push(`Exported at: ${new Date().toISOString()}`);
+    lines.push("");
 
-    let visibleCount = 0
+    let visibleCount = 0;
 
-    for (const msg of messages) {
-      const body = this.getReadableMessageBody(msg)
-      if (!body) continue
+    for (const message of messages) {
+      const body = this.getReadableMessageBody(message);
+      if (!body) continue;
 
-      visibleCount += 1
-      lines.push(`## ${visibleCount}. ${msg.role === 'user' ? 'User' : 'Assistant'}`)
-      lines.push('')
-      lines.push(body)
-      lines.push('')
+      visibleCount += 1;
+      lines.push(
+        `## ${visibleCount}. ${message.role === "user" ? "User" : "Assistant"}`,
+      );
+      lines.push("");
+      lines.push(body);
+      lines.push("");
     }
 
     if (visibleCount === 0) {
-      lines.push('No user/assistant content found in frontend UI history.')
-      lines.push('')
+      lines.push("No user/assistant content found in frontend UI history.");
+      lines.push("");
     }
 
-    return lines.join('\n')
+    return lines.join("\n");
   }
 
   toReadableMarkdownFragment(messages: ChatMessage[]): string {
-    const parts: string[] = []
-    for (const msg of messages) {
-      const body = this.getReadableMessageBody(msg)
-      if (body) parts.push(body)
+    const parts: string[] = [];
+    for (const message of messages) {
+      const body = this.getReadableMessageBody(message);
+      if (body) parts.push(body);
     }
-    return this.normalizeText(parts.join('\n\n'))
+    return this.normalizeText(parts.join("\n\n"));
   }
 
-  toReadableMarkdownFragmentByMessageIds(sessionId: string, messageIds: string[]): string {
-    const session = this.sessionsCache[sessionId]
-    if (!session) return ''
-    const ids = new Set((messageIds || []).filter((id) => typeof id === 'string' && id.length > 0))
-    if (ids.size === 0) return ''
-    const selected = session.messages.filter((msg) => ids.has(msg.id))
-    return this.toReadableMarkdownFragment(selected)
+  toReadableMarkdownFragmentByMessageIds(
+    sessionId: string,
+    messageIds: string[],
+  ): string {
+    const session = this.getOrLoadSession(sessionId);
+    if (!session) return "";
+    const ids = new Set(
+      (messageIds || []).filter(
+        (id) => typeof id === "string" && id.length > 0,
+      ),
+    );
+    if (ids.size === 0) return "";
+    const selected = session.messages.filter((message) => ids.has(message.id));
+    return this.toReadableMarkdownFragment(selected);
   }
 
-  private getReadableMessageBody(msg: ChatMessage): string {
-    if (msg.role !== 'user' && msg.role !== 'assistant') return ''
-    if (msg.role === 'user') {
-      const normalized = this.normalizeText(msg.content)
-      if (normalized) return normalized
-      if (Array.isArray(msg.metadata?.inputImages) && msg.metadata.inputImages.length > 0) {
+  private getReadableMessageBody(message: ChatMessage): string {
+    if (message.role !== "user" && message.role !== "assistant") return "";
+    if (message.role === "user") {
+      const normalized = this.normalizeText(message.content);
+      if (normalized) return normalized;
+      if (
+        Array.isArray(message.metadata?.inputImages) &&
+        message.metadata.inputImages.length > 0
+      ) {
         const lines = [
-          'Attached images:',
-          ...msg.metadata.inputImages.map((item) => `- ${item.fileName || item.attachmentId || 'image'}`)
-        ]
-        return this.normalizeText(lines.join('\n'))
+          "Attached images:",
+          ...message.metadata.inputImages.map(
+            (item) => `- ${item.fileName || item.attachmentId || "image"}`,
+          ),
+        ];
+        return this.normalizeText(lines.join("\n"));
       }
-      return ''
+      return "";
     }
-    return this.extractAssistantRichContent(msg)
+    return this.extractAssistantRichContent(message);
   }
 
-  private extractAssistantRichContent(msg: ChatMessage): string {
-    const chunks: string[] = []
+  private extractAssistantRichContent(message: ChatMessage): string {
+    const chunks: string[] = [];
 
-    switch (msg.type) {
-      case 'text': {
-        const text = this.normalizeText(msg.content)
-        if (text) chunks.push(text)
-        break
+    switch (message.type) {
+      case "text": {
+        const text = this.normalizeText(message.content);
+        if (text) chunks.push(text);
+        break;
       }
-      case 'command': {
-        const commandText = this.normalizeText(msg.content || msg.metadata?.command || '')
-        const outputText = this.normalizeText(msg.metadata?.output || '')
+      case "command": {
+        const commandText = this.normalizeText(
+          message.content || message.metadata?.command || "",
+        );
+        const outputText = this.normalizeText(message.metadata?.output || "");
         if (commandText) {
-          chunks.push('Command:')
-          chunks.push('```bash')
-          chunks.push(commandText)
-          chunks.push('```')
+          chunks.push("Command:");
+          chunks.push("```bash");
+          chunks.push(commandText);
+          chunks.push("```");
         }
         if (outputText) {
-          chunks.push('Output:')
-          chunks.push('```text')
-          chunks.push(outputText)
-          chunks.push('```')
+          chunks.push("Output:");
+          chunks.push("```text");
+          chunks.push(outputText);
+          chunks.push("```");
         }
-        break
+        break;
       }
-      case 'tool_call': {
-        const inputText = this.normalizeText(msg.content || '')
-        const outputText = this.normalizeText(msg.metadata?.output || '')
-        const toolName = this.normalizeText(msg.metadata?.toolName || 'Tool Call')
-        chunks.push(`Tool: ${toolName}`)
+      case "tool_call": {
+        const inputText = this.normalizeText(message.content || "");
+        const outputText = this.normalizeText(message.metadata?.output || "");
+        const toolName = this.normalizeText(
+          message.metadata?.toolName || "Tool Call",
+        );
+        chunks.push(`Tool: ${toolName}`);
         if (inputText) {
-          chunks.push('Input:')
-          chunks.push('```text')
-          chunks.push(inputText)
-          chunks.push('```')
+          chunks.push("Input:");
+          chunks.push("```text");
+          chunks.push(inputText);
+          chunks.push("```");
         }
         if (outputText) {
-          chunks.push('Output:')
-          chunks.push('```text')
-          chunks.push(outputText)
-          chunks.push('```')
+          chunks.push("Output:");
+          chunks.push("```text");
+          chunks.push(outputText);
+          chunks.push("```");
         }
-        break
+        break;
       }
-      case 'file_edit': {
-        const filePath = this.normalizeText(msg.metadata?.filePath || '')
-        const outputText = this.normalizeText(msg.metadata?.output || msg.content || '')
-        const diffText = this.normalizeText(msg.metadata?.diff || '')
-        const action = this.normalizeText(msg.metadata?.action || 'edited')
-        chunks.push(`File Edit (${action})${filePath ? `: ${filePath}` : ''}`)
+      case "file_edit": {
+        const filePath = this.normalizeText(message.metadata?.filePath || "");
+        const outputText = this.normalizeText(
+          message.metadata?.output || message.content || "",
+        );
+        const diffText = this.normalizeText(message.metadata?.diff || "");
+        const action = this.normalizeText(message.metadata?.action || "edited");
+        chunks.push(`File Edit (${action})${filePath ? `: ${filePath}` : ""}`);
         if (outputText) {
-          chunks.push('Result:')
-          chunks.push('```text')
-          chunks.push(outputText)
-          chunks.push('```')
+          chunks.push("Result:");
+          chunks.push("```text");
+          chunks.push(outputText);
+          chunks.push("```");
         }
         if (diffText) {
-          chunks.push('Diff:')
-          chunks.push('```diff')
-          chunks.push(diffText)
-          chunks.push('```')
+          chunks.push("Diff:");
+          chunks.push("```diff");
+          chunks.push(diffText);
+          chunks.push("```");
         }
-        break
+        break;
       }
-      case 'sub_tool': {
-        const title = this.normalizeText(msg.metadata?.subToolTitle || 'Sub Tool')
-        const outputText = this.normalizeText(msg.metadata?.output || msg.content || '')
-        chunks.push(`Sub Tool: ${title}`)
+      case "sub_tool": {
+        const title = this.normalizeText(
+          message.metadata?.subToolTitle || "Sub Tool",
+        );
+        const outputText = this.normalizeText(
+          message.metadata?.output || message.content || "",
+        );
+        chunks.push(`Sub Tool: ${title}`);
         if (outputText) {
-          chunks.push('```text')
-          chunks.push(outputText)
-          chunks.push('```')
+          chunks.push("```text");
+          chunks.push(outputText);
+          chunks.push("```");
         }
-        break
+        break;
       }
-      case 'compaction': {
-        const title = this.normalizeText(msg.metadata?.subToolTitle || 'Compaction')
-        const outputText = this.normalizeText(msg.metadata?.output || msg.content || '')
-        chunks.push(`Compaction: ${title}`)
+      case "compaction": {
+        const title = this.normalizeText(
+          message.metadata?.subToolTitle || "Compaction",
+        );
+        const outputText = this.normalizeText(
+          message.metadata?.output || message.content || "",
+        );
+        chunks.push(`Compaction: ${title}`);
         if (outputText) {
-          chunks.push('```text')
-          chunks.push(outputText)
-          chunks.push('```')
+          chunks.push("```text");
+          chunks.push(outputText);
+          chunks.push("```");
         }
-        break
+        break;
       }
       default: {
-        const text = this.normalizeText(msg.content)
-        if (text) chunks.push(text)
+        const text = this.normalizeText(message.content);
+        if (text) chunks.push(text);
       }
     }
 
-    return this.normalizeText(chunks.join('\n\n'))
+    return this.normalizeText(chunks.join("\n\n"));
   }
 
   private normalizeText(input: string): string {
-    return String(input || '')
-      .replace(/\r\n?/g, '\n')
-      .trim()
+    return String(input || "")
+      .replace(/\r\n?/g, "\n")
+      .trim();
   }
 }

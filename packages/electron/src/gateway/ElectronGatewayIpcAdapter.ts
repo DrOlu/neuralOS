@@ -137,6 +137,13 @@ export class ElectronGatewayIpcAdapter {
     );
 
     ipcMain.handle(
+      "agent:deleteChatSessions",
+      async (_: any, sessionIds: string[]) => {
+        await this.gateway.deleteChatSessions(sessionIds);
+      },
+    );
+
+    ipcMain.handle(
       "agent:renameSession",
       async (_: any, sessionId: string, newTitle: string) => {
         this.gateway.renameSession(sessionId, newTitle);

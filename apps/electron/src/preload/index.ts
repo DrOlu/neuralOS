@@ -1,844 +1,1076 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 
 // Types (duplicated to avoid cross-project imports)
 interface BackendSettings {
-  schemaVersion: 3
-  commandPolicyMode: 'safe' | 'standard' | 'smart'
+  schemaVersion: 3;
+  commandPolicyMode: "safe" | "standard" | "smart";
   memory?: {
-    enabled: boolean
-  }
+    enabled: boolean;
+  };
   tools: {
-    builtIn: Record<string, boolean>
-    skills?: Record<string, boolean>
-  }
+    builtIn: Record<string, boolean>;
+    skills?: Record<string, boolean>;
+  };
   models: {
     items: Array<{
-      id: string
-      name: string
-      model: string
-      apiKey?: string
-      baseUrl?: string
-      maxTokens: number
-      structuredOutputMode?: 'auto' | 'on' | 'off'
-      supportsStructuredOutput: boolean
-      supportsObjectToolChoice: boolean
+      id: string;
+      name: string;
+      model: string;
+      apiKey?: string;
+      baseUrl?: string;
+      maxTokens: number;
+      structuredOutputMode?: "auto" | "on" | "off";
+      supportsStructuredOutput: boolean;
+      supportsObjectToolChoice: boolean;
       profile?: {
-        imageInputs?: boolean
-        textOutputs?: boolean
-        supportsStructuredOutput?: boolean
-        supportsObjectToolChoice?: boolean
-        testedAt?: number
-        ok?: boolean
-        error?: string
-      }
-    }>
+        imageInputs?: boolean;
+        textOutputs?: boolean;
+        supportsStructuredOutput?: boolean;
+        supportsObjectToolChoice?: boolean;
+        testedAt?: number;
+        ok?: boolean;
+        error?: string;
+      };
+    }>;
     profiles: Array<{
-      id: string
-      name: string
-      globalModelId: string
-      actionModelId?: string
-      thinkingModelId?: string
-      compactionModelId?: string
-    }>
-    activeProfileId: string
-  }
+      id: string;
+      name: string;
+      globalModelId: string;
+      actionModelId?: string;
+      thinkingModelId?: string;
+      compactionModelId?: string;
+    }>;
+    activeProfileId: string;
+  };
   connections: {
     ssh: Array<{
-      id: string
-      name: string
-      host: string
-      port: number
-      username: string
-      authMethod: 'password' | 'privateKey'
-      password?: string
-      privateKey?: string
-      privateKeyPath?: string
-      passphrase?: string
-      proxyId?: string
-      tunnelIds?: string[]
-    }>
+      id: string;
+      name: string;
+      host: string;
+      port: number;
+      username: string;
+      authMethod: "password" | "privateKey";
+      password?: string;
+      privateKey?: string;
+      privateKeyPath?: string;
+      passphrase?: string;
+      proxyId?: string;
+      tunnelIds?: string[];
+    }>;
     proxies: Array<{
-      id: string
-      name: string
-      type: 'socks5' | 'http'
-      host: string
-      port: number
-      username?: string
-      password?: string
-    }>
+      id: string;
+      name: string;
+      type: "socks5" | "http";
+      host: string;
+      port: number;
+      username?: string;
+      password?: string;
+    }>;
     tunnels: Array<{
-      id: string
-      name: string
-      type: 'Local' | 'Remote' | 'Dynamic'
-      host: string
-      port: number
-      targetAddress?: string
-      targetPort?: number
-      viaConnectionId?: string
-    }>
-  }
-  model: string
-  baseUrl: string
-  apiKey: string
+      id: string;
+      name: string;
+      type: "Local" | "Remote" | "Dynamic";
+      host: string;
+      port: number;
+      targetAddress?: string;
+      targetPort?: number;
+      viaConnectionId?: string;
+    }>;
+  };
+  model: string;
+  baseUrl: string;
+  apiKey: string;
   layout?: {
     window?: {
-      width: number
-      height: number
-      x?: number
-      y?: number
-    }
-    panelSizes?: number[]
-    panelOrder?: string[]
-    v2?: unknown
-  }
-  recursionLimit?: number
-  debugMode?: boolean
+      width: number;
+      height: number;
+      x?: number;
+      y?: number;
+    };
+    panelSizes?: number[];
+    panelOrder?: string[];
+    v2?: unknown;
+  };
+  recursionLimit?: number;
+  debugMode?: boolean;
   experimental?: {
-    runtimeThinkingCorrectionEnabled: boolean
-    taskFinishGuardEnabled: boolean
-    firstTurnThinkingModelEnabled: boolean
-    execCommandActionModelEnabled: boolean
-    writeStdinActionModelEnabled: boolean
-  }
+    runtimeThinkingCorrectionEnabled: boolean;
+    taskFinishGuardEnabled: boolean;
+    firstTurnThinkingModelEnabled: boolean;
+    execCommandActionModelEnabled: boolean;
+    writeStdinActionModelEnabled: boolean;
+  };
   gateway: {
     ws: {
-      access: 'disabled' | 'localhost' | 'internet' | 'lan' | 'custom'
-      port: number
-      allowedCidrs?: string[]
-    }
+      access: "disabled" | "localhost" | "internet" | "lan" | "custom";
+      port: number;
+      allowedCidrs?: string[];
+    };
     mobileWeb?: {
-      port: number | null
-    }
-  }
+      port: number | null;
+    };
+  };
 }
 
 interface UiSettings {
-  uiSchemaVersion: 1
-  language: 'en' | 'zh-CN'
-  themeId: string
+  uiSchemaVersion: 1;
+  language: "en" | "zh-CN";
+  themeId: string;
   terminal: {
-    fontSize: number
-    lineHeight: number
-    scrollback: number
-    cursorStyle: 'block' | 'underline' | 'bar'
-    cursorBlink: boolean
-    copyOnSelect: boolean
-    rightClickToPaste: boolean
-    commandDraftShortcut: string
-  }
+    fontSize: number;
+    lineHeight: number;
+    scrollback: number;
+    cursorStyle: "block" | "underline" | "bar";
+    cursorBlink: boolean;
+    copyOnSelect: boolean;
+    rightClickToPaste: boolean;
+    commandDraftShortcut: string;
+  };
   panelTabs: {
-    displayMode: 'auto' | 'expanded' | 'select'
-  }
+    displayMode: "auto" | "expanded" | "select";
+  };
   commandDraft: {
-    profileId: string
-  }
+    profileId: string;
+  };
   chat: {
-    displayMode: 'classic' | 'seamless'
-  }
+    displayMode: "classic" | "seamless";
+  };
 }
 
-type TerminalRecoveryReason = 'resume' | 'unlock-screen' | 'display-metrics-changed'
+type TerminalRecoveryReason =
+  | "resume"
+  | "unlock-screen"
+  | "display-metrics-changed";
 
-type AppSettings = BackendSettings & UiSettings
+type AppSettings = BackendSettings & UiSettings;
 
 interface CommandPolicyLists {
-  allowlist: string[]
-  denylist: string[]
-  asklist: string[]
+  allowlist: string[];
+  denylist: string[];
+  asklist: string[];
 }
 
 type AgentEventType =
-  | 'say'
-  | 'remove_message'
-  | 'command_started'
-  | 'command_finished'
-  | 'command_ask'
-  | 'tool_call'
-  | 'file_edit'
-  | 'file_read'
-  | 'sub_tool_started'
-  | 'sub_tool_delta'
-  | 'sub_tool_finished'
-  | 'done'
-  | 'alert'
-  | 'error'
-  | 'debug_history'
-  | 'user_input'
-  | 'tokens_count'
+  | "say"
+  | "remove_message"
+  | "command_started"
+  | "command_finished"
+  | "command_ask"
+  | "tool_call"
+  | "file_edit"
+  | "file_read"
+  | "sub_tool_started"
+  | "sub_tool_delta"
+  | "sub_tool_finished"
+  | "done"
+  | "alert"
+  | "error"
+  | "debug_history"
+  | "user_input"
+  | "tokens_count";
 
 interface AgentEvent {
-  type: AgentEventType
-  inputKind?: 'normal' | 'inserted'
-  inputImages?: InputImageAttachment[]
-  level?: 'info' | 'warning' | 'error'
-  content?: string
-  command?: string
-  commandId?: string
-  tabName?: string
-  toolName?: string
-  approvalId?: string
-  title?: string
-  hint?: string
-  input?: string
-  output?: string
-  filePath?: string
-  action?: 'created' | 'edited' | 'error'
-  diff?: string
-  exitCode?: number
-  outputDelta?: string
-  summary?: string
-  message?: string
-  details?: string
-  history?: any[]
-  modelName?: string
-  totalTokens?: number
-  maxTokens?: number
+  type: AgentEventType;
+  inputKind?: "normal" | "inserted";
+  inputImages?: InputImageAttachment[];
+  level?: "info" | "warning" | "error";
+  content?: string;
+  command?: string;
+  commandId?: string;
+  tabName?: string;
+  toolName?: string;
+  approvalId?: string;
+  title?: string;
+  hint?: string;
+  input?: string;
+  output?: string;
+  filePath?: string;
+  action?: "created" | "edited" | "error";
+  diff?: string;
+  exitCode?: number;
+  outputDelta?: string;
+  summary?: string;
+  message?: string;
+  details?: string;
+  history?: any[];
+  modelName?: string;
+  totalTokens?: number;
+  maxTokens?: number;
 }
 
 interface InputImageAttachment {
-  attachmentId?: string
-  fileName?: string
-  mimeType?: string
-  sizeBytes?: number
-  sha256?: string
-  previewDataUrl?: string
-  status?: 'ready' | 'missing'
+  attachmentId?: string;
+  fileName?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  sha256?: string;
+  previewDataUrl?: string;
+  status?: "ready" | "missing";
 }
 
 interface UserInputPayload {
-  text: string
-  images?: InputImageAttachment[]
+  text: string;
+  images?: InputImageAttachment[];
 }
 
 interface SaveImageAttachmentPayload {
-  dataBase64: string
-  fileName?: string
-  mimeType?: string
-  previewDataUrl?: string
+  dataBase64: string;
+  fileName?: string;
+  mimeType?: string;
+  previewDataUrl?: string;
 }
 
 interface McpToolSummary {
-  name: string
-  enabled: boolean
-  status: 'disabled' | 'connecting' | 'connected' | 'error'
-  error?: string
-  toolCount?: number
+  name: string;
+  enabled: boolean;
+  status: "disabled" | "connecting" | "connected" | "error";
+  error?: string;
+  toolCount?: number;
 }
 
 interface BuiltInToolSummary {
-  name: string
-  description?: string
-  enabled: boolean
+  name: string;
+  description?: string;
+  enabled: boolean;
 }
 
 interface SkillSummary {
-  name: string
-  description: string
-  fileName: string
-  filePath: string
-  baseDir: string
-  scanRoot: string
-  isNested: boolean
+  name: string;
+  description: string;
+  fileName: string;
+  filePath: string;
+  baseDir: string;
+  scanRoot: string;
+  isNested: boolean;
 }
 
 interface SkillStatusSummary {
-  name: string
-  description?: string
-  enabled: boolean
+  name: string;
+  description?: string;
+  enabled: boolean;
 }
 
 interface MemorySnapshot {
-  filePath: string
-  content: string
+  filePath: string;
+  content: string;
 }
 
 interface AccessTokenSummary {
-  id: string
-  name: string
-  createdAt: number
+  id: string;
+  name: string;
+  createdAt: number;
 }
 
 interface CreateAccessTokenResult extends AccessTokenSummary {
-  token: string
+  token: string;
 }
 
 interface TerminalColorScheme {
-  name: string
-  foreground: string
-  background: string
-  cursor: string
-  colors: string[]
-  selection?: string
-  selectionForeground?: string
-  cursorAccent?: string
+  name: string;
+  foreground: string;
+  background: string;
+  cursor: string;
+  colors: string[];
+  selection?: string;
+  selectionForeground?: string;
+  cursorAccent?: string;
 }
 
 interface VersionCheckResult {
-  status: 'up-to-date' | 'update-available' | 'error'
-  currentVersion: string
-  latestVersion?: string
-  downloadUrl: string
-  releaseNotes?: string
-  checkedAt: number
-  sourceUrl: string
-  warning?: string
+  status: "up-to-date" | "update-available" | "error";
+  currentVersion: string;
+  latestVersion?: string;
+  downloadUrl: string;
+  releaseNotes?: string;
+  checkedAt: number;
+  sourceUrl: string;
+  warning?: string;
+}
+
+interface HistoryMigrationState {
+  status: "idle" | "running" | "done" | "error";
+  ready: boolean;
+  active: boolean;
+  blocking: boolean;
+  detectedLegacy: boolean;
+  phase:
+    | "idle"
+    | "detecting"
+    | "reading"
+    | "migrating-backend"
+    | "migrating-ui"
+    | "finalizing"
+    | "done"
+    | "error";
+  title: string;
+  message: string;
+  completedUnits: number;
+  totalUnits: number;
+  percent: number;
+  error?: string;
 }
 
 interface TerminalSystemInfo {
-  os: string
-  platform: string
-  release: string
-  arch: string
-  hostname: string
-  isRemote: boolean
-  shell?: string
+  os: string;
+  platform: string;
+  release: string;
+  arch: string;
+  hostname: string;
+  isRemote: boolean;
+  shell?: string;
 }
 
 interface TerminalSummary {
-  id: string
-  title: string
-  type: ConnectionType
-  cols: number
-  rows: number
-  runtimeState?: 'initializing' | 'ready' | 'exited'
-  lastExitCode?: number
-  remoteOs?: 'unix' | 'windows'
-  systemInfo?: TerminalSystemInfo
+  id: string;
+  title: string;
+  type: ConnectionType;
+  cols: number;
+  rows: number;
+  runtimeState?: "initializing" | "ready" | "exited";
+  lastExitCode?: number;
+  remoteOs?: "unix" | "windows";
+  systemInfo?: TerminalSystemInfo;
 }
 
 // Connection Config Types
-export type ConnectionType = 'local' | 'ssh'
+export type ConnectionType = "local" | "ssh";
 
 export interface BaseConnectionConfig {
-  type: ConnectionType
-  id: string
+  type: ConnectionType;
+  id: string;
   /** Display name for UI/agent/system prompts (required, no legacy fallback) */
-  title: string
-  cols: number
-  rows: number
+  title: string;
+  cols: number;
+  rows: number;
 }
 
 export interface LocalConnectionConfig extends BaseConnectionConfig {
-  type: 'local'
-  cwd?: string
-  shell?: string
+  type: "local";
+  cwd?: string;
+  shell?: string;
 }
 
 export interface SSHConnectionConfig extends BaseConnectionConfig {
-  type: 'ssh'
-  host: string
-  port: number
-  username: string
-  authMethod: 'password' | 'privateKey'
-  password?: string
-  privateKey?: string
-  privateKeyPath?: string
-  passphrase?: string
-  proxy?: AppSettings['connections']['proxies'][number]
-  tunnels?: AppSettings['connections']['tunnels'][number][]
+  type: "ssh";
+  host: string;
+  port: number;
+  username: string;
+  authMethod: "password" | "privateKey";
+  password?: string;
+  privateKey?: string;
+  privateKeyPath?: string;
+  passphrase?: string;
+  proxy?: AppSettings["connections"]["proxies"][number];
+  tunnels?: AppSettings["connections"]["tunnels"][number][];
 }
 
-export type TerminalConfig = LocalConnectionConfig | SSHConnectionConfig
+export type TerminalConfig = LocalConnectionConfig | SSHConnectionConfig;
 
 export interface FileSystemEntry {
-  name: string
-  path: string
-  isDirectory: boolean
-  isSymbolicLink: boolean
-  size: number
-  mode?: string
-  modifiedAt?: string
+  name: string;
+  path: string;
+  isDirectory: boolean;
+  isSymbolicLink: boolean;
+  size: number;
+  mode?: string;
+  modifiedAt?: string;
 }
 
 export interface FileSystemListResult {
-  path: string
-  entries: FileSystemEntry[]
+  path: string;
+  entries: FileSystemEntry[];
 }
 
 export interface ReadTextFileResult {
-  path: string
-  content: string
-  size: number
-  encoding: 'utf8'
+  path: string;
+  content: string;
+  size: number;
+  encoding: "utf8";
 }
 
 export interface ReadBase64FileResult {
-  path: string
-  contentBase64: string
-  size: number
-  mimeType: string
+  path: string;
+  contentBase64: string;
+  size: number;
+  mimeType: string;
 }
 
 export interface GyShellAPI {
   system: {
-    platform: NodeJS.Platform
-    openExternal: (url: string) => Promise<void>
-    saveTempPaste: (content: string) => Promise<string>
-    saveImageAttachment: (payload: SaveImageAttachmentPayload) => Promise<InputImageAttachment>
-  }
+    platform: NodeJS.Platform;
+    openExternal: (url: string) => Promise<void>;
+    saveTempPaste: (content: string) => Promise<string>;
+    saveImageAttachment: (
+      payload: SaveImageAttachmentPayload,
+    ) => Promise<InputImageAttachment>;
+  };
   gateway: {
-    isSameMachine: () => Promise<{ sameMachine: boolean }>
-  }
+    isSameMachine: () => Promise<{ sameMachine: boolean }>;
+  };
+  historyMigration: {
+    getState: () => Promise<HistoryMigrationState>;
+    waitUntilSettled: () => Promise<HistoryMigrationState>;
+    onStateChanged: (
+      callback: (state: HistoryMigrationState) => void,
+    ) => () => void;
+  };
   windowing: {
-    openDetached: (detachedStateToken: string, sourceClientId: string) => Promise<{ ok: boolean }>
-    onMainWindowClosing: (callback: () => void) => () => void
-  }
+    openDetached: (
+      detachedStateToken: string,
+      sourceClientId: string,
+    ) => Promise<{ ok: boolean }>;
+    onMainWindowClosing: (callback: () => void) => () => void;
+  };
   // Settings
   settings: {
-    get: () => Promise<BackendSettings>
-    set: (settings: Partial<BackendSettings>) => Promise<void>
-    setWsGatewayAccess: (access: BackendSettings['gateway']['ws']['access']) => Promise<BackendSettings['gateway']['ws']>
-    setWsGatewayConfig: (ws: BackendSettings['gateway']['ws']) => Promise<BackendSettings['gateway']['ws']>
-    openCommandPolicyFile: () => Promise<void>
-    getCommandPolicyLists: () => Promise<CommandPolicyLists>
-    addCommandPolicyRule: (listName: 'allowlist' | 'denylist' | 'asklist', rule: string) => Promise<CommandPolicyLists>
-    deleteCommandPolicyRule: (listName: 'allowlist' | 'denylist' | 'asklist', rule: string) => Promise<CommandPolicyLists>
-  }
+    get: () => Promise<BackendSettings>;
+    set: (settings: Partial<BackendSettings>) => Promise<void>;
+    setWsGatewayAccess: (
+      access: BackendSettings["gateway"]["ws"]["access"],
+    ) => Promise<BackendSettings["gateway"]["ws"]>;
+    setWsGatewayConfig: (
+      ws: BackendSettings["gateway"]["ws"],
+    ) => Promise<BackendSettings["gateway"]["ws"]>;
+    openCommandPolicyFile: () => Promise<void>;
+    getCommandPolicyLists: () => Promise<CommandPolicyLists>;
+    addCommandPolicyRule: (
+      listName: "allowlist" | "denylist" | "asklist",
+      rule: string,
+    ) => Promise<CommandPolicyLists>;
+    deleteCommandPolicyRule: (
+      listName: "allowlist" | "denylist" | "asklist",
+      rule: string,
+    ) => Promise<CommandPolicyLists>;
+  };
 
   accessTokens: {
-    list: () => Promise<AccessTokenSummary[]>
-    create: (name: string) => Promise<CreateAccessTokenResult>
-    delete: (id: string) => Promise<boolean>
-  }
+    list: () => Promise<AccessTokenSummary[]>;
+    create: (name: string) => Promise<CreateAccessTokenResult>;
+    delete: (id: string) => Promise<boolean>;
+  };
 
   uiSettings: {
-    get: () => Promise<UiSettings>
-    set: (settings: Partial<UiSettings>) => Promise<void>
-  }
+    get: () => Promise<UiSettings>;
+    set: (settings: Partial<UiSettings>) => Promise<void>;
+  };
 
   // Terminal
   terminal: {
     list: () => Promise<{
-      terminals: TerminalSummary[]
-    }>
-    createTab: (config: TerminalConfig) => Promise<{ id: string }>
-    write: (terminalId: string, data: string) => Promise<void>
-    writePaths: (terminalId: string, paths: string[]) => Promise<void>
-    resize: (terminalId: string, cols: number, rows: number) => Promise<void>
-    kill: (terminalId: string) => Promise<void>
-    setSelection: (terminalId: string, selectionText: string) => Promise<void>
-    getBufferDelta: (terminalId: string, fromOffset: number) => Promise<{ data: string; offset: number }>
-    generateCommandDraft: (terminalId: string, prompt: string, profileId: string) => Promise<{ command: string }>
-    onData: (callback: (data: { terminalId: string; data: string; offset?: number }) => void) => () => void
-    onExit: (callback: (data: { terminalId: string; code: number }) => void) => () => void
+      terminals: TerminalSummary[];
+    }>;
+    createTab: (config: TerminalConfig) => Promise<{ id: string }>;
+    write: (terminalId: string, data: string) => Promise<void>;
+    writePaths: (terminalId: string, paths: string[]) => Promise<void>;
+    resize: (terminalId: string, cols: number, rows: number) => Promise<void>;
+    kill: (terminalId: string) => Promise<void>;
+    setSelection: (terminalId: string, selectionText: string) => Promise<void>;
+    getBufferDelta: (
+      terminalId: string,
+      fromOffset: number,
+    ) => Promise<{ data: string; offset: number }>;
+    generateCommandDraft: (
+      terminalId: string,
+      prompt: string,
+      profileId: string,
+    ) => Promise<{ command: string }>;
+    onData: (
+      callback: (data: {
+        terminalId: string;
+        data: string;
+        offset?: number;
+      }) => void,
+    ) => () => void;
+    onExit: (
+      callback: (data: { terminalId: string; code: number }) => void,
+    ) => () => void;
     onTabsUpdated: (
-      callback: (data: { terminals: TerminalSummary[] }) => void
-    ) => () => void
-    onRecoveryHint: (callback: (data: { reason: TerminalRecoveryReason }) => void) => () => void
-  }
+      callback: (data: { terminals: TerminalSummary[] }) => void,
+    ) => () => void;
+    onRecoveryHint: (
+      callback: (data: { reason: TerminalRecoveryReason }) => void,
+    ) => () => void;
+  };
 
   filesystem: {
-    list: (terminalId: string, dirPath?: string) => Promise<FileSystemListResult>
-    readTextFile: (terminalId: string, filePath: string, options?: { maxBytes?: number }) => Promise<ReadTextFileResult>
-    readFileBase64: (terminalId: string, filePath: string, options?: { maxBytes?: number }) => Promise<ReadBase64FileResult>
-    writeTextFile: (terminalId: string, filePath: string, content: string) => Promise<void>
+    list: (
+      terminalId: string,
+      dirPath?: string,
+    ) => Promise<FileSystemListResult>;
+    readTextFile: (
+      terminalId: string,
+      filePath: string,
+      options?: { maxBytes?: number },
+    ) => Promise<ReadTextFileResult>;
+    readFileBase64: (
+      terminalId: string,
+      filePath: string,
+      options?: { maxBytes?: number },
+    ) => Promise<ReadBase64FileResult>;
+    writeTextFile: (
+      terminalId: string,
+      filePath: string,
+      content: string,
+    ) => Promise<void>;
     writeFileBase64: (
       terminalId: string,
       filePath: string,
       contentBase64: string,
-      options?: { maxBytes?: number }
-    ) => Promise<void>
+      options?: { maxBytes?: number },
+    ) => Promise<void>;
     transferEntries: (
       sourceTerminalId: string,
       sourcePaths: string[],
       targetTerminalId: string,
       targetDirPath: string,
-      options?: { mode?: 'copy' | 'move'; transferId?: string; chunkSize?: number; overwrite?: boolean }
-    ) => Promise<{ mode: 'copy' | 'move'; totalBytes: number; transferredFiles: number; totalFiles: number }>
-    cancelTransfer: (transferId: string) => Promise<{ ok: boolean }>
-    createDirectory: (terminalId: string, dirPath: string) => Promise<void>
-    createFile: (terminalId: string, filePath: string) => Promise<void>
-    deletePath: (terminalId: string, targetPath: string, options?: { recursive?: boolean }) => Promise<void>
-    renamePath: (terminalId: string, sourcePath: string, targetPath: string) => Promise<void>
+      options?: {
+        mode?: "copy" | "move";
+        transferId?: string;
+        chunkSize?: number;
+        overwrite?: boolean;
+      },
+    ) => Promise<{
+      mode: "copy" | "move";
+      totalBytes: number;
+      transferredFiles: number;
+      totalFiles: number;
+    }>;
+    cancelTransfer: (transferId: string) => Promise<{ ok: boolean }>;
+    createDirectory: (terminalId: string, dirPath: string) => Promise<void>;
+    createFile: (terminalId: string, filePath: string) => Promise<void>;
+    deletePath: (
+      terminalId: string,
+      targetPath: string,
+      options?: { recursive?: boolean },
+    ) => Promise<void>;
+    renamePath: (
+      terminalId: string,
+      sourcePath: string,
+      targetPath: string,
+    ) => Promise<void>;
     onTransferProgress: (
       callback: (payload: {
-        transferId: string
-        mode: 'copy' | 'move'
-        sourceTerminalId: string
-        targetTerminalId: string
-        targetDirPath: string
-        sourcePaths: string[]
-        bytesTransferred: number
-        totalBytes: number
-        transferredFiles: number
-        totalFiles: number
-        eof: boolean
-      }) => void
-    ) => () => void
-  }
+        transferId: string;
+        mode: "copy" | "move";
+        sourceTerminalId: string;
+        targetTerminalId: string;
+        targetDirPath: string;
+        sourcePaths: string[];
+        bytesTransferred: number;
+        totalBytes: number;
+        transferredFiles: number;
+        totalFiles: number;
+        eof: boolean;
+      }) => void,
+    ) => () => void;
+  };
 
   // UI
   ui: {
-    showContextMenu: (payload: { id: string; canCopy: boolean; canPaste: boolean }) => Promise<void>
-    onContextMenuAction: (callback: (data: { id: string; action: 'copy' | 'paste' }) => void) => () => void
-  }
+    showContextMenu: (payload: {
+      id: string;
+      canCopy: boolean;
+      canPaste: boolean;
+    }) => Promise<void>;
+    onContextMenuAction: (
+      callback: (data: { id: string; action: "copy" | "paste" }) => void,
+    ) => () => void;
+  };
 
   // Agent
   agent: {
     startTask: (
       sessionId: string,
       userInput: string | UserInputPayload,
-      options?: { startMode?: 'normal' | 'inserted' }
-    ) => Promise<void>
-    stopTask: (sessionId: string) => Promise<void>
-    getAllChatHistory: () => Promise<any[]>
-    loadChatSession: (sessionId: string) => Promise<any>
-    getUiMessages: (sessionId: string) => Promise<any[]>
+      options?: { startMode?: "normal" | "inserted" },
+    ) => Promise<void>;
+    stopTask: (sessionId: string) => Promise<void>;
+    getAllChatHistory: () => Promise<any[]>;
+    loadChatSession: (sessionId: string) => Promise<any>;
+    getUiMessages: (sessionId: string) => Promise<any[]>;
     getSessionSnapshot: (sessionId: string) => Promise<{
-      id: string
-      title: string
-      updatedAt: number
-      messages: any[]
-      isBusy: boolean
-      lockedProfileId: string | null
-    } | null>
-    deleteChatSession: (sessionId: string) => Promise<void>
-    rollbackToMessage: (sessionId: string, messageId: string) => Promise<{ ok: boolean; removedCount: number }>
-    replyMessage: (messageId: string, payload: any) => Promise<{ ok: boolean }>
+      id: string;
+      title: string;
+      updatedAt: number;
+      messages: any[];
+      isBusy: boolean;
+      lockedProfileId: string | null;
+    } | null>;
+    deleteChatSession: (sessionId: string) => Promise<void>;
+    deleteChatSessions: (sessionIds: string[]) => Promise<void>;
+    rollbackToMessage: (
+      sessionId: string,
+      messageId: string,
+    ) => Promise<{ ok: boolean; removedCount: number }>;
+    replyMessage: (messageId: string, payload: any) => Promise<{ ok: boolean }>;
     onEvent: (
-      callback: (data: { sessionId: string; event: AgentEvent }) => void
-    ) => () => void
-    onUiUpdate: (
-      callback: (action: any) => void
-    ) => () => void
-    exportHistory: (sessionId: string, mode?: 'simple' | 'detailed') => Promise<void>
-    formatMessagesMarkdown: (sessionId: string, messageIds: string[]) => Promise<string>
-    renameSession: (sessionId: string, newTitle: string) => Promise<void>
-    replyCommandApproval: (approvalId: string, decision: 'allow' | 'deny') => Promise<void>
-  }
+      callback: (data: { sessionId: string; event: AgentEvent }) => void,
+    ) => () => void;
+    onUiUpdate: (callback: (action: any) => void) => () => void;
+    exportHistory: (
+      sessionId: string,
+      mode?: "simple" | "detailed",
+    ) => Promise<void>;
+    formatMessagesMarkdown: (
+      sessionId: string,
+      messageIds: string[],
+    ) => Promise<string>;
+    renameSession: (sessionId: string, newTitle: string) => Promise<void>;
+    replyCommandApproval: (
+      approvalId: string,
+      decision: "allow" | "deny",
+    ) => Promise<void>;
+  };
 
   // Models
   models: {
-    probe: (model: BackendSettings['models']['items'][number]) => Promise<{
-      imageInputs: boolean
-      textOutputs: boolean
-      supportsStructuredOutput: boolean
-      supportsObjectToolChoice: boolean
-      testedAt: number
-      ok: boolean
-      error?: string
-    }>
-  }
+    probe: (model: BackendSettings["models"]["items"][number]) => Promise<{
+      imageInputs: boolean;
+      textOutputs: boolean;
+      supportsStructuredOutput: boolean;
+      supportsObjectToolChoice: boolean;
+      testedAt: number;
+      ok: boolean;
+      error?: string;
+    }>;
+  };
 
   // Tools
   tools: {
-    openMcpConfig: () => Promise<void>
-    reloadMcp: () => Promise<McpToolSummary[]>
-    getMcp: () => Promise<McpToolSummary[]>
-    setMcpEnabled: (name: string, enabled: boolean) => Promise<McpToolSummary[]>
-    getBuiltIn: () => Promise<BuiltInToolSummary[]>
-    setBuiltInEnabled: (name: string, enabled: boolean) => Promise<BuiltInToolSummary[]>
-    onMcpUpdated: (callback: (data: McpToolSummary[]) => void) => () => void
-    onBuiltInUpdated: (callback: (data: BuiltInToolSummary[]) => void) => () => void
-  }
+    openMcpConfig: () => Promise<void>;
+    reloadMcp: () => Promise<McpToolSummary[]>;
+    getMcp: () => Promise<McpToolSummary[]>;
+    setMcpEnabled: (
+      name: string,
+      enabled: boolean,
+    ) => Promise<McpToolSummary[]>;
+    getBuiltIn: () => Promise<BuiltInToolSummary[]>;
+    setBuiltInEnabled: (
+      name: string,
+      enabled: boolean,
+    ) => Promise<BuiltInToolSummary[]>;
+    onMcpUpdated: (callback: (data: McpToolSummary[]) => void) => () => void;
+    onBuiltInUpdated: (
+      callback: (data: BuiltInToolSummary[]) => void,
+    ) => () => void;
+  };
 
   themes: {
-    openCustomConfig: () => Promise<void>
-    reloadCustom: () => Promise<TerminalColorScheme[]>
-    getCustom: () => Promise<TerminalColorScheme[]>
-  }
+    openCustomConfig: () => Promise<void>;
+    reloadCustom: () => Promise<TerminalColorScheme[]>;
+    getCustom: () => Promise<TerminalColorScheme[]>;
+  };
 
   skills: {
-    openFolder: () => Promise<void>
-    reload: () => Promise<SkillSummary[]>
-    getAll: () => Promise<SkillSummary[]>
-    getEnabled: () => Promise<SkillSummary[]>
-    create: () => Promise<SkillSummary>
-    openFile: (fileName: string) => Promise<void>
-    delete: (fileName: string) => Promise<SkillSummary[]>
-    setEnabled: (name: string, enabled: boolean) => Promise<SkillStatusSummary[]>
-    onUpdated: (callback: (data: SkillStatusSummary[]) => void) => () => void
-  }
+    openFolder: () => Promise<void>;
+    reload: () => Promise<SkillSummary[]>;
+    getAll: () => Promise<SkillSummary[]>;
+    getEnabled: () => Promise<SkillSummary[]>;
+    create: () => Promise<SkillSummary>;
+    openFile: (fileName: string) => Promise<void>;
+    delete: (fileName: string) => Promise<SkillSummary[]>;
+    setEnabled: (
+      name: string,
+      enabled: boolean,
+    ) => Promise<SkillStatusSummary[]>;
+    onUpdated: (callback: (data: SkillStatusSummary[]) => void) => () => void;
+  };
 
   memory: {
-    get: () => Promise<MemorySnapshot>
-    setContent: (content: string) => Promise<MemorySnapshot>
-    openFile: () => Promise<void>
-  }
+    get: () => Promise<MemorySnapshot>;
+    setContent: (content: string) => Promise<MemorySnapshot>;
+    openFile: () => Promise<void>;
+  };
 
   version: {
-    getState: () => Promise<VersionCheckResult>
-    check: () => Promise<VersionCheckResult>
-  }
+    getState: () => Promise<VersionCheckResult>;
+    check: () => Promise<VersionCheckResult>;
+  };
 
   mobileWeb: {
-    getStatus: () => Promise<{ running: boolean; port?: number; urls?: string[] }>
-    start: () => Promise<{ running: boolean; port?: number; urls?: string[] }>
-    stop: () => Promise<{ ok: boolean }>
-    setPort: (port: number | null) => Promise<{ ok: boolean }>
-  }
+    getStatus: () => Promise<{
+      running: boolean;
+      port?: number;
+      urls?: string[];
+    }>;
+    start: () => Promise<{ running: boolean; port?: number; urls?: string[] }>;
+    stop: () => Promise<{ ok: boolean }>;
+    setPort: (port: number | null) => Promise<{ ok: boolean }>;
+  };
 
   monitor: {
-    start: (terminalId: string, intervalMs?: number) => Promise<{ ok: boolean }>
-    stop: (terminalId: string) => Promise<{ ok: boolean }>
-    subscribe: (terminalId: string) => Promise<{ ok: boolean }>
-    unsubscribe: (terminalId: string) => Promise<{ ok: boolean }>
-    snapshot: (terminalId: string) => Promise<any>
-    isMonitoring: (terminalId: string) => Promise<{ monitoring: boolean }>
-    onSnapshot: (callback: (data: any) => void) => () => void
-  }
+    start: (
+      terminalId: string,
+      intervalMs?: number,
+    ) => Promise<{ ok: boolean }>;
+    stop: (terminalId: string) => Promise<{ ok: boolean }>;
+    subscribe: (terminalId: string) => Promise<{ ok: boolean }>;
+    unsubscribe: (terminalId: string) => Promise<{ ok: boolean }>;
+    snapshot: (terminalId: string) => Promise<any>;
+    isMonitoring: (terminalId: string) => Promise<{ monitoring: boolean }>;
+    onSnapshot: (callback: (data: any) => void) => () => void;
+  };
 
   windowControls: {
-    minimize: () => Promise<void>
-    maximize: () => Promise<void>
-    close: () => Promise<void>
-  }
+    minimize: () => Promise<void>;
+    maximize: () => Promise<void>;
+    close: () => Promise<void>;
+  };
 }
 
 const api: GyShellAPI = {
   system: {
     platform: process.platform,
-    openExternal: (url: string) => ipcRenderer.invoke('system:openExternal', url),
-    saveTempPaste: (content: string) => ipcRenderer.invoke('system:saveTempPaste', content),
-    saveImageAttachment: (payload: SaveImageAttachmentPayload) => ipcRenderer.invoke('system:saveImageAttachment', payload)
+    openExternal: (url: string) =>
+      ipcRenderer.invoke("system:openExternal", url),
+    saveTempPaste: (content: string) =>
+      ipcRenderer.invoke("system:saveTempPaste", content),
+    saveImageAttachment: (payload: SaveImageAttachmentPayload) =>
+      ipcRenderer.invoke("system:saveImageAttachment", payload),
   },
   gateway: {
-    isSameMachine: () => ipcRenderer.invoke('gateway:isSameMachine')
+    isSameMachine: () => ipcRenderer.invoke("gateway:isSameMachine"),
+  },
+  historyMigration: {
+    getState: () => ipcRenderer.invoke("historyMigration:getState"),
+    waitUntilSettled: () =>
+      ipcRenderer.invoke("historyMigration:waitUntilSettled"),
+    onStateChanged: (callback) => {
+      const handler = (_: IpcRendererEvent, state: HistoryMigrationState) =>
+        callback(state);
+      ipcRenderer.on("historyMigration:state", handler);
+      return () => ipcRenderer.off("historyMigration:state", handler);
+    },
   },
   windowing: {
     openDetached: (detachedStateToken, sourceClientId) =>
-      ipcRenderer.invoke('windowing:openDetached', detachedStateToken, sourceClientId),
+      ipcRenderer.invoke(
+        "windowing:openDetached",
+        detachedStateToken,
+        sourceClientId,
+      ),
     onMainWindowClosing: (callback) => {
-      const handler = () => callback()
-      ipcRenderer.on('windowing:mainWindowClosing', handler)
-      return () => ipcRenderer.off('windowing:mainWindowClosing', handler)
-    }
+      const handler = () => callback();
+      ipcRenderer.on("windowing:mainWindowClosing", handler);
+      return () => ipcRenderer.off("windowing:mainWindowClosing", handler);
+    },
   },
   windowControls: {
-    minimize: () => ipcRenderer.invoke('window:minimize'),
-    maximize: () => ipcRenderer.invoke('window:maximize'),
-    close: () => ipcRenderer.invoke('window:close'),
+    minimize: () => ipcRenderer.invoke("window:minimize"),
+    maximize: () => ipcRenderer.invoke("window:maximize"),
+    close: () => ipcRenderer.invoke("window:close"),
   },
   settings: {
-    get: () => ipcRenderer.invoke('settings:get'),
-    set: (settings) => ipcRenderer.invoke('settings:set', settings),
-    setWsGatewayAccess: (access) => ipcRenderer.invoke('settings:setWsGatewayAccess', access),
-    setWsGatewayConfig: (ws) => ipcRenderer.invoke('settings:setWsGatewayConfig', ws),
-    openCommandPolicyFile: () => ipcRenderer.invoke('settings:openCommandPolicyFile'),
-    getCommandPolicyLists: () => ipcRenderer.invoke('settings:getCommandPolicyLists'),
-    addCommandPolicyRule: (listName, rule) => ipcRenderer.invoke('settings:addCommandPolicyRule', listName, rule),
-    deleteCommandPolicyRule: (listName, rule) => ipcRenderer.invoke('settings:deleteCommandPolicyRule', listName, rule)
+    get: () => ipcRenderer.invoke("settings:get"),
+    set: (settings) => ipcRenderer.invoke("settings:set", settings),
+    setWsGatewayAccess: (access) =>
+      ipcRenderer.invoke("settings:setWsGatewayAccess", access),
+    setWsGatewayConfig: (ws) =>
+      ipcRenderer.invoke("settings:setWsGatewayConfig", ws),
+    openCommandPolicyFile: () =>
+      ipcRenderer.invoke("settings:openCommandPolicyFile"),
+    getCommandPolicyLists: () =>
+      ipcRenderer.invoke("settings:getCommandPolicyLists"),
+    addCommandPolicyRule: (listName, rule) =>
+      ipcRenderer.invoke("settings:addCommandPolicyRule", listName, rule),
+    deleteCommandPolicyRule: (listName, rule) =>
+      ipcRenderer.invoke("settings:deleteCommandPolicyRule", listName, rule),
   },
   accessTokens: {
-    list: () => ipcRenderer.invoke('access-tokens:list'),
-    create: (name: string) => ipcRenderer.invoke('access-tokens:create', name),
-    delete: (id: string) => ipcRenderer.invoke('access-tokens:delete', id)
+    list: () => ipcRenderer.invoke("access-tokens:list"),
+    create: (name: string) => ipcRenderer.invoke("access-tokens:create", name),
+    delete: (id: string) => ipcRenderer.invoke("access-tokens:delete", id),
   },
   uiSettings: {
-    get: () => ipcRenderer.invoke('ui-settings:get'),
-    set: (settings) => ipcRenderer.invoke('ui-settings:set', settings)
+    get: () => ipcRenderer.invoke("ui-settings:get"),
+    set: (settings) => ipcRenderer.invoke("ui-settings:set", settings),
   },
 
   terminal: {
-    list: () => ipcRenderer.invoke('terminal:list'),
-    createTab: (config) => ipcRenderer.invoke('terminal:createTab', config),
-    write: (terminalId, data) => ipcRenderer.invoke('terminal:write', terminalId, data),
-    writePaths: (terminalId, paths) => ipcRenderer.invoke('terminal:writePaths', terminalId, paths),
+    list: () => ipcRenderer.invoke("terminal:list"),
+    createTab: (config) => ipcRenderer.invoke("terminal:createTab", config),
+    write: (terminalId, data) =>
+      ipcRenderer.invoke("terminal:write", terminalId, data),
+    writePaths: (terminalId, paths) =>
+      ipcRenderer.invoke("terminal:writePaths", terminalId, paths),
     resize: (terminalId, cols, rows) =>
-      ipcRenderer.invoke('terminal:resize', terminalId, cols, rows),
-    kill: (terminalId) => ipcRenderer.invoke('terminal:kill', terminalId),
+      ipcRenderer.invoke("terminal:resize", terminalId, cols, rows),
+    kill: (terminalId) => ipcRenderer.invoke("terminal:kill", terminalId),
     setSelection: (terminalId, selectionText) =>
-      ipcRenderer.invoke('terminal:setSelection', terminalId, selectionText),
+      ipcRenderer.invoke("terminal:setSelection", terminalId, selectionText),
     getBufferDelta: (terminalId, fromOffset) =>
-      ipcRenderer.invoke('terminal:getBufferDelta', terminalId, fromOffset),
+      ipcRenderer.invoke("terminal:getBufferDelta", terminalId, fromOffset),
     generateCommandDraft: (terminalId, prompt, profileId) =>
-      ipcRenderer.invoke('terminal:generateCommandDraft', terminalId, prompt, profileId),
+      ipcRenderer.invoke(
+        "terminal:generateCommandDraft",
+        terminalId,
+        prompt,
+        profileId,
+      ),
     onData: (callback) => {
-      const handler = (_: IpcRendererEvent, data: { terminalId: string; data: string; offset?: number }) =>
-        callback(data)
-      ipcRenderer.on('terminal:data', handler)
-      return () => ipcRenderer.off('terminal:data', handler)
+      const handler = (
+        _: IpcRendererEvent,
+        data: { terminalId: string; data: string; offset?: number },
+      ) => callback(data);
+      ipcRenderer.on("terminal:data", handler);
+      return () => ipcRenderer.off("terminal:data", handler);
     },
     onExit: (callback) => {
-      const handler = (_: IpcRendererEvent, data: { terminalId: string; code: number }) =>
-        callback(data)
-      ipcRenderer.on('terminal:exit', handler)
-      return () => ipcRenderer.off('terminal:exit', handler)
+      const handler = (
+        _: IpcRendererEvent,
+        data: { terminalId: string; code: number },
+      ) => callback(data);
+      ipcRenderer.on("terminal:exit", handler);
+      return () => ipcRenderer.off("terminal:exit", handler);
     },
     onTabsUpdated: (callback) => {
       const handler = (
         _: IpcRendererEvent,
-        data: { terminals: TerminalSummary[] }
-      ) => callback(data)
-      ipcRenderer.on('terminal:tabs', handler)
-      return () => ipcRenderer.off('terminal:tabs', handler)
+        data: { terminals: TerminalSummary[] },
+      ) => callback(data);
+      ipcRenderer.on("terminal:tabs", handler);
+      return () => ipcRenderer.off("terminal:tabs", handler);
     },
     onRecoveryHint: (callback) => {
-      const handler = (_: IpcRendererEvent, data: { reason: TerminalRecoveryReason }) => callback(data)
-      ipcRenderer.on('terminal:recoveryHint', handler)
-      return () => ipcRenderer.off('terminal:recoveryHint', handler)
-    }
+      const handler = (
+        _: IpcRendererEvent,
+        data: { reason: TerminalRecoveryReason },
+      ) => callback(data);
+      ipcRenderer.on("terminal:recoveryHint", handler);
+      return () => ipcRenderer.off("terminal:recoveryHint", handler);
+    },
   },
 
   filesystem: {
-    list: (terminalId, dirPath) => ipcRenderer.invoke('filesystem:list', terminalId, dirPath),
+    list: (terminalId, dirPath) =>
+      ipcRenderer.invoke("filesystem:list", terminalId, dirPath),
     readTextFile: (terminalId, filePath, options) =>
-      ipcRenderer.invoke('filesystem:readTextFile', terminalId, filePath, options),
-    readFileBase64: (terminalId, filePath, options) =>
-      ipcRenderer.invoke('filesystem:readFileBase64', terminalId, filePath, options),
-    writeTextFile: (terminalId, filePath, content) =>
-      ipcRenderer.invoke('filesystem:writeTextFile', terminalId, filePath, content),
-    writeFileBase64: (terminalId, filePath, contentBase64, options) =>
-      ipcRenderer.invoke('filesystem:writeFileBase64', terminalId, filePath, contentBase64, options),
-    transferEntries: (sourceTerminalId, sourcePaths, targetTerminalId, targetDirPath, options) =>
       ipcRenderer.invoke(
-        'filesystem:transferEntries',
+        "filesystem:readTextFile",
+        terminalId,
+        filePath,
+        options,
+      ),
+    readFileBase64: (terminalId, filePath, options) =>
+      ipcRenderer.invoke(
+        "filesystem:readFileBase64",
+        terminalId,
+        filePath,
+        options,
+      ),
+    writeTextFile: (terminalId, filePath, content) =>
+      ipcRenderer.invoke(
+        "filesystem:writeTextFile",
+        terminalId,
+        filePath,
+        content,
+      ),
+    writeFileBase64: (terminalId, filePath, contentBase64, options) =>
+      ipcRenderer.invoke(
+        "filesystem:writeFileBase64",
+        terminalId,
+        filePath,
+        contentBase64,
+        options,
+      ),
+    transferEntries: (
+      sourceTerminalId,
+      sourcePaths,
+      targetTerminalId,
+      targetDirPath,
+      options,
+    ) =>
+      ipcRenderer.invoke(
+        "filesystem:transferEntries",
         sourceTerminalId,
         sourcePaths,
         targetTerminalId,
         targetDirPath,
-        options
+        options,
       ),
-    cancelTransfer: (transferId) => ipcRenderer.invoke('filesystem:cancelTransfer', transferId),
+    cancelTransfer: (transferId) =>
+      ipcRenderer.invoke("filesystem:cancelTransfer", transferId),
     createDirectory: (terminalId, dirPath) =>
-      ipcRenderer.invoke('filesystem:createDirectory', terminalId, dirPath),
+      ipcRenderer.invoke("filesystem:createDirectory", terminalId, dirPath),
     createFile: (terminalId, filePath) =>
-      ipcRenderer.invoke('filesystem:createFile', terminalId, filePath),
+      ipcRenderer.invoke("filesystem:createFile", terminalId, filePath),
     deletePath: (terminalId, targetPath, options) =>
-      ipcRenderer.invoke('filesystem:deletePath', terminalId, targetPath, options),
+      ipcRenderer.invoke(
+        "filesystem:deletePath",
+        terminalId,
+        targetPath,
+        options,
+      ),
     renamePath: (terminalId, sourcePath, targetPath) =>
-      ipcRenderer.invoke('filesystem:renamePath', terminalId, sourcePath, targetPath),
+      ipcRenderer.invoke(
+        "filesystem:renamePath",
+        terminalId,
+        sourcePath,
+        targetPath,
+      ),
     onTransferProgress: (callback) => {
-      const handler = (_: IpcRendererEvent, payload: {
-        transferId: string
-        mode: 'copy' | 'move'
-        sourceTerminalId: string
-        targetTerminalId: string
-        targetDirPath: string
-        sourcePaths: string[]
-        bytesTransferred: number
-        totalBytes: number
-        transferredFiles: number
-        totalFiles: number
-        eof: boolean
-      }) => callback(payload)
-      ipcRenderer.on('filesystem:transferProgress', handler)
-      return () => ipcRenderer.off('filesystem:transferProgress', handler)
-    }
+      const handler = (
+        _: IpcRendererEvent,
+        payload: {
+          transferId: string;
+          mode: "copy" | "move";
+          sourceTerminalId: string;
+          targetTerminalId: string;
+          targetDirPath: string;
+          sourcePaths: string[];
+          bytesTransferred: number;
+          totalBytes: number;
+          transferredFiles: number;
+          totalFiles: number;
+          eof: boolean;
+        },
+      ) => callback(payload);
+      ipcRenderer.on("filesystem:transferProgress", handler);
+      return () => ipcRenderer.off("filesystem:transferProgress", handler);
+    },
   },
 
   monitor: {
     start: (terminalId: string, intervalMs?: number) =>
-      ipcRenderer.invoke('monitor:start', terminalId, intervalMs),
+      ipcRenderer.invoke("monitor:start", terminalId, intervalMs),
     stop: (terminalId: string) =>
-      ipcRenderer.invoke('monitor:stop', terminalId),
+      ipcRenderer.invoke("monitor:stop", terminalId),
     subscribe: (terminalId: string) =>
-      ipcRenderer.invoke('monitor:subscribe', terminalId),
+      ipcRenderer.invoke("monitor:subscribe", terminalId),
     unsubscribe: (terminalId: string) =>
-      ipcRenderer.invoke('monitor:unsubscribe', terminalId),
+      ipcRenderer.invoke("monitor:unsubscribe", terminalId),
     snapshot: (terminalId: string) =>
-      ipcRenderer.invoke('monitor:snapshot', terminalId),
+      ipcRenderer.invoke("monitor:snapshot", terminalId),
     isMonitoring: (terminalId: string) =>
-      ipcRenderer.invoke('monitor:isMonitoring', terminalId) as Promise<{ monitoring: boolean }>,
+      ipcRenderer.invoke("monitor:isMonitoring", terminalId) as Promise<{
+        monitoring: boolean;
+      }>,
     onSnapshot: (callback: (data: any) => void) => {
-      const handler = (_: IpcRendererEvent, data: any) => callback(data)
-      ipcRenderer.on('monitor:snapshot', handler)
-      return () => ipcRenderer.off('monitor:snapshot', handler)
-    }
+      const handler = (_: IpcRendererEvent, data: any) => callback(data);
+      ipcRenderer.on("monitor:snapshot", handler);
+      return () => ipcRenderer.off("monitor:snapshot", handler);
+    },
   },
 
   ui: {
-    showContextMenu: (payload) => ipcRenderer.invoke('ui:showContextMenu', payload),
+    showContextMenu: (payload) =>
+      ipcRenderer.invoke("ui:showContextMenu", payload),
     onContextMenuAction: (callback) => {
-      const handler = (_: IpcRendererEvent, data: { id: string; action: 'copy' | 'paste' }) =>
-        callback(data)
-      ipcRenderer.on('ui:contextMenuAction', handler)
-      return () => ipcRenderer.off('ui:contextMenuAction', handler)
-    }
+      const handler = (
+        _: IpcRendererEvent,
+        data: { id: string; action: "copy" | "paste" },
+      ) => callback(data);
+      ipcRenderer.on("ui:contextMenuAction", handler);
+      return () => ipcRenderer.off("ui:contextMenuAction", handler);
+    },
   },
 
   agent: {
     startTask: (sessionId, userInput, options) =>
-      ipcRenderer.invoke('agent:startTask', sessionId, userInput, options),
-    stopTask: (sessionId) => ipcRenderer.invoke('agent:stopTask', sessionId),
-    getAllChatHistory: () => ipcRenderer.invoke('agent:getAllChatHistory'),
-    loadChatSession: (sessionId) => ipcRenderer.invoke('agent:loadChatSession', sessionId),
-    getUiMessages: (sessionId) => ipcRenderer.invoke('agent:getUiMessages', sessionId),
+      ipcRenderer.invoke("agent:startTask", sessionId, userInput, options),
+    stopTask: (sessionId) => ipcRenderer.invoke("agent:stopTask", sessionId),
+    getAllChatHistory: () => ipcRenderer.invoke("agent:getAllChatHistory"),
+    loadChatSession: (sessionId) =>
+      ipcRenderer.invoke("agent:loadChatSession", sessionId),
+    getUiMessages: (sessionId) =>
+      ipcRenderer.invoke("agent:getUiMessages", sessionId),
     getSessionSnapshot: async (sessionId) => {
-      const payload = await ipcRenderer.invoke('session:get', sessionId)
-      return payload?.session ?? null
+      const payload = await ipcRenderer.invoke("session:get", sessionId);
+      return payload?.session ?? null;
     },
-    deleteChatSession: (sessionId) => ipcRenderer.invoke('agent:deleteChatSession', sessionId),
+    deleteChatSession: (sessionId) =>
+      ipcRenderer.invoke("agent:deleteChatSession", sessionId),
+    deleteChatSessions: (sessionIds) =>
+      ipcRenderer.invoke("agent:deleteChatSessions", sessionIds),
     rollbackToMessage: (sessionId, messageId) =>
-      ipcRenderer.invoke('agent:rollbackToMessage', sessionId, messageId),
+      ipcRenderer.invoke("agent:rollbackToMessage", sessionId, messageId),
     replyMessage: (messageId, payload) =>
-      ipcRenderer.invoke('agent:replyMessage', messageId, payload),
+      ipcRenderer.invoke("agent:replyMessage", messageId, payload),
     onEvent: (callback) => {
       const handler = (
         _: IpcRendererEvent,
-        data: { sessionId: string; event: AgentEvent }
-      ) => callback(data)
-      ipcRenderer.on('agent:event', handler)
-      return () => ipcRenderer.off('agent:event', handler)
+        data: { sessionId: string; event: AgentEvent },
+      ) => callback(data);
+      ipcRenderer.on("agent:event", handler);
+      return () => ipcRenderer.off("agent:event", handler);
     },
     onUiUpdate: (callback) => {
-      const handler = (_: IpcRendererEvent, action: any) => callback(action)
-      ipcRenderer.on('agent:ui-update', handler)
-      return () => ipcRenderer.off('agent:ui-update', handler)
+      const handler = (_: IpcRendererEvent, action: any) => callback(action);
+      ipcRenderer.on("agent:ui-update", handler);
+      return () => ipcRenderer.off("agent:ui-update", handler);
     },
-    exportHistory: (sessionId, mode) => ipcRenderer.invoke('agent:exportHistory', sessionId, mode),
+    exportHistory: (sessionId, mode) =>
+      ipcRenderer.invoke("agent:exportHistory", sessionId, mode),
     formatMessagesMarkdown: (sessionId, messageIds) =>
-      ipcRenderer.invoke('agent:formatMessagesMarkdown', sessionId, messageIds),
-    renameSession: (sessionId, newTitle) => ipcRenderer.invoke('agent:renameSession', sessionId, newTitle),
+      ipcRenderer.invoke("agent:formatMessagesMarkdown", sessionId, messageIds),
+    renameSession: (sessionId, newTitle) =>
+      ipcRenderer.invoke("agent:renameSession", sessionId, newTitle),
     replyCommandApproval: (approvalId, decision) =>
-      ipcRenderer.invoke('agent:replyCommandApproval', approvalId, decision)
+      ipcRenderer.invoke("agent:replyCommandApproval", approvalId, decision),
   },
   models: {
-    probe: (model) => ipcRenderer.invoke('models:probe', model)
+    probe: (model) => ipcRenderer.invoke("models:probe", model),
   },
   tools: {
-    openMcpConfig: () => ipcRenderer.invoke('tools:openMcpConfig'),
-    reloadMcp: () => ipcRenderer.invoke('tools:reloadMcp'),
-    getMcp: () => ipcRenderer.invoke('tools:getMcp'),
-    setMcpEnabled: (name, enabled) => ipcRenderer.invoke('tools:setMcpEnabled', name, enabled),
-    getBuiltIn: () => ipcRenderer.invoke('tools:getBuiltIn'),
-    setBuiltInEnabled: (name, enabled) => ipcRenderer.invoke('tools:setBuiltInEnabled', name, enabled),
+    openMcpConfig: () => ipcRenderer.invoke("tools:openMcpConfig"),
+    reloadMcp: () => ipcRenderer.invoke("tools:reloadMcp"),
+    getMcp: () => ipcRenderer.invoke("tools:getMcp"),
+    setMcpEnabled: (name, enabled) =>
+      ipcRenderer.invoke("tools:setMcpEnabled", name, enabled),
+    getBuiltIn: () => ipcRenderer.invoke("tools:getBuiltIn"),
+    setBuiltInEnabled: (name, enabled) =>
+      ipcRenderer.invoke("tools:setBuiltInEnabled", name, enabled),
     onMcpUpdated: (callback) => {
-      const handler = (_: IpcRendererEvent, data: McpToolSummary[]) => callback(data)
-      ipcRenderer.on('tools:mcpUpdated', handler)
-      return () => ipcRenderer.off('tools:mcpUpdated', handler)
+      const handler = (_: IpcRendererEvent, data: McpToolSummary[]) =>
+        callback(data);
+      ipcRenderer.on("tools:mcpUpdated", handler);
+      return () => ipcRenderer.off("tools:mcpUpdated", handler);
     },
     onBuiltInUpdated: (callback) => {
-      const handler = (_: IpcRendererEvent, data: BuiltInToolSummary[]) => callback(data)
-      ipcRenderer.on('tools:builtInUpdated', handler)
-      return () => ipcRenderer.off('tools:builtInUpdated', handler)
-    }
+      const handler = (_: IpcRendererEvent, data: BuiltInToolSummary[]) =>
+        callback(data);
+      ipcRenderer.on("tools:builtInUpdated", handler);
+      return () => ipcRenderer.off("tools:builtInUpdated", handler);
+    },
   },
   themes: {
-    openCustomConfig: () => ipcRenderer.invoke('themes:openCustomConfig'),
-    reloadCustom: () => ipcRenderer.invoke('themes:reloadCustom'),
-    getCustom: () => ipcRenderer.invoke('themes:getCustom')
+    openCustomConfig: () => ipcRenderer.invoke("themes:openCustomConfig"),
+    reloadCustom: () => ipcRenderer.invoke("themes:reloadCustom"),
+    getCustom: () => ipcRenderer.invoke("themes:getCustom"),
   },
   skills: {
-    openFolder: () => ipcRenderer.invoke('skills:openFolder'),
-    reload: () => ipcRenderer.invoke('skills:reload'),
-    getAll: () => ipcRenderer.invoke('skills:getAll'),
-    getEnabled: () => ipcRenderer.invoke('skills:getEnabled'),
-    create: () => ipcRenderer.invoke('skills:create'),
-    openFile: (fileName) => ipcRenderer.invoke('skills:openFile', fileName),
-    delete: (fileName) => ipcRenderer.invoke('skills:delete', fileName),
-    setEnabled: (name: string, enabled: boolean) => ipcRenderer.invoke('skills:setEnabled', name, enabled),
+    openFolder: () => ipcRenderer.invoke("skills:openFolder"),
+    reload: () => ipcRenderer.invoke("skills:reload"),
+    getAll: () => ipcRenderer.invoke("skills:getAll"),
+    getEnabled: () => ipcRenderer.invoke("skills:getEnabled"),
+    create: () => ipcRenderer.invoke("skills:create"),
+    openFile: (fileName) => ipcRenderer.invoke("skills:openFile", fileName),
+    delete: (fileName) => ipcRenderer.invoke("skills:delete", fileName),
+    setEnabled: (name: string, enabled: boolean) =>
+      ipcRenderer.invoke("skills:setEnabled", name, enabled),
     onUpdated: (callback: (data: SkillStatusSummary[]) => void) => {
-      const handler = (_: IpcRendererEvent, data: SkillStatusSummary[]) => callback(data)
-      ipcRenderer.on('skills:updated', handler)
-      return () => ipcRenderer.off('skills:updated', handler)
-    }
+      const handler = (_: IpcRendererEvent, data: SkillStatusSummary[]) =>
+        callback(data);
+      ipcRenderer.on("skills:updated", handler);
+      return () => ipcRenderer.off("skills:updated", handler);
+    },
   },
   memory: {
-    get: () => ipcRenderer.invoke('memory:get'),
-    setContent: (content: string) => ipcRenderer.invoke('memory:setContent', content),
-    openFile: () => ipcRenderer.invoke('memory:openFile')
+    get: () => ipcRenderer.invoke("memory:get"),
+    setContent: (content: string) =>
+      ipcRenderer.invoke("memory:setContent", content),
+    openFile: () => ipcRenderer.invoke("memory:openFile"),
   },
   version: {
-    getState: () => ipcRenderer.invoke('version:getState'),
-    check: () => ipcRenderer.invoke('version:check')
+    getState: () => ipcRenderer.invoke("version:getState"),
+    check: () => ipcRenderer.invoke("version:check"),
   },
   mobileWeb: {
-    getStatus: () => ipcRenderer.invoke('mobileWeb:getStatus'),
-    start: () => ipcRenderer.invoke('mobileWeb:start'),
-    stop: () => ipcRenderer.invoke('mobileWeb:stop'),
-    setPort: (port) => ipcRenderer.invoke('mobileWeb:setPort', port),
+    getStatus: () => ipcRenderer.invoke("mobileWeb:getStatus"),
+    start: () => ipcRenderer.invoke("mobileWeb:start"),
+    stop: () => ipcRenderer.invoke("mobileWeb:stop"),
+    setPort: (port) => ipcRenderer.invoke("mobileWeb:setPort", port),
   },
-}
+};
 
-contextBridge.exposeInMainWorld('gyshell', api)
+contextBridge.exposeInMainWorld("gyshell", api);
