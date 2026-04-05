@@ -226,7 +226,6 @@ const run = async (): Promise<void> => {
     // Use /bin/sh on unix, powershell on win — the standard invocation reads from stdin with "cat" / "-Command -"
     const isWin = os.platform() === 'win32'
     const command = isWin ? '-' : 'cat'
-    const shell = isWin ? 'powershell.exe' : '/bin/sh'
     // Build a minimal stdin payload that produces deterministic output
     const payload = isWin ? "Write-Output 'STDIN_OK'\r\n" : 'echo STDIN_OK\n'
 

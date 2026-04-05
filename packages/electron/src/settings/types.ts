@@ -35,4 +35,5 @@ export interface UiSettings {
   panelTabs: PanelTabsUiSettings
   commandDraft: CommandDraftUiSettings
   chat: ChatUiSettings
+  monitorEnabledSources?: string[]
 }

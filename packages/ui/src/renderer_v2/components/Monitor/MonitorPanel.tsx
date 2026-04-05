@@ -8,6 +8,7 @@ import {
   Network,
   AlertTriangle,
   Gauge,
+  Pause,
 } from 'lucide-react'
 import { observer } from 'mobx-react-lite'
 import type { AppStore, TerminalTabModel } from '../../stores/AppStore'
@@ -1503,6 +1504,24 @@ const MonitorTabView: React.FC<{
   )
 })
 
+const MonitorToggle: React.FC<{
+  enabled: boolean
+  onToggle: () => void
+}> = ({ enabled, onToggle }) => (
+  <label
+    className="switch monitor-polling-toggle"
+    title={enabled ? 'Pause monitoring' : 'Resume monitoring'}
+    onClick={(e) => e.stopPropagation()}
+  >
+    <input
+      type="checkbox"
+      checked={enabled}
+      onChange={onToggle}
+    />
+    <span className="switch-slider" />
+  </label>
+)
+
 export const MonitorPanel: React.FC<MonitorPanelProps> = observer(({
   store,
   panelId,
@@ -1525,6 +1544,13 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = observer(({
 
   const activeTerminalId =
     activeTabId && tabs.some((tab) => tab.id === activeTabId) ? activeTabId : tabs[0]?.id ?? null
+
+  const monitorEnabled = activeTerminalId ? store.isMonitorSourceEnabled(activeTerminalId) : false
+  const handleToggleMonitor = React.useCallback(() => {
+    if (activeTerminalId) {
+      store.setMonitorEnabled(activeTerminalId, !monitorEnabled)
+    }
+  }, [activeTerminalId, monitorEnabled, store])
 
   React.useEffect(() => {
     if (tabs.length > 0 && !activeTabId) {
@@ -1667,18 +1693,26 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = observer(({
             })}
           </div>
         )}
+        <MonitorToggle enabled={monitorEnabled} onToggle={handleToggleMonitor} />
       </div>
       <div className="panel-body monitor-panel-body" ref={panelBodyRef}>
         {activeTab && (
-          <MonitorTabView
-            key={activeTab.id}
-            store={store}
-            terminalId={activeTab.id}
-            terminalTitle={activeTab.title}
-            runtimeState={activeTab.runtimeState}
-            availableWidth={panelBodySize.width}
-            availableHeight={panelBodySize.height}
-          />
+          monitorEnabled ? (
+            <MonitorTabView
+              key={activeTab.id}
+              store={store}
+              terminalId={activeTab.id}
+              terminalTitle={activeTab.title}
+              runtimeState={activeTab.runtimeState}
+              availableWidth={panelBodySize.width}
+              availableHeight={panelBodySize.height}
+            />
+          ) : (
+            <div className="monitor-paused-state">
+              <Pause size={16} />
+              <span>Monitoring paused</span>
+            </div>
+          )
         )}
       </div>
     </div>

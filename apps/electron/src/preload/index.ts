@@ -135,6 +135,7 @@ interface UiSettings {
   chat: {
     displayMode: "classic" | "seamless";
   };
+  monitorEnabledSources?: string[];
 }
 
 type TerminalRecoveryReason =
@@ -330,6 +331,7 @@ interface TerminalSummary {
   lastExitCode?: number;
   remoteOs?: "unix" | "windows";
   systemInfo?: TerminalSystemInfo;
+  monitorIdentity?: string;
 }
 
 // Connection Config Types

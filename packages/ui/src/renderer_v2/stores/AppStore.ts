@@ -70,6 +70,34 @@ const removeById = <T extends { id: string }>(list: T[], id: string): T[] =>
 type WindowScopedTabKind = "chat" | "terminal" | "filesystem" | "monitor";
 const MONITOR_HISTORY_LIMIT = 64;
 const MONITOR_POLL_INTERVAL_MS = 3500;
+const LOCAL_MONITOR_SOURCE_KEY = "local://default";
+
+const normalizeMonitorIdentityPart = (value: unknown): string =>
+  String(value || "")
+    .trim()
+    .toLowerCase();
+
+const deriveMonitorIdentityFromConfig = (
+  config: Pick<TerminalConfig, "type"> | TerminalConfig,
+): string | null => {
+  if (config.type === "local") {
+    return LOCAL_MONITOR_SOURCE_KEY;
+  }
+  if (config.type !== "ssh") {
+    return null;
+  }
+
+  const host = normalizeMonitorIdentityPart((config as any).host);
+  if (!host) {
+    return null;
+  }
+
+  const rawPort = Number((config as any).port);
+  const port =
+    Number.isFinite(rawPort) && rawPort > 0 ? Math.floor(rawPort) : 22;
+  const username = normalizeMonitorIdentityPart((config as any).username);
+  return `ssh://${username}@${host}:${port}`;
+};
 
 const resolveSuppressionKinds = (kind: PanelKind): WindowScopedTabKind[] =>
   kind === "chat"
@@ -132,6 +160,7 @@ export interface TerminalTabModel {
   lastExitCode?: number;
   remoteOs?: TerminalListEntry["remoteOs"];
   systemInfo?: TerminalListEntry["systemInfo"];
+  monitorIdentity?: string;
 }
 type TerminalListPayload = Awaited<
   ReturnType<Window["gyshell"]["terminal"]["list"]>
@@ -222,6 +251,7 @@ export class AppStore {
   terminalTabsHydrated = false;
   activeTerminalId: string | null = null;
   monitorStateByTerminalId: Record<string, MonitorTerminalState> = {};
+  monitorEnabledSources: string[] = [];
   terminalSelections: Record<string, string> = {};
   fileSystemClipboard: FileSystemClipboardState | null = null;
 
@@ -277,6 +307,7 @@ export class AppStore {
       terminalTabsHydrated: observable,
       activeTerminalId: observable,
       monitorStateByTerminalId: observable,
+      monitorEnabledSources: observable,
       terminalSelections: observable,
       fileSystemClipboard: observable.ref,
       xtermTheme: observable,
@@ -394,6 +425,7 @@ export class AppStore {
       closeVersionUpdateDialog: action,
       openVersionDownload: action,
       reconcileTerminalTabs: action,
+      setMonitorEnabled: action,
     });
     this.chat.setQueueRunner((sessionId, input) =>
       this.sendChatMessage(sessionId, input, { mode: "queue" }),
@@ -408,6 +440,66 @@ export class AppStore {
 
   getMonitorTerminalState(terminalId: string): MonitorTerminalState | null {
     return this.monitorStateByTerminalId[terminalId] || null;
+  }
+
+  private normalizeMonitorEnabledSources(keys: unknown[]): string[] {
+    const normalized: string[] = [];
+    const seen = new Set<string>();
+    keys.forEach((value) => {
+      const rawKey = typeof value === "string" ? value.trim() : "";
+      if (!rawKey) {
+        return;
+      }
+      const key = rawKey === "local" ? LOCAL_MONITOR_SOURCE_KEY : rawKey;
+      if (seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      normalized.push(key);
+    });
+    return normalized;
+  }
+
+  private persistMonitorEnabledSources(): void {
+    void window.gyshell?.uiSettings
+      ?.set({
+        monitorEnabledSources: [...this.monitorEnabledSources],
+      })
+      .catch(() => {});
+  }
+
+  resolveMonitorSourceKey(tab: TerminalTabModel): string {
+    if (tab.monitorIdentity) return tab.monitorIdentity;
+    const derivedIdentity = deriveMonitorIdentityFromConfig(tab.config);
+    if (derivedIdentity) return derivedIdentity;
+    return tab.connectionRef?.entryId || tab.id;
+  }
+
+  isMonitorSourceEnabled(terminalId: string): boolean {
+    const tab = this.terminalTabs.find((entry) => entry.id === terminalId);
+    if (!tab) return false;
+    const key = this.resolveMonitorSourceKey(tab);
+    return this.monitorEnabledSources.includes(key);
+  }
+
+  setMonitorEnabled(terminalId: string, enabled: boolean): void {
+    const tab = this.terminalTabs.find((entry) => entry.id === terminalId);
+    if (!tab) return;
+    const key = this.resolveMonitorSourceKey(tab);
+
+    if (enabled && !this.monitorEnabledSources.includes(key)) {
+      this.monitorEnabledSources = [...this.monitorEnabledSources, key];
+    } else if (!enabled) {
+      this.monitorEnabledSources = this.monitorEnabledSources.filter(
+        (k) => k !== key,
+      );
+    }
+    this.monitorEnabledSources = this.normalizeMonitorEnabledSources(
+      this.monitorEnabledSources,
+    );
+
+    this.syncMonitorSessions();
+    this.persistMonitorEnabledSources();
   }
 
   private getAssignedMonitorTabIds(): string[] {
@@ -493,15 +585,55 @@ export class AppStore {
 
     this.syncMonitorSnapshotSubscriptions();
 
-    const desiredMonitorIds = new Set(
-      this.getAssignedMonitorTabIds().filter((terminalId) => {
-        const tab = this.terminalTabs.find((entry) => entry.id === terminalId);
-        return tab?.runtimeState === "ready";
-      }),
-    );
+    const enabledSourceSet = new Set(this.monitorEnabledSources);
+    const assignedTabsBySource = new Map<string, TerminalTabModel[]>();
+
+    this.getAssignedMonitorTabIds().forEach((terminalId) => {
+      const tab = this.terminalTabs.find((entry) => entry.id === terminalId);
+      if (!tab) {
+        return;
+      }
+      const sourceKey = this.resolveMonitorSourceKey(tab);
+      if (!enabledSourceSet.has(sourceKey)) {
+        return;
+      }
+      const existingTabs = assignedTabsBySource.get(sourceKey);
+      if (existingTabs) {
+        existingTabs.push(tab);
+      } else {
+        assignedTabsBySource.set(sourceKey, [tab]);
+      }
+    });
+
+    const desiredMonitorIdOrder: string[] = [];
+    const desiredMonitorIdSet = new Set<string>();
+    const addDesiredMonitorId = (terminalId: string): void => {
+      if (desiredMonitorIdSet.has(terminalId)) {
+        return;
+      }
+      desiredMonitorIdSet.add(terminalId);
+      desiredMonitorIdOrder.push(terminalId);
+    };
+
+    assignedTabsBySource.forEach((assignedTabs, sourceKey) => {
+      const readyRepresentative =
+        assignedTabs.find((tab) => tab.runtimeState === "ready") ||
+        this.monitorTabs.find(
+          (tab) =>
+            tab.runtimeState === "ready" &&
+            this.resolveMonitorSourceKey(tab) === sourceKey,
+        );
+      if (!readyRepresentative) {
+        return;
+      }
+      addDesiredMonitorId(readyRepresentative.id);
+      assignedTabs.forEach((tab) => {
+        addDesiredMonitorId(tab.id);
+      });
+    });
 
     Array.from(this.monitorRetainedTabIds).forEach((terminalId) => {
-      if (desiredMonitorIds.has(terminalId)) {
+      if (desiredMonitorIdSet.has(terminalId)) {
         return;
       }
       this.monitorRetainedTabIds.delete(terminalId);
@@ -510,7 +642,7 @@ export class AppStore {
       });
     });
 
-    desiredMonitorIds.forEach((terminalId) => {
+    desiredMonitorIdOrder.forEach((terminalId) => {
       if (this.monitorRetainedTabIds.has(terminalId)) {
         return;
       }
@@ -1191,9 +1323,22 @@ export class AppStore {
       this.layout.pinPanelsAsRestorePlaceholder(unresolvedPanelIds);
     }
     const existingById = new Map(this.terminalTabs.map((tab) => [tab.id, tab]));
+    let nextMonitorEnabledSources = this.monitorEnabledSources;
     const nextTabs: TerminalTabModel[] = incoming.map((item) => {
       const existing = existingById.get(item.id);
       if (existing) {
+        if (item.monitorIdentity) {
+          const previousSourceKey = this.resolveMonitorSourceKey(existing);
+          if (previousSourceKey !== item.monitorIdentity) {
+            const remappedMonitorSources = nextMonitorEnabledSources.map(
+              (key) =>
+                key === previousSourceKey ? item.monitorIdentity! : key,
+            );
+            nextMonitorEnabledSources = this.normalizeMonitorEnabledSources(
+              remappedMonitorSources,
+            );
+          }
+        }
         return {
           ...existing,
           title: item.title,
@@ -1201,6 +1346,7 @@ export class AppStore {
           lastExitCode: item.lastExitCode,
           remoteOs: item.remoteOs ?? existing.remoteOs,
           systemInfo: item.systemInfo ?? existing.systemInfo,
+          monitorIdentity: item.monitorIdentity ?? existing.monitorIdentity,
           capabilities: resolveTerminalConnectionCapabilities({
             type: item.type,
           }),
@@ -1220,6 +1366,7 @@ export class AppStore {
           type: item.type,
         }),
         connectionRef: item.type === "local" ? { type: "local" } : undefined,
+        monitorIdentity: item.monitorIdentity,
         runtimeState: item.runtimeState,
         lastExitCode: item.lastExitCode,
         remoteOs: item.remoteOs,
@@ -1235,6 +1382,10 @@ export class AppStore {
     this.terminalTabs = nextTabs;
     this.terminalTabsHydrated = true;
     this.activeTerminalId = nextActive;
+    if (nextMonitorEnabledSources !== this.monitorEnabledSources) {
+      this.monitorEnabledSources = nextMonitorEnabledSources;
+      this.persistMonitorEnabledSources();
+    }
     this.layout.syncPanelBindings();
     this.syncMonitorSessions();
   }
@@ -2089,11 +2240,18 @@ export class AppStore {
       });
       deferUiUpdates = persistedChatInventoryState.tabIds.length > 0;
 
+      const persistedMonitorSources = Array.isArray(
+        uiSettings.monitorEnabledSources,
+      )
+        ? this.normalizeMonitorEnabledSources(uiSettings.monitorEnabledSources)
+        : [];
+
       runInAction(() => {
         this.settings = normalizedSettings;
         this.xtermTheme = xtermTheme;
         this.isBootstrapped = true;
         this.detachedVisibleTabIdsByKind = detachedVisibleTabIdsByKind;
+        this.monitorEnabledSources = persistedMonitorSources;
         this.i18n.setLocale(normalizedSettings.language);
         this.customThemes = customThemes;
         this.chat.hydrateSessionInventoryFromLayout(

@@ -42,6 +42,7 @@ function pickUiSnapshot(raw: unknown): Partial<UiSettings> {
     panelTabs: raw.panelTabs,
     commandDraft: raw.commandDraft,
     chat: raw.chat,
+    monitorEnabledSources: raw.monitorEnabledSources,
   } as Partial<UiSettings>
 }
 
@@ -67,6 +68,9 @@ function normalizeUiSettings(settings: UiSettings): UiSettings {
   }
   if (next.chat?.displayMode !== 'classic' && next.chat?.displayMode !== 'seamless') {
     next.chat = { displayMode: 'classic' }
+  }
+  if (!Array.isArray(next.monitorEnabledSources)) {
+    next.monitorEnabledSources = undefined
   }
   next.uiSchemaVersion = UI_SETTINGS_SCHEMA_VERSION
   return next

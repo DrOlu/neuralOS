@@ -203,6 +203,7 @@ export async function startGyBackend(): Promise<void> {
               rows: terminal.rows,
               runtimeState: terminal.runtimeState,
               lastExitCode: terminal.lastExitCode,
+              monitorIdentity: terminalService.getMonitorIdentity(terminal.id) ?? undefined,
             })),
           createTab: async (config) => {
             const snapshot = terminalService.getDisplayTerminals();

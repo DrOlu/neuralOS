@@ -567,6 +567,7 @@ export class ElectronGatewayIpcAdapter {
             lastExitCode: terminal.lastExitCode,
             remoteOs: terminal.remoteOs,
             systemInfo: terminal.systemInfo,
+            monitorIdentity: this.terminalService.getMonitorIdentity(terminal.id) ?? undefined,
           })),
       };
     });

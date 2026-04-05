@@ -1867,6 +1867,10 @@ const run = async (): Promise<void> => {
         monitor: assignedMonitorTabIds,
       });
 
+      // Pre-enable the monitor sources so sessions will start
+      // (new connections default to disabled; restored connections restore their state)
+      (store as any).monitorEnabledSources = ["local://default", "term-b"];
+
       store.reconcileTerminalTabs({
         terminals: [
           {
@@ -2019,6 +2023,7 @@ const run = async (): Promise<void> => {
           filesystem: [],
           monitor: ["term-a"],
         });
+        (store as any).monitorEnabledSources = ["local://default"];
 
         store.reconcileTerminalTabs({
           terminals: [
@@ -2255,6 +2260,512 @@ const run = async (): Promise<void> => {
       } finally {
         (globalThis as any).window = originalWindow;
       }
+    },
+  );
+
+  await runCase(
+    "resolveMonitorSourceKey groups local terminals under the same key",
+    async () => {
+      const store = new AppStore();
+      const localA = {
+        id: "local-a",
+        title: "Local A",
+        config: { type: "local" },
+        capabilities: { supportsMonitor: true },
+      } as any;
+      const localB = {
+        id: "local-b",
+        title: "Local B",
+        config: { type: "local" },
+        capabilities: { supportsMonitor: true },
+      } as any;
+
+      const keyA = store.resolveMonitorSourceKey(localA);
+      const keyB = store.resolveMonitorSourceKey(localB);
+      assertEqual(
+        keyA,
+        "local://default",
+        "local terminals should resolve to the shared local monitor identity",
+      );
+      assertEqual(
+        keyA,
+        keyB,
+        "all local terminals should share the same source key",
+      );
+    },
+  );
+
+  await runCase(
+    "resolveMonitorSourceKey groups ssh terminals by monitorIdentity",
+    async () => {
+      const store = new AppStore();
+      const sshA = {
+        id: "ssh-1",
+        title: "SSH A",
+        config: { type: "ssh" },
+        capabilities: { supportsMonitor: true },
+        monitorIdentity: "ssh://admin@10.0.0.1:22",
+      } as any;
+      const sshB = {
+        id: "ssh-2",
+        title: "SSH B",
+        config: { type: "ssh" },
+        capabilities: { supportsMonitor: true },
+        monitorIdentity: "ssh://admin@10.0.0.1:22",
+      } as any;
+      const sshC = {
+        id: "ssh-3",
+        title: "SSH C",
+        config: { type: "ssh" },
+        capabilities: { supportsMonitor: true },
+        monitorIdentity: "ssh://root@10.0.0.2:22",
+      } as any;
+
+      const keyA = store.resolveMonitorSourceKey(sshA);
+      const keyB = store.resolveMonitorSourceKey(sshB);
+      const keyC = store.resolveMonitorSourceKey(sshC);
+      assertEqual(
+        keyA,
+        "ssh://admin@10.0.0.1:22",
+        "ssh source key should be the monitorIdentity",
+      );
+      assertEqual(
+        keyA,
+        keyB,
+        "same monitorIdentity should produce the same source key",
+      );
+      assertCondition(
+        keyA !== keyC,
+        "different monitorIdentities should produce different source keys",
+      );
+    },
+  );
+
+  await runCase(
+    "resolveMonitorSourceKey derives ssh identity before monitorIdentity hydration",
+    async () => {
+      const store = new AppStore();
+      const sshPending = {
+        id: "ssh-pending",
+        title: "SSH Pending",
+        config: {
+          type: "ssh",
+          host: "Example.COM",
+          port: 22,
+          username: "Admin",
+        },
+        capabilities: { supportsMonitor: true },
+        connectionRef: { type: "ssh", entryId: "conn-abc" },
+      } as any;
+
+      const key = store.resolveMonitorSourceKey(sshPending);
+      assertEqual(
+        key,
+        "ssh://admin@example.com:22",
+        "ssh placeholders should derive the canonical monitor identity before hydration",
+      );
+    },
+  );
+
+  await runCase(
+    "resolveMonitorSourceKey prefers monitorIdentity over connectionRef.entryId",
+    async () => {
+      const store = new AppStore();
+      const sshWithBoth = {
+        id: "ssh-1",
+        title: "SSH Both",
+        config: { type: "ssh" },
+        capabilities: { supportsMonitor: true },
+        connectionRef: { type: "ssh", entryId: "conn-abc" },
+        monitorIdentity: "ssh://admin@10.0.0.1:22",
+      } as any;
+
+      const key = store.resolveMonitorSourceKey(sshWithBoth);
+      assertEqual(
+        key,
+        "ssh://admin@10.0.0.1:22",
+        "monitorIdentity should take priority over connectionRef.entryId",
+      );
+    },
+  );
+
+  await runCase(
+    "resolveMonitorSourceKey falls back to terminal id when ssh has no identity",
+    async () => {
+      const store = new AppStore();
+      const sshNoEntry = {
+        id: "ssh-orphan",
+        title: "SSH Orphan",
+        config: { type: "ssh" },
+        capabilities: { supportsMonitor: true },
+      } as any;
+
+      const key = store.resolveMonitorSourceKey(sshNoEntry);
+      assertEqual(
+        key,
+        "ssh-orphan",
+        "ssh without monitorIdentity or entryId should fall back to terminal id",
+      );
+    },
+  );
+
+  await runCase(
+    "setMonitorEnabled toggles the source key in monitorEnabledSources",
+    async () => {
+      const originalWindow = (globalThis as any).window;
+      (globalThis as any).window = {
+        gyshell: {
+          uiSettings: { set: async () => {} },
+          monitor: {
+            start: async () => ({ ok: true }),
+            stop: async () => ({ ok: true }),
+            subscribe: async () => ({ ok: true }),
+            unsubscribe: async () => ({ ok: true }),
+            onSnapshot: () => () => {},
+          },
+        },
+      };
+      try {
+        const store = new AppStore();
+        (store as any).terminalTabs = [
+          {
+            id: "local-a",
+            title: "Local A",
+            config: { type: "local" },
+            capabilities: { supportsMonitor: true },
+            connectionRef: { type: "local" },
+            runtimeState: "ready",
+          },
+          {
+            id: "ssh-1",
+            title: "SSH Win",
+            config: { type: "ssh" },
+            capabilities: { supportsMonitor: true },
+            connectionRef: { type: "ssh", entryId: "conn-win" },
+            runtimeState: "ready",
+          },
+        ];
+
+        assertEqual(
+          store.isMonitorSourceEnabled("local-a"),
+          false,
+          "new terminals should default to disabled",
+        );
+
+        store.setMonitorEnabled("local-a", true);
+        assertEqual(
+          store.isMonitorSourceEnabled("local-a"),
+          true,
+          "enabling should update the source state",
+        );
+        assertEqual(
+          store.monitorEnabledSources.includes("local://default"),
+          true,
+          "local source key should be in enabled list",
+        );
+
+        store.setMonitorEnabled("local-a", false);
+        assertEqual(
+          store.isMonitorSourceEnabled("local-a"),
+          false,
+          "disabling should remove the source from enabled list",
+        );
+
+        store.setMonitorEnabled("ssh-1", true);
+        assertEqual(
+          store.isMonitorSourceEnabled("ssh-1"),
+          true,
+          "ssh source should be independently toggleable",
+        );
+        assertEqual(
+          store.isMonitorSourceEnabled("local-a"),
+          false,
+          "local should remain disabled when ssh is enabled",
+        );
+      } finally {
+        (globalThis as any).window = originalWindow;
+      }
+    },
+  );
+
+  await runCase(
+    "monitorEnabledSources stay enabled when monitorIdentity arrives after hydration",
+    async () => {
+      const originalWindow = (globalThis as any).window;
+      (globalThis as any).window = {
+        gyshell: {
+          uiSettings: { set: async () => {} },
+          monitor: {
+            start: async () => ({ ok: true }),
+            stop: async () => ({ ok: true }),
+            subscribe: async () => ({ ok: true }),
+            unsubscribe: async () => ({ ok: true }),
+            onSnapshot: () => () => {},
+          },
+        },
+      };
+      try {
+        const store = new AppStore();
+        (store as any).isBootstrapped = true;
+        (store.layout as any).syncPanelBindings = () => {};
+        (store as any).collectAssignedTabsByKind = () => ({
+          chat: [],
+          terminal: [],
+          filesystem: [],
+          monitor: ["ssh-pending"],
+        });
+        (store as any).terminalTabs = [
+          {
+            id: "ssh-pending",
+            title: "SSH Pending",
+            config: {
+              type: "ssh",
+              host: "Example.COM",
+              port: 22,
+              username: "Admin",
+            },
+            capabilities: { supportsMonitor: true },
+            connectionRef: { type: "ssh", entryId: "conn-abc" },
+            runtimeState: "initializing",
+          },
+        ];
+
+        store.setMonitorEnabled("ssh-pending", true);
+        assertEqual(
+          JSON.stringify(store.monitorEnabledSources),
+          JSON.stringify(["ssh://admin@example.com:22"]),
+          "pre-hydration monitor state should be stored under the canonical source key",
+        );
+
+        store.reconcileTerminalTabs({
+          terminals: [
+            {
+              id: "ssh-pending",
+              title: "SSH Pending",
+              type: "ssh",
+              cols: 80,
+              rows: 24,
+              runtimeState: "ready",
+              monitorIdentity: "ssh://admin@example.com:22",
+            },
+          ],
+        } as any);
+
+        assertEqual(
+          store.isMonitorSourceEnabled("ssh-pending"),
+          true,
+          "hydration should not pause a source that was already enabled",
+        );
+      } finally {
+        (globalThis as any).window = originalWindow;
+      }
+    },
+  );
+
+  await runCase(
+    "monitor sessions retain a ready sibling for an enabled initializing source tab",
+    async () => {
+      const originalWindow = (globalThis as unknown as { window?: unknown })
+        .window;
+      const startCalls: Array<{ terminalId: string; intervalMs?: number }> = [];
+      const subscribeCalls: string[] = [];
+
+      try {
+        (globalThis as unknown as { window: unknown }).window = {
+          gyshell: {
+            settings: {
+              set: async () => {},
+            },
+            uiSettings: {
+              set: async () => {},
+            },
+            monitor: {
+              start: async (terminalId: string, intervalMs?: number) => {
+                startCalls.push({ terminalId, intervalMs });
+                return { ok: true };
+              },
+              stop: async () => ({ ok: true }),
+              subscribe: async (terminalId: string) => {
+                subscribeCalls.push(terminalId);
+                return { ok: true };
+              },
+              unsubscribe: async () => ({ ok: true }),
+              onSnapshot: () => () => {},
+            },
+          },
+        };
+
+        const store = new AppStore();
+        (store as any).isBootstrapped = true;
+        (store.layout as any).syncPanelBindings = () => {};
+        (store as any).collectAssignedTabsByKind = () => ({
+          chat: [],
+          terminal: [],
+          filesystem: [],
+          monitor: ["local-b"],
+        });
+        (store as any).monitorEnabledSources = ["local://default"];
+
+        store.reconcileTerminalTabs({
+          terminals: [
+            {
+              id: "local-a",
+              title: "Local A",
+              type: "local",
+              cols: 80,
+              rows: 24,
+              runtimeState: "ready",
+              monitorIdentity: "local://default",
+            },
+            {
+              id: "local-b",
+              title: "Local B",
+              type: "local",
+              cols: 80,
+              rows: 24,
+              runtimeState: "initializing",
+              monitorIdentity: "local://default",
+            },
+          ],
+        } as any);
+        await Promise.resolve();
+
+        assertEqual(
+          JSON.stringify(startCalls),
+          JSON.stringify([
+            { terminalId: "local-a", intervalMs: 3500 },
+            { terminalId: "local-b", intervalMs: 3500 },
+          ]),
+          "an enabled source should retain a ready sibling first, then the assigned owner tab",
+        );
+        assertEqual(
+          JSON.stringify(subscribeCalls),
+          JSON.stringify(["local-b"]),
+          "only the assigned monitor tab should subscribe for snapshot delivery",
+        );
+      } finally {
+        (globalThis as unknown as { window?: unknown }).window = originalWindow;
+      }
+    },
+  );
+
+  await runCase(
+    "setMonitorEnabled links all terminals sharing the same source key",
+    async () => {
+      const originalWindow = (globalThis as any).window;
+      (globalThis as any).window = {
+        gyshell: {
+          uiSettings: { set: async () => {} },
+          monitor: {
+            start: async () => ({ ok: true }),
+            stop: async () => ({ ok: true }),
+            subscribe: async () => ({ ok: true }),
+            unsubscribe: async () => ({ ok: true }),
+            onSnapshot: () => () => {},
+          },
+        },
+      };
+      try {
+        const store = new AppStore();
+        (store as any).terminalTabs = [
+          {
+            id: "ssh-a",
+            title: "SSH A",
+            config: { type: "ssh" },
+            capabilities: { supportsMonitor: true },
+            monitorIdentity: "ssh://admin@10.0.0.1:22",
+            runtimeState: "ready",
+          },
+          {
+            id: "ssh-b",
+            title: "SSH B",
+            config: { type: "ssh" },
+            capabilities: { supportsMonitor: true },
+            monitorIdentity: "ssh://admin@10.0.0.1:22",
+            runtimeState: "ready",
+          },
+          {
+            id: "ssh-c",
+            title: "SSH C",
+            config: { type: "ssh" },
+            capabilities: { supportsMonitor: true },
+            monitorIdentity: "ssh://root@10.0.0.2:22",
+            runtimeState: "ready",
+          },
+        ];
+
+        store.setMonitorEnabled("ssh-a", true);
+        assertEqual(
+          store.isMonitorSourceEnabled("ssh-b"),
+          true,
+          "ssh-b should be linked to ssh-a via shared monitorIdentity",
+        );
+        assertEqual(
+          store.isMonitorSourceEnabled("ssh-c"),
+          false,
+          "ssh-c should remain independent (different monitorIdentity)",
+        );
+
+        store.setMonitorEnabled("ssh-b", false);
+        assertEqual(
+          store.isMonitorSourceEnabled("ssh-a"),
+          false,
+          "disabling via ssh-b should also disable ssh-a (same source)",
+        );
+      } finally {
+        (globalThis as any).window = originalWindow;
+      }
+    },
+  );
+
+  await runCase(
+    "monitorEnabledSources restores from persisted settings array",
+    async () => {
+      const store = new AppStore();
+      const persisted = ["local://default", "ssh://admin@win-server:22"];
+      (store as any).monitorEnabledSources = persisted;
+      (store as any).terminalTabs = [
+        {
+          id: "local-a",
+          title: "Local A",
+          config: { type: "local" },
+          capabilities: { supportsMonitor: true },
+          monitorIdentity: "local://default",
+          runtimeState: "ready",
+        },
+        {
+          id: "ssh-1",
+          title: "SSH Win",
+          config: { type: "ssh" },
+          capabilities: { supportsMonitor: true },
+          monitorIdentity: "ssh://admin@win-server:22",
+          runtimeState: "ready",
+        },
+        {
+          id: "ssh-2",
+          title: "SSH LA",
+          config: { type: "ssh" },
+          capabilities: { supportsMonitor: true },
+          monitorIdentity: "ssh://user@la-server:22",
+          runtimeState: "ready",
+        },
+      ];
+
+      assertEqual(
+        store.isMonitorSourceEnabled("local-a"),
+        true,
+        "restored local source should be enabled",
+      );
+      assertEqual(
+        store.isMonitorSourceEnabled("ssh-1"),
+        true,
+        "restored ssh source should be enabled",
+      );
+      assertEqual(
+        store.isMonitorSourceEnabled("ssh-2"),
+        false,
+        "non-restored ssh source should remain disabled",
+      );
     },
   );
 };
