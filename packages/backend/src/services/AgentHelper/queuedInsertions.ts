@@ -43,6 +43,11 @@ export type QueuedAgentInsertionAcknowledger = (
   agentRunId: string,
   itemIds: string[]
 ) => void
+export type QueuedAgentInsertionAvailabilityWaiter = (
+  sessionId: string,
+  agentRunId: string,
+  signal?: AbortSignal
+) => Promise<boolean>
 export type QueuedAgentInsertionEnqueuer = (
   sessionId: string,
   insertion: QueuedAgentInsertionInput

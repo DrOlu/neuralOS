@@ -28,6 +28,12 @@ import {
 } from "../AgentHelper/queuedInsertions";
 import { TransportHub } from "./TransportHub";
 
+type QueuedInsertionWaiterEntry = {
+  sessionId: string;
+  resolve: (available: boolean) => void;
+  cleanup: () => void;
+};
+
 export class GatewayService extends EventEmitter implements IGatewayRuntime {
   private sessions: Map<string, SessionContext> = new Map();
   private eventBus: EventEmitter = new EventEmitter();
@@ -36,6 +42,10 @@ export class GatewayService extends EventEmitter implements IGatewayRuntime {
   private transportHub: TransportHub = new TransportHub();
   private queuedInsertionsByAgentRun: Map<string, QueuedAgentInsertion[]> =
     new Map();
+  private queuedInsertionWaitersByAgentRun: Map<
+    string,
+    Set<QueuedInsertionWaiterEntry>
+  > = new Map();
   private backgroundExecCommandsByAgentRun: Map<
     string,
     Map<string, RunBackgroundExecCommand>
@@ -71,6 +81,10 @@ export class GatewayService extends EventEmitter implements IGatewayRuntime {
     this.agentService.setQueuedInsertionAcknowledger?.(
       (sessionId, agentRunId, itemIds) =>
         this.acknowledgeQueuedInsertions(sessionId, agentRunId, itemIds),
+    );
+    this.agentService.setQueuedInsertionAvailabilityWaiter?.(
+      (sessionId, agentRunId, signal) =>
+        this.waitForQueuedInsertion(sessionId, agentRunId, signal),
     );
     this.agentService.setQueuedInsertionEnqueuer?.((sessionId, insertion) =>
       this.enqueueQueuedInsertion(sessionId, insertion),
@@ -474,6 +488,7 @@ export class GatewayService extends EventEmitter implements IGatewayRuntime {
       createdAt: Date.now(),
     });
     this.queuedInsertionsByAgentRun.set(agentRunId, current);
+    this.resolveQueuedInsertionWaiters(sessionId, agentRunId, true);
   }
 
   private peekQueuedInsertions(
@@ -498,6 +513,63 @@ export class GatewayService extends EventEmitter implements IGatewayRuntime {
       this.queuedInsertionsByAgentRun.set(agentRunId, remaining);
     } else {
       this.queuedInsertionsByAgentRun.delete(agentRunId);
+    }
+  }
+
+  private waitForQueuedInsertion(
+    sessionId: string,
+    agentRunId: string,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    if (!this.isAgentRunAcceptingEvents(sessionId, agentRunId)) {
+      return Promise.resolve(false);
+    }
+    if ((this.queuedInsertionsByAgentRun.get(agentRunId)?.length || 0) > 0) {
+      return Promise.resolve(true);
+    }
+    if (signal?.aborted) {
+      return Promise.resolve(false);
+    }
+
+    return new Promise((resolve) => {
+      let entry!: QueuedInsertionWaiterEntry;
+      const onAbort = () => {
+        entry.cleanup();
+        resolve(false);
+      };
+      entry = {
+        sessionId,
+        resolve,
+        cleanup: () => {
+          signal?.removeEventListener("abort", onAbort);
+          const waiters = this.queuedInsertionWaitersByAgentRun.get(agentRunId);
+          if (!waiters) return;
+          waiters.delete(entry);
+          if (waiters.size === 0) {
+            this.queuedInsertionWaitersByAgentRun.delete(agentRunId);
+          }
+        },
+      };
+
+      const waiters =
+        this.queuedInsertionWaitersByAgentRun.get(agentRunId) || new Set();
+      waiters.add(entry);
+      this.queuedInsertionWaitersByAgentRun.set(agentRunId, waiters);
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+
+  private resolveQueuedInsertionWaiters(
+    sessionId: string,
+    agentRunId: string,
+    available: boolean,
+  ): void {
+    const waiters = this.queuedInsertionWaitersByAgentRun.get(agentRunId);
+    if (!waiters) return;
+    for (const waiter of [...waiters]) {
+      if (sessionId && waiter.sessionId !== sessionId) continue;
+      waiter.cleanup();
+      waiter.resolve(available);
     }
   }
 
@@ -592,6 +664,8 @@ export class GatewayService extends EventEmitter implements IGatewayRuntime {
   private cleanupAgentRun(agentRunId: string | undefined): void {
     if (!agentRunId) return;
     this.queuedInsertionsByAgentRun.delete(agentRunId);
+    this.resolveQueuedInsertionWaiters("", agentRunId, false);
+    this.queuedInsertionWaitersByAgentRun.delete(agentRunId);
     this.backgroundExecCommandsByAgentRun.delete(agentRunId);
   }
 

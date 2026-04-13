@@ -26,7 +26,26 @@ export async function wait(args: z.infer<typeof waitSchema>, context: ToolExecut
     input: JSON.stringify(args)
   })
 
-  await waitWithSignal(seconds * 1000, context.signal)
+  const waitResult = await waitWithSignalOrQueuedInsertion(
+    seconds * 1000,
+    context.signal,
+    context.waitForQueuedInsertion
+  )
+
+  if (waitResult === 'queued_insertion') {
+    context.markWaitInterruptedByQueuedInsertion?.()
+    const result = 'Wait ended early because a queued agent notification became available.'
+    sendEvent(sessionId, {
+      messageId,
+      type: 'sub_tool_delta',
+      outputDelta: result
+    })
+    sendEvent(sessionId, {
+      messageId,
+      type: 'sub_tool_finished'
+    })
+    return result
+  }
 
   const result = `Waited for ${seconds} seconds.`
   sendEvent(sessionId, {
@@ -269,5 +288,61 @@ function waitWithSignal(ms: number, signal?: AbortSignal): Promise<void> {
       signal?.removeEventListener('abort', onAbort)
     }
     signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+function waitWithSignalOrQueuedInsertion(
+  ms: number,
+  signal: AbortSignal | undefined,
+  waitForQueuedInsertion?: (signal?: AbortSignal) => Promise<boolean>
+): Promise<'timer' | 'queued_insertion'> {
+  if (!waitForQueuedInsertion) {
+    return waitWithSignal(ms, signal).then(() => 'timer' as const)
+  }
+
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error('AbortError'))
+      return
+    }
+
+    let settled = false
+    const queuedInsertionController = new AbortController()
+    const timer = setTimeout(() => {
+      finish('timer')
+    }, ms)
+
+    function cleanup() {
+      clearTimeout(timer)
+      queuedInsertionController.abort()
+      signal?.removeEventListener('abort', onAbort)
+    }
+    function finish(reason: 'timer' | 'queued_insertion') {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve(reason)
+    }
+    function fail(error: Error) {
+      if (settled) return
+      settled = true
+      cleanup()
+      reject(error)
+    }
+    function onAbort() {
+      fail(new Error('AbortError'))
+    }
+
+    signal?.addEventListener('abort', onAbort, { once: true })
+    waitForQueuedInsertion(queuedInsertionController.signal)
+      .then((available) => {
+        if (available) {
+          finish('queued_insertion')
+        }
+      })
+      .catch((error) => {
+        if (settled || queuedInsertionController.signal.aborted) return
+        fail(error instanceof Error ? error : new Error(String(error)))
+      })
   })
 }

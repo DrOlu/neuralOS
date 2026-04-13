@@ -19,6 +19,7 @@ import type { ChatSessionSummaryRecord } from "./history/historyTypes";
 import type {
   RunBackgroundExecCommandCompleter,
   RunBackgroundExecCommandRegistrar,
+  QueuedAgentInsertionAvailabilityWaiter,
   QueuedAgentInsertionAcknowledger,
   QueuedAgentInsertionEnqueuer,
   QueuedAgentInsertionProvider,
@@ -131,6 +132,9 @@ export interface IAgentRuntime {
   ): void;
   setQueuedInsertionAcknowledger?(
     acknowledger: QueuedAgentInsertionAcknowledger,
+  ): void;
+  setQueuedInsertionAvailabilityWaiter?(
+    waiter: QueuedAgentInsertionAvailabilityWaiter,
   ): void;
   setQueuedInsertionEnqueuer?(
     enqueuer: QueuedAgentInsertionEnqueuer,

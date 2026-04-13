@@ -11,6 +11,7 @@ import type { StartTaskInput, StartTaskMode } from "./types";
 import type {
   QueuedAgentInsertionAcknowledger,
   QueuedAgentInsertion,
+  QueuedAgentInsertionAvailabilityWaiter,
   QueuedAgentInsertionEnqueuer,
   QueuedAgentInsertionProvider,
   RunBackgroundExecCommand,
@@ -60,6 +61,8 @@ const runCase = async (
 class FakeAgentRuntime {
   public provider: QueuedAgentInsertionProvider | null = null;
   public acknowledger: QueuedAgentInsertionAcknowledger | null = null;
+  public availabilityWaiter: QueuedAgentInsertionAvailabilityWaiter | null =
+    null;
   public enqueuer: QueuedAgentInsertionEnqueuer | null = null;
   public registrar: RunBackgroundExecCommandRegistrar | null = null;
   public completer: RunBackgroundExecCommandCompleter | null = null;
@@ -89,6 +92,12 @@ class FakeAgentRuntime {
     acknowledger: QueuedAgentInsertionAcknowledger,
   ): void {
     this.acknowledger = acknowledger;
+  }
+
+  setQueuedInsertionAvailabilityWaiter(
+    waiter: QueuedAgentInsertionAvailabilityWaiter,
+  ): void {
+    this.availabilityWaiter = waiter;
   }
 
   setQueuedInsertionEnqueuer(enqueuer: QueuedAgentInsertionEnqueuer): void {
@@ -900,6 +909,125 @@ const run = async (): Promise<void> => {
       ),
       true,
       "final output should remove the previous visible final answer when forcing another pass",
+    );
+  });
+
+  await runCase("active-run queued insertion waiter resolves on new queued content", async () => {
+    const { gateway, agent } = createGateway();
+    if (!agent.enqueuer || !agent.availabilityWaiter) {
+      throw new Error("Gateway should register queued insertion hooks");
+    }
+
+    let waiterResolved: boolean | null = null;
+    let releaseRun!: () => void;
+    const runHold = new Promise<void>((resolve) => {
+      releaseRun = resolve;
+    });
+    agent.onRun = async (context) => {
+      const waitPromise = agent.availabilityWaiter?.(
+        context.sessionId,
+        context.metadata.agentRunId,
+      );
+      agent.enqueuer?.(context.sessionId, {
+        kind: "test",
+        content: "<test>wake-wait-tool</test>",
+        originAgentRunId: context.metadata.agentRunId,
+      });
+      waiterResolved = (await waitPromise) ?? null;
+      await runHold;
+    };
+
+    const dispatchPromise = gateway.dispatchTask("session-queue-waiter", "user task");
+    await waitUntil(
+      () => waiterResolved === true,
+      "queued insertion waiter should resolve when a queue item is added",
+    );
+    releaseRun();
+    await dispatchPromise;
+  });
+
+  await runCase("time wait tool ends early and interrupts pending tools when queue is available", async () => {
+    const agent = createAgentService();
+    const events: any[] = [];
+    agent.setEventPublisher((_sessionId, event) => events.push(event));
+    (agent as any).sessionModelBindings.set("session-wait-interrupt", {
+      actionModel: null,
+    });
+    (agent as any).activeAgentRunIdsBySession.set(
+      "session-wait-interrupt",
+      "agent-run-wait-interrupt",
+    );
+    agent.setQueuedInsertionAvailabilityWaiter(async () => true);
+
+    const waitCall = {
+      id: "call-wait",
+      name: "wait",
+      args: { seconds: 5 },
+    };
+    const trailingCall = {
+      id: "call-read-terminal-tab",
+      name: "read_terminal_tab",
+      args: { tabIdOrName: "Local" },
+    };
+    const node = (agent as any).createToolsNode();
+    const result = await node.invoke({
+      sessionId: "session-wait-interrupt",
+      messages: [
+        new AIMessage({
+          content: "",
+          tool_calls: [waitCall, trailingCall],
+        }),
+      ],
+      pendingToolCalls: [waitCall, trailingCall],
+    });
+
+    const toolMessage = result.messages[result.messages.length - 1] as any;
+    assertEqual(
+      String(toolMessage.content).includes("Wait ended early"),
+      true,
+      "time wait should return an early-ended result when queued content is available",
+    );
+    assertEqual(
+      result.pendingToolCalls.length,
+      0,
+      "time wait should clear pending tool calls so queued insertions are inserted next",
+    );
+    const assistantMessage = result.messages[0] as any;
+    assertEqual(
+      Array.isArray(assistantMessage.tool_calls),
+      true,
+      "assistant tool calls should remain an array after interruption",
+    );
+    assertEqual(
+      assistantMessage.tool_calls.length,
+      1,
+      "interrupted wait should trim skipped tool calls from assistant history",
+    );
+    assertEqual(
+      assistantMessage.tool_calls[0]?.id,
+      "call-wait",
+      "interrupted wait should keep only the executed wait tool call",
+    );
+    assertEqual(
+      assistantMessage.tool_calls.some(
+        (call: any) => call?.id === "call-read-terminal-tab",
+      ),
+      false,
+      "interrupted wait should not leave unanswered trailing tool calls in assistant history",
+    );
+    assertEqual(
+      (agent as any).routeAfterToolCall(result),
+      "token_pruner_runtime",
+      "interrupted wait should route directly back to the model request pipeline",
+    );
+    assertEqual(
+      events.some(
+        (event) =>
+          event.type === "sub_tool_delta" &&
+          String(event.outputDelta || "").includes("queued agent notification"),
+      ),
+      true,
+      "time wait should emit the early-ended result to the tool UI",
     );
   });
 

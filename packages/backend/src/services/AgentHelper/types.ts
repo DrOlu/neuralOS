@@ -16,6 +16,8 @@ export interface ToolExecutionContext {
   commandPolicyMode: CommandPolicyMode
   agentRunId?: string
   enqueueQueuedInsertion?: (insertion: QueuedAgentInsertionInput) => void
+  waitForQueuedInsertion?: (signal?: AbortSignal) => Promise<boolean>
+  markWaitInterruptedByQueuedInsertion?: () => void
   registerBackgroundExecCommand?: (command: RunBackgroundExecCommandInput) => void
   completeBackgroundExecCommand?: (command: RunBackgroundExecCommandInput & { exitCode?: number }) => void
   signal?: AbortSignal

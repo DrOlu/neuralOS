@@ -99,6 +99,7 @@ import { ImageAttachmentService } from "./ImageAttachmentService";
 import {
   buildUnfinishedExecCommandContinueInstruction,
   type QueuedAgentInsertionAcknowledger,
+  type QueuedAgentInsertionAvailabilityWaiter,
   type QueuedAgentInsertionEnqueuer,
   type QueuedAgentInsertionProvider,
   type RunBackgroundExecCommand,
@@ -232,6 +233,9 @@ export class AgentService_v2 {
   private queuedInsertionProvider: QueuedAgentInsertionProvider | null = null;
   private queuedInsertionAcknowledger: QueuedAgentInsertionAcknowledger | null =
     null;
+  private queuedInsertionAvailabilityWaiter:
+    | QueuedAgentInsertionAvailabilityWaiter
+    | null = null;
   private queuedInsertionEnqueuer: QueuedAgentInsertionEnqueuer | null = null;
   private backgroundExecCommandRegistrar: RunBackgroundExecCommandRegistrar | null =
     null;
@@ -290,6 +294,12 @@ export class AgentService_v2 {
     acknowledger: QueuedAgentInsertionAcknowledger,
   ): void {
     this.queuedInsertionAcknowledger = acknowledger;
+  }
+
+  setQueuedInsertionAvailabilityWaiter(
+    waiter: QueuedAgentInsertionAvailabilityWaiter,
+  ): void {
+    this.queuedInsertionAvailabilityWaiter = waiter;
   }
 
   setQueuedInsertionEnqueuer(enqueuer: QueuedAgentInsertionEnqueuer): void {
@@ -1101,6 +1111,7 @@ export class AgentService_v2 {
       );
       const messageHistory: BaseMessage[] = state.messages;
       let result = "";
+      let shouldInterruptPendingToolsForQueuedInsertion = false;
       switch (toolCall.name) {
         case "skill": {
           let args: any = toolCall.args || {};
@@ -1270,6 +1281,9 @@ export class AgentService_v2 {
         case "wait": {
           try {
             const validatedArgs = waitSchema.parse(toolCall.args || {});
+            executionContext.markWaitInterruptedByQueuedInsertion = () => {
+              shouldInterruptPendingToolsForQueuedInsertion = true;
+            };
             result = await toolImplementations.wait(
               validatedArgs,
               executionContext,
@@ -1312,10 +1326,16 @@ export class AgentService_v2 {
       }
 
       toolMessage.content = result;
+      if (shouldInterruptPendingToolsForQueuedInsertion) {
+        this.trimInterruptedToolCallHistory(messageHistory, toolCall);
+      }
+
       return {
         messages: [...messageHistory, toolMessage],
         sessionId,
-        pendingToolCalls: queue.slice(1),
+        pendingToolCalls: shouldInterruptPendingToolsForQueuedInsertion
+          ? []
+          : queue.slice(1),
       };
     });
   }
@@ -1993,6 +2013,16 @@ export class AgentService_v2 {
       commandPolicyService: this.commandPolicyService,
       commandPolicyMode: this.settings?.commandPolicyMode || "standard",
       agentRunId,
+      waitForQueuedInsertion: this.queuedInsertionAvailabilityWaiter
+        ? (signal) =>
+            agentRunId
+              ? this.queuedInsertionAvailabilityWaiter?.(
+                  sessionId,
+                  agentRunId,
+                  signal,
+                ) || Promise.resolve(false)
+              : Promise.resolve(false)
+        : undefined,
       enqueueQueuedInsertion: this.queuedInsertionEnqueuer
         ? (insertion) =>
             this.queuedInsertionEnqueuer?.(sessionId, {
@@ -2315,6 +2345,28 @@ export class AgentService_v2 {
     if (msg?.additional_kwargs?.tool_calls) {
       delete msg.additional_kwargs.tool_calls;
     }
+  }
+
+  private trimInterruptedToolCallHistory(
+    messages: BaseMessage[],
+    executedToolCall: any,
+  ): void {
+    const lastMessage = messages[messages.length - 1];
+    if (!AIMessage.isInstance(lastMessage)) {
+      return;
+    }
+
+    const toolCalls = Array.isArray((lastMessage as any).tool_calls)
+      ? (lastMessage as any).tool_calls
+      : [];
+    const executedToolCallId = String(executedToolCall?.id ?? "");
+    const matchingToolCall = toolCalls.find(
+      (call: any) => String(call?.id ?? "") === executedToolCallId,
+    );
+
+    this.cleanupModelToolCallMetadata(lastMessage, [
+      matchingToolCall ?? executedToolCall,
+    ]);
   }
 
   private shouldKeepDebugPayloadInPersistence(): boolean {
