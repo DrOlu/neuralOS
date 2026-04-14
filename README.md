@@ -72,6 +72,7 @@ GyShell is built for **persistent execution in your real terminal runtime**:
 - **Background command completion notifications**
   - nowait and user-skipped commands automatically notify the agent when they finish, closing the async loop without polling
   - if the agent is in a `wait` call when a background command completes, the wait ends early so the agent can react immediately
+  - `wait` maximum duration extended from 60 s to 120 s; `wait_command_end` tool removed — agents use `read_command_output` to inspect background command output
 - **Simpler clipboard paste**
   - large pastes are now inserted as plain text directly across desktop, TUI, and mobile-web — no temp files, no surface inconsistencies
 - **ASSISTANT label display fix**
