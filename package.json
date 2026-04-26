@@ -1,9 +1,9 @@
 {
-  "name": "gyshell",
+  "name": "neurlos",
   "version": "1.4.2",
-  "description": "GyShell - AI-Native Terminal App",
+  "description": "neuralOS - AI-Native Terminal App",
   "main": "./out/main/index.js",
-  "author": "TUOTUO <tuotuo@gyshell.com>",
+  "author": "Hyperspace Technologies <neurlos@hyperspace.ng>",
   "private": true,
   "type": "module",
   "workspaces": [

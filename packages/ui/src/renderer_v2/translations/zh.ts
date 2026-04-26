@@ -246,14 +246,14 @@ export const zh = {
       mcpConfig:
         '打开 MCP (Model Context Protocol) 配置文件。你可以通过此文件接入外部工具，如 Google 搜索、文件索引等。\n\n注意：应用可能无法自动获取你的系统环境变量路径。在配置 mcpServers 时，对于 command 字段（如 npm, node, uv, python 等），请务必填写【绝对路径】！\n例如：使用 "/usr/local/bin/node" 而不是简单的 "node"。',
       skills:
-        '技能是预定义的复杂任务指令模板。AI 会加载这些指令来更好地完成特定领域的工作。\n\nGyShell 会扫描以下目录中的技能：\n1. 【GyShell Custom】：用户自定义技能（存储在 GyShell 数据目录中）。\n2. 【Claude/Goose 兼容】：~/.claude/skills、~/.agents/skills 以及平台特定的配置路径。\n\n注意：对于不在 "GyShell Custom" 文件夹中的技能，请在文件管理器中手动进行编辑或删除管理。',
+        '技能是预定义的复杂任务指令模板。AI 会加载这些指令来更好地完成特定领域的工作。\n\nneuralOS 会扫描以下目录中的技能：\n1. 【neuralOS Custom】：用户自定义技能（存储在 neuralOS 数据目录中）。\n2. 【Claude/Goose 兼容】：~/.claude/skills、~/.agents/skills 以及平台特定的配置路径。\n\n注意：对于不在 "neuralOS Custom" 文件夹中的技能，请在文件管理器中手动进行编辑或删除管理。',
       memory:
         "记忆是全局唯一的 markdown 文件（memory.md），跨会话共享。启用后，后端会把该文件完整内容连同绝对路径和 create_or_edit/read_file 使用说明注入到会话 system prompt。",
       accessTokens:
         "配置 websocket 网关暴露范围与端口，并管理远程访问令牌。令牌只在创建时显示一次明文，磁盘上仅保存加盐哈希。",
     },
     skillSections: {
-      custom: "GyShell 自定义",
+      custom: "neuralOS 自定义",
       others: "外部技能",
     },
   },
