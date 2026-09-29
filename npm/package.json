@@ -1,0 +1,49 @@
+{
+  "name": "neuralos",
+  "version": "3.0.3",
+  "description": "neuralOS - automation foundation model for tiny devices: offline tool-calling + embeddings engine for Node.js, weights bundled",
+  "main": "index.js",
+  "bin": {
+    "neuralos": "cli.js"
+  },
+  "files": [
+    "index.js",
+    "engine.js",
+    "tools.js",
+    "cli.js",
+    "test.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DrOlu/neuralOS.git"
+  },
+  "homepage": "https://github.com/DrOlu/neuralOS#readme",
+  "keywords": [
+    "neuralos",
+    "needle",
+    "llm",
+    "tool-calling",
+    "structured-extraction",
+    "embeddings",
+    "on-device",
+    "offline",
+    "tinyml",
+    "ai"
+  ],
+  "dependencies": {
+    "koffi": "^2.9.0"
+  },
+  "optionalDependencies": {
+    "neuralos-darwin-arm64": "3.0.3",
+    "neuralos-darwin-x64": "3.0.3",
+    "neuralos-linux-x64-gnu": "3.0.3",
+    "neuralos-linux-arm64-gnu": "3.0.3",
+    "neuralos-win32-x64": "3.0.3"
+  }
+}
