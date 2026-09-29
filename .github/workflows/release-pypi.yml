@@ -102,14 +102,12 @@ jobs:
           name: pypi-dist
           path: dist
 
-      # Account-password publishing: PYPI_USERNAME=hyperspaceng and
-      # PYPI_API_TOKEN=<account password>. If PyPI rejects password uploads,
-      # create an API token (pypi.org -> Account settings -> API tokens),
-      # then set PYPI_USERNAME=__token__ and PYPI_API_TOKEN=pypi-...
+      # API-token publishing (username is always the literal __token__ for
+      # PyPI API tokens). PYPI_API_TOKEN holds the pypi-... token.
       - name: Publish
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          user: ${{ secrets.PYPI_USERNAME }}
+          user: __token__
           password: ${{ secrets.PYPI_API_TOKEN }}
           skip-existing: true
 
