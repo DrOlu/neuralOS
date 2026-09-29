@@ -44,6 +44,10 @@ PKG = ROOT / "needle"
 DIST = ROOT / "dist"
 
 ENGINE_REPO = "Cactus-Compute/needle3"
+# The engine generation-3 version whose artifacts are published on the Hub.
+# Bumped only when upstream has actually published the platform wheels
+# (the sync workflow verifies this before bumping).
+ENGINE_VERSION = "3.0.2"
 WEIGHTS_NAME = "needle3.cact"
 
 TARGETS = {
@@ -69,7 +73,10 @@ def http_download(url: str, dest: Path) -> Path:
 
 def fetch_engine_lib(tag: str, lib_name: str, cache: Path) -> Path:
     """Extract needle/libneedle3.* out of the upstream platform wheel."""
-    wheel_name = f"cactus_needle-{args_version}-py3-none-{tag}.whl"
+    # The engine version is pinned independently of the release version:
+    # a neuralos 3.0.3 code release can legitimately bundle the 3.0.2
+    # engine while upstream's 3.0.3 artifacts are not on the Hub yet.
+    wheel_name = f"cactus_needle-{ENGINE_VERSION}-py3-none-{tag}.whl"
     archive_path = cache / wheel_name
     if not archive_path.exists():
         http_download(f"{HF_BASE}/python/{wheel_name}", archive_path)

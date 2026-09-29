@@ -77,24 +77,35 @@ jobs:
             python3 -c 'import re,sys; s=open(sys.argv[1]).read(); m=re.search(r"3:\s*\"([0-9.]+)\"", s); print(m.group(1) if m else "")' "$1"
           }
           NEW_ENGINE=$(engine_from needle/agent/fetch.py)
-          OLD_ENGINE=$(grep -oP 'ENGINE_VERSION = "\K[0-9.]+' scripts/build_neuralos_wheels.py || true)
-          echo "engine: ${OLD_ENGINE} -> ${NEW_ENGINE}"
+          OLD_ENGINE=$(grep -oP '^ENGINE_VERSION = "\K[0-9.]+' scripts/build_neuralos_wheels.py || true)
+          echo "engine pin: ${OLD_ENGINE:-?} -> upstream ${NEW_ENGINE:-?}"
 
           if [ -z "$NEW_ENGINE" ]; then
-            echo "::warning::could not detect the upstream engine version; leaving the pin at ${OLD_ENGINE}"
+            echo "::warning::could not detect the upstream engine version; leaving the pin unchanged"
+            echo "bumped=" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          if [ "$NEW_ENGINE" != "$OLD_ENGINE" ]; then
-            sed -i "s/^ENGINE_VERSION = \".*\"/ENGINE_VERSION = \"${NEW_ENGINE}\"/" scripts/build_neuralos_wheels.py
-            sed -i "s/^version = \".*\"/version = \"${NEW_ENGINE}\"/" pyproject.toml
-            sed -i "s/^__version__ = \".*\"/__version__ = \"${NEW_ENGINE}\"/" needle/__init__.py
-            git add scripts/build_neuralos_wheels.py pyproject.toml needle/__init__.py
-            git commit -m "chore: bump bundled engine pin and package version to ${NEW_ENGINE}"
-            echo "bumped=${NEW_ENGINE}" >> "$GITHUB_OUTPUT"
-          else
+          if [ "$NEW_ENGINE" = "$OLD_ENGINE" ]; then
             echo "bumped=" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+
+          # Only bump the pin when upstream has actually published the engine
+          # artifacts on the Hub (they sometimes merge the version bump first).
+          HAVE=$(curl -sf "https://huggingface.co/api/models/Cactus-Compute/needle3/tree/main/python" 2>/dev/null | grep -c "cactus_needle-${NEW_ENGINE}-py3-none-macosx_11_0_arm64.whl" || true)
+          if [ "${HAVE:-0}" -eq 0 ]; then
+            echo "::warning::engine ${NEW_ENGINE} wheels are not on the Hub yet; pin left at ${OLD_ENGINE} (bundle engine stays ${OLD_ENGINE})"
+            echo "bumped=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          sed -i "s/^ENGINE_VERSION = \".*\"/ENGINE_VERSION = \"${NEW_ENGINE}\"/" scripts/build_neuralos_wheels.py
+          sed -i "s/^version = \".*\"/version = \"${NEW_ENGINE}\"/" pyproject.toml
+          sed -i "s/^__version__ = \".*\"/__version__ = \"${NEW_ENGINE}\"/" needle/__init__.py
+          git add scripts/build_neuralos_wheels.py pyproject.toml needle/__init__.py
+          git commit -m "chore: bump bundled engine pin and package version to ${NEW_ENGINE}"
+          echo "bumped=${NEW_ENGINE}" >> "$GITHUB_OUTPUT"
 
       - name: Push the sync branch
         if: steps.state.outputs.behind != '0'
