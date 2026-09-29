@@ -61,8 +61,10 @@ jobs:
           # workflows, e.g. their release automations, from running here).
           if ! git diff --quiet ORIG_HEAD HEAD -- .github/workflows/ 2>/dev/null; then
             # rm first: git restore cannot delete files the merge ADDED.
+            # --staged --worktree: without --staged the index keeps the
+            # deletions and the amended commit would drop our workflows.
             git rm -rq .github/workflows/
-            git restore --source=ORIG_HEAD -- .github/workflows/
+            git restore --source=ORIG_HEAD --staged --worktree -- .github/workflows/
             git commit --amend --no-edit
             echo "kept our .github/workflows (upstream workflow changes not carried)"
           fi
