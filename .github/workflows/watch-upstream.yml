@@ -103,4 +103,4 @@ jobs:
         if: steps.drift.outputs.behind != '0'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh workflow run sync-upstream.yml --ref main
+        run: gh workflow run sync-upstream.yml --ref main -R DrOlu/neuralOS
