@@ -1,0 +1,108 @@
+name: Watch upstream cactus-needle
+
+# Daily check: is cactus-compute/needle ahead of this fork?
+# If yes, open/update a tracking issue and kick off sync-upstream.yml,
+# which opens a sync PR. Publishing stays manual (tag push).
+
+on:
+  schedule:
+    - cron: "37 6 * * *" # daily 06:37 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  actions: write
+
+env:
+  UPSTREAM_REPO: cactus-compute/needle
+  UPSTREAM_BRANCH: main
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compare fork with upstream
+        id: drift
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
+          git fetch upstream "${UPSTREAM_BRANCH}" --quiet
+
+          BEHIND=$(git rev-list --count "HEAD..upstream/${UPSTREAM_BRANCH}")
+          COMMITS=$(git log --oneline "HEAD..upstream/${UPSTREAM_BRANCH}" | head -20)
+
+          engine_from() {
+            python3 -c 'import re,sys
+            s = open(sys.argv[1]).read()
+            m = re.search(r"3:\s*\"([0-9.]+)\"", s)
+            print(m.group(1) if m else "unknown")' "$1"
+          }
+
+          curl -sfL "https://raw.githubusercontent.com/${UPSTREAM_REPO}/${UPSTREAM_BRANCH}/needle/agent/fetch.py" -o /tmp/upstream_fetch.py
+          UP_ENGINE=$(engine_from /tmp/upstream_fetch.py)
+          LOCAL_ENGINE=$(engine_from needle/agent/fetch.py)
+
+          ENGINE_CHANGED=no
+          if [ -n "$UP_ENGINE" ] && [ "$UP_ENGINE" != "$LOCAL_ENGINE" ] && [ "$UP_ENGINE" != "unknown" ]; then
+            ENGINE_CHANGED=yes
+          fi
+
+          {
+            echo "behind=$BEHIND"
+            echo "upstream_engine=$UP_ENGINE"
+            echo "local_engine=$LOCAL_ENGINE"
+            echo "engine_changed=$ENGINE_CHANGED"
+            echo "commits<<EOF"
+            echo "$COMMITS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "behind: $BEHIND | engine: $LOCAL_ENGINE -> $UP_ENGINE (changed=$ENGINE_CHANGED)"
+
+      - name: Open or update the tracking issue
+        if: steps.drift.outputs.behind != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BEHIND: ${{ steps.drift.outputs.behind }}
+          UP_ENGINE: ${{ steps.drift.outputs.upstream_engine }}
+          LOCAL_ENGINE: ${{ steps.drift.outputs.local_engine }}
+          ENGINE_CHANGED: ${{ steps.drift.outputs.engine_changed }}
+          COMMITS: ${{ steps.drift.outputs.commits }}
+        run: |
+          TITLE="⬆️ Upstream cactus-needle moved: ${BEHIND} commits behind (engine ${LOCAL_ENGINE} → ${UP_ENGINE})"
+          BODY=$(cat <<'MD'
+          `cactus-compute/needle` has new commits not yet in this fork.
+
+          - **Commits we are behind:** ${BEHIND}
+          - **Engine version:** ${LOCAL_ENGINE} → ${UP_ENGINE} (changed: ${ENGINE_CHANGED})
+          - **Compare:** https://github.com/DrOlu/neuralOS/compare/main...cactus-compute:main
+
+          ### New upstream commits
+          ```
+          ${COMMITS}
+          ```
+
+          The `sync-upstream` workflow has been triggered to open/update a sync PR.
+          Releasing a new `neuralos` to PyPI remains manual: merge the PR, then
+          tag (`v<version>`) — the release-pypi pipeline does the rest.
+          MD
+          )
+          EXISTING=$(gh issue list --search "in:title \"⬆️ Upstream cactus-needle moved\"" --state open --json number --jq '.[0].number' || true)
+          if [ -n "$EXISTING" ] && [ "$EXISTING" != "null" ]; then
+            gh issue edit "$EXISTING" --title "$TITLE" --body "$BODY"
+            echo "updated issue #$EXISTING"
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+          fi
+
+      - name: Trigger the sync PR workflow
+        if: steps.drift.outputs.behind != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run sync-upstream.yml --ref main

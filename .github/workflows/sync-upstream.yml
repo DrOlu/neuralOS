@@ -1,0 +1,121 @@
+name: Sync upstream cactus-needle
+
+# Merges upstream/main into a sync branch, bumps the engine pin + package
+# version when the engine generation-3 version changed, and opens/updates a
+# PR. Publishing to PyPI stays manual: merge the PR, then tag v<version>.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  UPSTREAM_REPO: cactus-compute/needle
+  UPSTREAM_BRANCH: main
+  SYNC_BRANCH: upstream-sync
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
+          git fetch upstream "${UPSTREAM_BRANCH}" --quiet
+
+      - name: Short-circuit if already up to date
+        id: state
+        run: |
+          BEHIND=$(git rev-list --count "HEAD..upstream/${UPSTREAM_BRANCH}")
+          echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
+          echo "upstream is $BEHIND commits ahead"
+          if [ "$BEHIND" = "0" ]; then
+            echo "Nothing to do."
+            exit 0
+          fi
+
+      - name: Merge upstream into the sync branch
+        if: steps.state.outputs.behind != '0'
+        run: |
+          git switch -C "${SYNC_BRANCH}"
+          if ! git merge --no-edit "upstream/${UPSTREAM_BRANCH}"; then
+            git merge --abort || true
+            echo "::error::Merge conflict while syncing ${UPSTREAM_REPO}. Resolve manually: git remote add upstream https://github.com/${UPSTREAM_REPO}.git && git fetch upstream && git merge upstream/${UPSTREAM_BRANCH}"
+            exit 1
+          fi
+
+      - name: Bump engine pin and package version when the engine changed
+        if: steps.state.outputs.behind != '0'
+        id: bump
+        run: |
+          engine_from() {
+            python3 -c 'import re,sys
+            s = open(sys.argv[1]).read()
+            m = re.search(r"3:\s*\"([0-9.]+)\"", s)
+            print(m.group(1) if m else "")' "$1"
+          }
+          NEW_ENGINE=$(engine_from needle/agent/fetch.py)
+          OLD_ENGINE=$(grep -oP 'ENGINE_VERSION = "\K[0-9.]+' scripts/build_neuralos_wheels.py || true)
+          echo "engine: ${OLD_ENGINE} -> ${NEW_ENGINE}"
+
+          if [ -z "$NEW_ENGINE" ]; then
+            echo "::warning::could not detect the upstream engine version; leaving the pin at ${OLD_ENGINE}"
+            exit 0
+          fi
+
+          if [ "$NEW_ENGINE" != "$OLD_ENGINE" ]; then
+            sed -i "s/^ENGINE_VERSION = \".*\"/ENGINE_VERSION = \"${NEW_ENGINE}\"/" scripts/build_neuralos_wheels.py
+            sed -i "s/^version = \".*\"/version = \"${NEW_ENGINE}\"/" pyproject.toml
+            sed -i "s/^__version__ = \".*\"/__version__ = \"${NEW_ENGINE}\"/" needle/__init__.py
+            git add scripts/build_neuralos_wheels.py pyproject.toml needle/__init__.py
+            git commit -m "chore: bump bundled engine pin and package version to ${NEW_ENGINE}"
+            echo "bumped=${NEW_ENGINE}" >> "$GITHUB_OUTPUT"
+          else
+            echo "bumped=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push the sync branch
+        if: steps.state.outputs.behind != '0'
+        run: git push --force origin "${SYNC_BRANCH}"
+
+      - name: Open or update the sync PR
+        if: steps.state.outputs.behind != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BEHIND: ${{ steps.state.outputs.behind }}
+          BUMPED: ${{ steps.bump.outputs.bumped }}
+        run: |
+          TITLE="⬆️ Sync with upstream cactus-needle (+${BEHIND} commits)"
+          if [ -n "$BUMPED" ]; then
+            TITLE="⬆️ Sync with upstream cactus-needle (+${BEHIND} commits, engine ${BUMPED})"
+          fi
+          BODY=$(cat <<'MD'
+          Automated sync of `cactus-compute/needle@main` into this fork.
+
+          - **Upstream commits merged:** ${BEHIND}
+          - **Engine pin / package version:** ${BUMPED:-unchanged (code-only sync — bump manually if you want a new PyPI release)}
+
+          ### To release
+          1. Review the diff, then squash-merge this PR into `main`.
+          2. Tag: `git tag v<version> && git push origin v<version>` —
+             `release-pypi.yml` builds, tests, and publishes automatically.
+          MD
+          )
+          if gh pr view "${SYNC_BRANCH}" --json state --jq .state 2>/dev/null | grep -q open; then
+            gh pr edit "${SYNC_BRANCH}" --title "$TITLE" --body "$BODY"
+            echo "updated existing PR"
+          else
+            gh pr create --base main --head "${SYNC_BRANCH}" --title "$TITLE" --body "$BODY"
+          fi
