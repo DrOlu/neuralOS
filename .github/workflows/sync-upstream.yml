@@ -122,9 +122,10 @@ jobs:
              `release-pypi.yml` builds, tests, and publishes automatically.
           MD
           )
-          if gh pr view "${SYNC_BRANCH}" --json state --jq .state 2>/dev/null | grep -q open; then
-            gh pr edit "${SYNC_BRANCH}" --title "$TITLE" --body "$BODY"
-            echo "updated existing PR"
+          EXISTING=$(gh api "repos/DrOlu/neuralOS/pulls?state=open&head=DrOlu/neuralOS:${SYNC_BRANCH}" --jq '.[0].number' || true)
+          if [ -n "$EXISTING" ] && [ "$EXISTING" != "null" ]; then
+            gh api -X PATCH "repos/DrOlu/neuralOS/pulls/${EXISTING}" -f title="$TITLE" -f body="$BODY" --jq .number
+            echo "updated existing PR #$EXISTING"
           else
-            gh pr create --base main --head "${SYNC_BRANCH}" --title "$TITLE" --body "$BODY"
+            gh api -X POST "repos/DrOlu/neuralOS/pulls" -f title="$TITLE" -f head="${SYNC_BRANCH}" -f base=main -f body="$BODY" --jq .number
           fi
