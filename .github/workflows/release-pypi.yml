@@ -23,7 +23,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install build tooling
-        run: pip install build wheel twine
+        run: pip install build wheel twine setuptools
 
       - name: Build wheels (engine-bundled + fallback)
         env:
