@@ -143,6 +143,19 @@ def test_extract_accepts_a_date_written_with_slashes(stub):
     assert invoice.due_date == datetime.date(2024, 12, 31)
 
 
+def test_extract_licenses_a_relative_date_against_its_date_fact(stub):
+    import needle
+
+    tomorrow = datetime.date.today() + datetime.timedelta(days=1)
+    text = "Invoice from Acme for the March 2019 order, due tomorrow"
+    stub.envelopes = [_call(tomorrow.isoformat())]
+    assert "validation" not in needle.Needle(tools=[Invoice]).complete(text)
+
+    invoice = needle.extract(text, Invoice)
+
+    assert invoice.due_date == tomorrow
+
+
 def test_run_refuses_ungrounded_calls_unless_strict_is_off(stub):
     import needle
 
@@ -165,6 +178,21 @@ def test_system_facts_license_relative_dates(stub):
     response = agent.complete("invoice Acme tomorrow for the 2019 reunion")
 
     assert "validation" not in response
+
+
+def test_a_key_ending_in_date_does_not_suppress_the_date_fact(stub):
+    import needle
+
+    tomorrow = datetime.date.today() + datetime.timedelta(days=1)
+    stub.envelopes = [_call(tomorrow.isoformat())]
+    agent = needle.Needle(tools=[Invoice], system="user: Sam; last update: never")
+    response = agent.complete("invoice Acme tomorrow for the March 2019 order")
+
+    assert "validation" not in response
+    assert agent._system_text.startswith("date: ")
+    assert needle._with_date_fact("candidate: Sam").startswith("date: ")
+    for system in ("date: 2026-07-21 Tue 14:30", "locale: en-US; date: Tue"):
+        assert needle._with_date_fact(system) == system
 
 
 def test_years_carry_across_turns_until_reset(stub):
@@ -359,3 +387,26 @@ def test_run_still_refuses_a_non_numeric_engine_flag(stub):
     response = agent.run("make it 21 and cool the room")
 
     assert response["results"] == [{"error": "ungrounded mode"}]
+
+
+def test_a_time_after_a_day_and_month_is_not_read_as_a_year(stub):
+    import needle
+
+    stub.envelopes = [_call("2026-06-05")]
+    agent = needle.Needle(tools=[Invoice])
+    response = agent.complete("Send an invoice to Acme due on 5 June 19:30")
+
+    assert "validation" not in response
+    assert needle._source_years("due on 5 June 19:30") == set()
+    assert needle._source_years("due on June 5 7 pm") == set()
+    assert needle._source_years("due on June 5, 2031 19:30") == {2031}
+    assert needle._source_years("due on 5 June 2031") == {2031}
+
+
+def test_extract_accepts_a_date_followed_by_a_time(stub):
+    import needle
+
+    stub.envelopes = [_call("2026-03-03")]
+    invoice = needle.extract("Invoice from Acme Corp due March 3 14:00", Invoice)
+
+    assert invoice.due_date == datetime.date(2026, 3, 3)

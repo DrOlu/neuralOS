@@ -367,8 +367,9 @@ class Needle:
 
     def extract(self, text: str, schema: type | dict, max_new_tokens: int = 512,
                 strict: bool = True) -> object:
-        return extract(text, schema, max_new_tokens=max_new_tokens,
-                       weights=self._weights, strict=strict)
+        return extract(text, schema, system=self._system_text or None,
+                       max_new_tokens=max_new_tokens, weights=self._weights,
+                       strict=strict, generation=self._generation)
 
     def reset(self):
         self._bind()
@@ -433,8 +434,11 @@ def _source_years(text):
               r"jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|"
               r"oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)")
     patterns = [
-        rf"\b\d{{1,2}}(?:st|nd|rd|th)?\s+{months}[\s,]+(\d{{1,4}})(?![0-9A-Za-z])",
-        rf"\b{months}\s+\d{{1,2}}(?:st|nd|rd|th)?\s*,?\s+(\d{{1,4}})(?![0-9A-Za-z])",
+        # The number after a day and month is its year, unless it is the hour of
+        # a time ("5 June 19:30", "June 5 7 pm"): no ISO argument can carry
+        # that as a year, so licensing it would reject every date.
+        rf"\b\d{{1,2}}(?:st|nd|rd|th)?\s+{months}[\s,]+(\d{{1,4}})(?![0-9A-Za-z]|:\d|\s*[ap]\.?m\b)",
+        rf"\b{months}\s+\d{{1,2}}(?:st|nd|rd|th)?\s*,?\s+(\d{{1,4}})(?![0-9A-Za-z]|:\d|\s*[ap]\.?m\b)",
         rf"\b{months}[\s,]+(\d{{3,4}})(?![0-9A-Za-z])",
         r"\byear\s+(\d{1,4})(?![0-9A-Za-z])",
         # Year-first numeric dates only (2024-03-15, 2024/03/15).  A day- or
@@ -448,11 +452,14 @@ def _source_years(text):
 
 
 _ISO_STAMP = re.compile(r"\d{4}-\d{2}-\d{2}")
+# The `date:` key itself, not the tail of another key such as `update:` or
+# `candidate:`, which would otherwise leave the engine without a date.
+_DATE_KEY = re.compile(r"(?<![A-Za-z])date:")
 
 
 def _with_date_fact(system: str) -> str:
     """Prefix the local date fact unless the caller already supplied one."""
-    if "date:" in system or _ISO_STAMP.search(system):
+    if _DATE_KEY.search(system) or _ISO_STAMP.search(system):
         return system
     now = datetime.datetime.now()
     fact = now.strftime("date: %Y-%m-%d %a %H:%M")
@@ -632,6 +639,9 @@ def extract(text: str, schema: type | dict, system: str | None = None,
     _track("extract", {"n_tools": 1, "tuned": bool(selected),
                        "generation": generation})
     agent = Needle(tools=[schema], system=system, weights=selected, generation=generation)
+    # Validate against the facts the engine saw, including the automatic
+    # `date:` fact, so a relative date is licensed exactly as in complete().
+    facts = agent._system_text
     try:
         response = agent._complete(text, max_new_tokens)
     finally:
@@ -641,5 +651,5 @@ def extract(text: str, schema: type | dict, system: str | None = None,
         return None
     arguments = calls[0].get("arguments") or {}
     if strict:
-        _validate_extraction(text, schema, arguments, response, system)
+        _validate_extraction(text, schema, arguments, response, facts)
     return schema(**arguments) if _is_pydantic_model(schema) else arguments
