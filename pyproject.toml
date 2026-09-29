@@ -1,7 +1,11 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "cactus-needle"
-version = "3.0.1"
-description = "A 14MB foundation tool-calling model for tiny devices: inference, LoRA finetuning, and build."
+name = "neuralos"
+version = "3.0.2"
+description = "neuralOS - automation foundation model for tiny devices: 2-bit tool-calling engine, bundled for offline install. Inference, LoRA finetuning, and build."
 requires-python = ">=3.9"
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -29,17 +33,19 @@ test = ["pytest", "pydantic"]
 
 [project.scripts]
 needle = "needle.cli:main"
+neuralos = "needle.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["needle*"]
 
 [tool.setuptools.package-data]
+# Engine-bundled platform wheels stage libneedle3.* and needle3.cact here
+# (scripts/build_neuralos_wheels.py) before the wheel is built. The runtime
+# (needle/_library_path + _base_weights_path) picks them up automatically;
+# wheels without them fall back to the HuggingFace download path.
+"needle" = ["libneedle*.dylib", "libneedle*.so", "libneedle*.dll", "*.cact"]
 "needle.model" = ["*.model", "*.vocab"]
 "needle.playground" = ["index.html", "app.js", "style.css"]
-
-[build-system]
-requires = ["setuptools>=68.0"]
-build-backend = "setuptools.build_meta"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

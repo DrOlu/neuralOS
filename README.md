@@ -21,7 +21,14 @@ The interactive frontier plot, the architecture and the fine-tuning results are 
 ## Get started
 
 ```sh
-pip install cactus-needle
+pip install neuralos
+
+> **neuralOS vs cactus-needle:** the `neuralos` PyPI distribution is this
+> project with the engine **bundled** - its platform wheels ship the engine
+> shared library and the base weights (~36 MB), so it works fully offline
+> after install. The `needle` command is installed as an alias alongside
+> `neuralos`. `pip install cactus-needle` keeps the download-at-runtime
+> behavior (engine fetched from HuggingFace on first use).
 ```
 
 Try it in the browser at [cactuscompute.com/needle](https://cactuscompute.com/needle); the weights and every platform engine are on [Hugging Face](https://huggingface.co/Cactus-Compute/needle3).

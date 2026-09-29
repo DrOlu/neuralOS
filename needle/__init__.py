@@ -12,7 +12,7 @@ from .agent.tools import Field, build_schema, pydantic_schema, tool, _is_pydanti
 from ._telemetry import track as _track
 from ._worker import FineTuneWorker
 
-__version__ = "3.0.1"
+__version__ = "3.0.2"
 __all__ = ["Needle", "ExtractionValidationError", "tool", "Field", "extract",
            "__version__"]
 
@@ -112,7 +112,12 @@ def _library_path(generation=2):
 def _base_weights_path(generation):
     from .agent import fetch
 
-    local = os.path.join(fetch.cache_dir(generation), fetch.base_weights(generation))
+    name = fetch.base_weights(generation)
+    # Engine-bundled wheels ship the weights next to the package code.
+    bundled = os.path.join(os.path.dirname(os.path.abspath(__file__)), name)
+    if os.path.exists(bundled):
+        return bundled
+    local = os.path.join(fetch.cache_dir(generation), name)
     if os.path.exists(local):
         return local
     return fetch.fetch_weights(generation)

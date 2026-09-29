@@ -1,0 +1,129 @@
+name: Release neuralOS to PyPI
+
+# Builds engine-bundled platform wheels + a binary-free fallback wheel and
+# publishes them to PyPI. Trigger: push a tag like v3.0.2.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write # attach wheels to the GitHub release
+
+jobs:
+  build:
+    name: Build wheels
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tooling
+        run: pip install build wheel twine setuptools
+
+      - name: Build wheels (engine-bundled + fallback)
+        env:
+          NEURALOS_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '3.0.2' }}
+        run: |
+          python scripts/build_neuralos_wheels.py --version "${NEURALOS_VERSION#v}"
+
+      - name: Verify wheel contents
+        run: |
+          for w in dist/*.whl; do
+            echo "== $w"
+            python -m zipfile -l "$w" | grep -E 'libneedle|needle3.cact|RECORD' || true
+          done
+          twine check dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pypi-dist
+          path: dist/*.whl
+          retention-days: 7
+
+  install-test:
+    name: Install test (${{ matrix.os }})
+    needs: build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-22.04, windows-latest]
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: pypi-dist
+          path: dist
+
+      - name: pip install the platform wheel and verify the bundled engine
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            macOS)  PAT='macosx_11_0_arm64' ;;
+            Linux)  PAT='manylinux2014_x86_64' ;;
+            Windows) PAT='win_amd64' ;;
+          esac
+          wheel=$(ls dist/*"$PAT".whl)
+          pip install "$wheel"
+          python - <<'PY'
+          import os
+          import needle
+
+          lib = needle._library_path(3)
+          assert os.path.isfile(lib), f"bundled engine not found: {lib}"
+          weights = needle._base_weights_path(3)
+          assert os.path.isfile(weights) and os.path.getsize(weights) > 1_000_000, \
+              f"bundled weights missing: {weights}"
+          print("engine:", lib)
+          print("weights:", weights, f"({os.path.getsize(weights) // 1_000_000} MB)")
+          print("version:", needle.__version__)
+          PY
+          # `neuralos` and `needle` are the same CLI; verify the alias resolves.
+          neuralos --help > /dev/null 2>&1 || needle --help > /dev/null
+          # Do NOT run inference here: keep CI deterministic; the bundled-engine
+          # locator + weights checks above are the gate.
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [build, install-test]
+    runs-on: ubuntu-latest
+    environment: pypi
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: pypi-dist
+          path: dist
+
+      # Account-password publishing: PYPI_USERNAME=hyperspaceng and
+      # PYPI_API_TOKEN=<account password>. If PyPI rejects password uploads,
+      # create an API token (pypi.org -> Account settings -> API tokens),
+      # then set PYPI_USERNAME=__token__ and PYPI_API_TOKEN=pypi-...
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          user: ${{ secrets.PYPI_USERNAME }}
+          password: ${{ secrets.PYPI_API_TOKEN }}
+
+  attach-to-release:
+    name: Attach wheels to GitHub release
+    needs: publish-pypi
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: pypi-dist
+          path: dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.whl
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
