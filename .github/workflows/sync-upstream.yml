@@ -10,7 +10,6 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  workflows: write # the sync merge carries upstream workflow-file changes
 
 env:
   UPSTREAM_REPO: cactus-compute/needle
