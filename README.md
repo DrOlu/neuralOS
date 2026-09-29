@@ -21,6 +21,17 @@ The interactive frontier plot, the architecture and the fine-tuning results are 
 ## Get started
 
 ```sh
+or bootstrap it with one line (creates an isolated venv, verifies the wheel
+checksum, shims `neuralos` onto PATH):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/DrOlu/neuralOS/main/install.sh | sh
+```
+
+```powershell
+irm https://raw.githubusercontent.com/DrOlu/neuralOS/main/install.ps1 | iex
+```
+
 pip install neuralos
 
 > **neuralOS vs cactus-needle:** the `neuralos` PyPI distribution is this
