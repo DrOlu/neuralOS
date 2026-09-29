@@ -61,10 +61,7 @@ jobs:
         id: bump
         run: |
           engine_from() {
-            python3 -c 'import re,sys
-            s = open(sys.argv[1]).read()
-            m = re.search(r"3:\s*\"([0-9.]+)\"", s)
-            print(m.group(1) if m else "")' "$1"
+            python3 -c 'import re,sys; s=open(sys.argv[1]).read(); m=re.search(r"3:\s*\"([0-9.]+)\"", s); print(m.group(1) if m else "")' "$1"
           }
           NEW_ENGINE=$(engine_from needle/agent/fetch.py)
           OLD_ENGINE=$(grep -oP 'ENGINE_VERSION = "\K[0-9.]+' scripts/build_neuralos_wheels.py || true)

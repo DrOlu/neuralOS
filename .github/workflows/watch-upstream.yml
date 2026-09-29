@@ -38,10 +38,7 @@ jobs:
           COMMITS=$(git log --oneline "HEAD..upstream/${UPSTREAM_BRANCH}" | head -20)
 
           engine_from() {
-            python3 -c 'import re,sys
-            s = open(sys.argv[1]).read()
-            m = re.search(r"3:\s*\"([0-9.]+)\"", s)
-            print(m.group(1) if m else "unknown")' "$1"
+            python3 -c 'import re,sys; s=open(sys.argv[1]).read(); m=re.search(r"3:\s*\"([0-9.]+)\"", s); print(m.group(1) if m else "unknown")' "$1"
           }
 
           curl -sfL "https://raw.githubusercontent.com/${UPSTREAM_REPO}/${UPSTREAM_BRANCH}/needle/agent/fetch.py" -o /tmp/upstream_fetch.py
