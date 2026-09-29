@@ -60,6 +60,8 @@ jobs:
           # .github/workflows/ in every sync (this also stops upstream's own
           # workflows, e.g. their release automations, from running here).
           if ! git diff --quiet ORIG_HEAD HEAD -- .github/workflows/ 2>/dev/null; then
+            # rm first: git restore cannot delete files the merge ADDED.
+            git rm -rq .github/workflows/
             git restore --source=ORIG_HEAD -- .github/workflows/
             git commit --amend --no-edit
             echo "kept our .github/workflows (upstream workflow changes not carried)"
