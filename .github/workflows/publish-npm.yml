@@ -1,0 +1,57 @@
+name: Publish neuralOS to npm
+
+# Tag push (v*): publishes the npm package set at the tag version — version
+# parity with the PyPI release (release-pypi.yml fires on the same tag).
+# workflow_dispatch: rebuilds and republishes at npm/package.json's version
+# (used for the one-time republish after the npm name hold).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build npm packages (main + 5 engine platforms)
+        env:
+          NEURALOS_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: |
+          if [ -n "$NEURALOS_VERSION" ]; then
+            python scripts/build_npm_packages.py --version "${NEURALOS_VERSION#v}"
+          else
+            python scripts/build_npm_packages.py
+          fi
+
+      - name: Verify staged packages
+        run: |
+          for d in npm/dist/*/; do
+            echo "== $d"
+            python3 -c "import json;m=json.load(open('$d/package.json'));print(m['name'], m['version'])"
+          done
+
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          for d in npm/dist/neuralos-darwin-arm64 npm/dist/neuralos-darwin-x64 \
+                   npm/dist/neuralos-linux-x64-gnu npm/dist/neuralos-linux-arm64-gnu \
+                   npm/dist/neuralos-win32-x64 npm/dist/neuralos; do
+            echo "publishing $d"
+            npm publish "$d" --access public
+          done

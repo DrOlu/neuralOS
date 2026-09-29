@@ -127,13 +127,15 @@ def stage_main(version: str, out: Path) -> Path:
 def main() -> None:
     global EV
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--version", required=True, help="release version (must match PyPI)")
+    parser.add_argument("--version", default=None,
+                        help="release version (default: npm/package.json version)")
     parser.add_argument("--targets", default=",".join(TARGETS))
     parser.add_argument("--out", default=str(NPM / "dist"))
     args = parser.parse_args()
     EV = engine_version()
     print(f"engine pin: {EV}")
 
+    args.version = args.version or json.loads((NPM / "package.json").read_text())["version"]
     if not re.match(r"^\d+\.\d+\.\d+$", args.version):
         raise SystemExit(f"invalid version: {args.version!r}")
 
