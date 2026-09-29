@@ -56,6 +56,15 @@ jobs:
             echo "::error::Merge conflict while syncing ${UPSTREAM_REPO}. Resolve manually: git remote add upstream https://github.com/${UPSTREAM_REPO}.git && git fetch upstream && git merge upstream/${UPSTREAM_BRANCH}"
             exit 1
           fi
+          # GITHUB_TOKEN can never push workflow-file changes, and our release
+          # pipeline is independent of upstream's — so intentionally keep OUR
+          # .github/workflows/ in every sync (this also stops upstream's own
+          # workflows, e.g. their release automations, from running here).
+          if ! git diff --quiet ORIG_HEAD HEAD -- .github/workflows/ 2>/dev/null; then
+            git restore --source=ORIG_HEAD -- .github/workflows/
+            git commit --amend --no-edit
+            echo "kept our .github/workflows (upstream workflow changes not carried)"
+          fi
 
       - name: Bump engine pin and package version when the engine changed
         if: steps.state.outputs.behind != '0'
@@ -104,6 +113,7 @@ jobs:
 
           - **Upstream commits merged:** ${BEHIND}
           - **Engine pin / package version:** ${BUMPED:-unchanged (code-only sync — bump manually if you want a new PyPI release)}
+          - **`.github/workflows/`:** ours kept by design — upstream workflow changes are never carried, so upstream automations can't run in this repo
 
           ### To release
           1. Review the diff, then squash-merge this PR into `main`.
