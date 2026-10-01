@@ -83,6 +83,16 @@ function Field({ default: defaultValue, description, enum: enum_, const: const_,
   }
   if (const_ !== undefined) schema.const = const_;
   if (defaultValue !== undefined) schema.default = defaultValue;
+
+  // Python parity: `needle.Field(ge=0).apply({"type": "number"})`. The method is
+  // non-enumerable so JSON.stringify(schema) — i.e. the payload sent to the
+  // engine — is byte-identical to the plain constraints object.
+  Object.defineProperty(schema, 'apply', {
+    enumerable: false,
+    value(target) {
+      return { ...(target || {}), ...this };
+    },
+  });
   return schema;
 }
 

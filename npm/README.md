@@ -70,12 +70,28 @@ const invoice = extract('Invoice INV-1042 issued 12 May 2024, total 49.62 USD.',
       invoice_no: Field({ type: 'string' }),
       issue_date: Field({ type: 'string', format: 'date' }),
       total:      Field({ type: 'number', ge: 0 }),
+      // the Python idiom works too:
+      balance:    Field({ ge: 0 }).apply({ type: 'number' }),
     },
     required: ['invoice_no', 'total'],
   },
 });
 // { invoice_no: 'INV-1042', issue_date: '2024-05-12', total: 49.62 }
 ```
+
+`Field(...)` accepts the same constraints as Python's `needle.Field` (`ge`, `le`,
+`gt`, `lt`, `multiple_of`, `min_length`, `max_length`, `pattern`, `format`,
+`enum`, `const`, `min_items`, `max_items`, `unique_items`, `description`,
+`default`) and returns a JSON-schema fragment. Both call styles are supported and
+produce identical schemas:
+
+```js
+Field({ type: 'number', ge: 0 })                 // Node form (schema inline)
+Field({ ge: 0 }).apply({ type: 'number' })       // Python form (merge onto a schema)
+```
+
+> Node's `Field` is a permissive superset of Python's: it also accepts a full
+> schema (`type` and friends) inline, which Python's `Field` does not.
 
 With `strict: true` (the default) a value the input does not license raises
 `ExtractionValidationError` instead of being returned silently — a date whose
