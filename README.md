@@ -33,6 +33,18 @@ irm https://raw.githubusercontent.com/DrOlu/neuralOS/main/install.ps1 | iex
 ```
 
 pip install neuralos
+```
+
+```bash
+npm install neuralos       # Node.js — same version number, same API surface
+```
+
+> **One version, two channels.** The PyPI wheels and the npm package set are
+> built from the same release tag, so `npm view neuralos version` and the wheel
+> filename always agree (currently **3.10.0**). The npm package bundles the
+> engine and weights for macOS arm64/x64, Linux x64/arm64 (glibc) and Windows
+> x64; the wheels carry a broader engine matrix. The engine's own release line
+> is independent of the product version.
 
 > **neuralOS vs cactus-needle:** the `neuralos` PyPI distribution is this
 > project with the engine **bundled** - its platform wheels ship the engine

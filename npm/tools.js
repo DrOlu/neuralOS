@@ -28,6 +28,11 @@ function normalizeTools(tools, functions) {
       if (typeof entry.implementation === 'function') {
         functions.set(entry.name, entry.implementation);
       }
+    } else if (entry && typeof entry === 'object') {
+      // An ANONYMOUS schema: the record itself is the only tool (Python parity —
+      // needle._resolve passes plain dicts through unwrapped, which is what
+      // extract() relies on: the engine answers with arguments only).
+      schemas.push(entry);
     } else {
       throw new TypeError(
         'neuralOS: each tool must be a schema object {name, description, parameters, implementation?} ' +
@@ -44,4 +49,41 @@ function tool(schema, fn) {
   return wrapped;
 }
 
-module.exports = { normalizeTools, tool };
+/**
+ * Field — declarative constraints for a schema property, mirroring the Python
+ * `needle.Field`. Build the property, then attach it to your JSON schema:
+ *
+ *   parameters: {
+ *     type: 'object',
+ *     properties: {
+ *       total: Field({ type: 'number', description: 'invoice total', ge: 0 }),
+ *       status: Field({ type: 'string', enum: ['paid', 'unpaid', 'overdue'] }),
+ *     },
+ *     required: ['total'],
+ *   }
+ *
+ * Python parity: ge/le → minimum/maximum, gt/lt → exclusiveMinimum/Maximum,
+ * min_length/max_length → minLength/maxLength, min_items/max_items →
+ * minItems/maxItems, plus enum/const/pattern/format/multipleOf.
+ */
+function Field({ default: defaultValue, description, enum: enum_, const: const_,
+                 ge, le, gt, lt, multiple_of: multipleOf, min_length: minLength,
+                 max_length: maxLength, pattern, format, min_items: minItems,
+                 max_items: maxItems, unique_items: uniqueItems, ...rest } = {}) {
+  const schema = { ...rest };
+  const pairs = [['description', description], ['enum', enum_],
+                 ['minimum', ge], ['maximum', le],
+                 ['exclusiveMinimum', gt], ['exclusiveMaximum', lt],
+                 ['multipleOf', multipleOf], ['minLength', minLength],
+                 ['maxLength', maxLength], ['pattern', pattern], ['format', format],
+                 ['minItems', minItems], ['maxItems', maxItems],
+                 ['uniqueItems', uniqueItems]];
+  for (const [key, value] of pairs) {
+    if (value !== undefined && value !== null) schema[key] = value;
+  }
+  if (const_ !== undefined) schema.const = const_;
+  if (defaultValue !== undefined) schema.default = defaultValue;
+  return schema;
+}
+
+module.exports = { normalizeTools, tool, Field };

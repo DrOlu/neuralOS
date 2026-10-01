@@ -1,9 +1,12 @@
 name: Publish neuralOS to npm
 
-# Tag push (v*): publishes the npm package set at the tag version — version
-# parity with the PyPI release (release-pypi.yml fires on the same tag).
-# workflow_dispatch: rebuilds and republishes at npm/package.json's version
-# (used for the one-time republish after the npm name hold).
+# Tag push (v*): publishes the npm package set at the TAG version, so npm and
+# PyPI (release-pypi.yml) always report the same number for the same release.
+# workflow_dispatch: rebuilds at npm/package.json's version (republish path).
+#
+# Idempotent: a version already on the registry is skipped, so re-running a tag
+# (or re-dispatching after a partial publish) never fails on 403 "cannot publish
+# over the previously published versions".
 
 on:
   push:
@@ -29,9 +32,17 @@ jobs:
           python-version: "3.12"
 
       - name: Build npm packages (main + 5 engine platforms)
-        # npm version = npm/package.json (its own lineage, currently 3.9.x —
-        # tag versions collide with the deprecated daemon history).
-        run: python scripts/build_npm_packages.py
+        # Version parity is enforced: the tag drives both this and release-pypi.yml,
+        # so npm and PyPI always ship the same number.
+        env:
+          NEURALOS_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: |
+          VER="${NEURALOS_VERSION#v}"
+          if [ -z "$VER" ]; then
+            VER=$(python3 -c "import json;print(json.load(open('npm/package.json'))['version'])")
+            echo "workflow_dispatch: using npm/package.json version $VER"
+          fi
+          python scripts/build_npm_packages.py --version "$VER"
 
       - name: Verify staged packages
         run: |
@@ -40,13 +51,21 @@ jobs:
             python3 -c "import json;m=json.load(open('$d/package.json'));print(m['name'], m['version'])"
           done
 
-      - name: Publish
+      - name: Publish (idempotent — skips versions already on the registry)
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          for d in npm/dist/neuralos-darwin-arm64 npm/dist/neuralos-darwin-x64 \
-                   npm/dist/neuralos-linux-x64-gnu npm/dist/neuralos-linux-arm64-gnu \
-                   npm/dist/neuralos-win32-x64 npm/dist/neuralos; do
-            echo "publishing $d"
+          # Iterate the staged directories rather than a hardcoded list: the
+          # Windows payload ships as neuralos-engine-windows-x64 (npm rejects
+          # "neuralos-win32-x64" as a look-alike name), and a hardcoded list
+          # breaks on every rename.
+          for d in npm/dist/*/; do
+            NAME=$(python3 -c "import json;print(json.load(open('$d/package.json'))['name'])")
+            VER=$(python3 -c "import json;print(json.load(open('$d/package.json'))['version'])")
+            if npm view "$NAME@$VER" version >/dev/null 2>&1; then
+              echo "skip    $NAME@$VER (already published)"
+              continue
+            fi
+            echo "publish $NAME@$VER"
             npm publish "$d" --access public
           done

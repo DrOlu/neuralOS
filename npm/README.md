@@ -54,7 +54,72 @@ neuralos info
 
 ## Platforms
 
-Bundled engines: macOS arm64/x64, Linux x64/arm64 (glibc), Windows x64.
+## Structured extraction (same API as Python)
+
+Declare the record, hand over messy text, get typed fields back. The API is the
+Node mirror of the Python `needle.extract` — same semantics, same validation:
+
+```js
+const { extract, Field } = require('neuralos');
+
+const invoice = extract('Invoice INV-1042 issued 12 May 2024, total 49.62 USD.', {
+  name: 'Invoice',                       // named schema = the engine's call target
+  parameters: {
+    type: 'object',
+    properties: {
+      invoice_no: Field({ type: 'string' }),
+      issue_date: Field({ type: 'string', format: 'date' }),
+      total:      Field({ type: 'number', ge: 0 }),
+    },
+    required: ['invoice_no', 'total'],
+  },
+});
+// { invoice_no: 'INV-1042', issue_date: '2024-05-12', total: 49.62 }
+```
+
+With `strict: true` (the default) a value the input does not license raises
+`ExtractionValidationError` instead of being returned silently — a date whose
+year is not written in the text, an invented number, or a negated request:
+
+```js
+const { extract, ExtractionValidationError } = require('neuralos');
+try {
+  extract('Invoice with no date mentioned', { name: 'Invoice', parameters: { /* … */ } });
+} catch (err) {
+  if (err instanceof ExtractionValidationError) console.error(err.message);
+}
+```
+
+Return value: the extracted record, or `null` when the model emits no call.
+Pass `strict: false` to receive unvalidated values.
+
+### CLI
+
+```bash
+neuralos extract --schema invoice.schema.json --text "Invoice INV-7, 3 March 2024, total 12.50"
+neuralos extract --schema invoice.schema.json --text "…" --no-strict
+```
+
+Exits `1` with the grounding message when strict validation fails.
+
+## Feature parity with the Python distribution
+
+| Capability | Python (`pip install neuralos`) | Node (this package) |
+|---|---|---|
+| Tool calling | `Needle().run()` | `new Needle().run()` |
+| Structured extraction | `needle.extract()` | `extract()` |
+| Field constraints | `needle.Field(...)` | `Field(...)` |
+| Grounding validation | `ExtractionValidationError` | `ExtractionValidationError` |
+| Embeddings | `.embed()` | `.embed()` |
+| CLI | `run \| embed \| info` | `run \| extract \| embed \| info` |
+| Engine + weights bundled | wheels | platform packages |
+
+Both distributions are released **at the same version number** from the same
+tag, so `npm view neuralos version` and `pip index versions neuralos` agree.
+
+Bundled engines: macOS arm64/x64, Linux x64/arm64 (glibc), **Windows x64**.
+Other platforms are not packaged — the Python distribution
+(`pip install neuralos`) carries a broader engine matrix.
 Other platforms are not packaged — the Python distribution
 (`pip install neuralos`) carries a broader engine matrix.
 

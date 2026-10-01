@@ -11,7 +11,7 @@ Targets and npm os/cpu (main package resolves via engine.js):
   darwin-x64        neuralos-darwin-x64        macosx_11_0_x86_64     libneedle3.dylib
   linux-x64-gnu     neuralos-linux-x64-gnu     manylinux2014_x86_64   libneedle3.so
   linux-arm64-gnu   neuralos-linux-arm64-gnu   manylinux2014_aarch64  libneedle3.so
-  win32-x64         neuralos-win32-x64         win_amd64              libneedle3.dll
+  win32-x64         neuralos-engine-windows-x64  win_amd64            libneedle3.dll
 """
 
 from __future__ import annotations
@@ -41,7 +41,11 @@ TARGETS = {
                       "lib": "libneedle3.so", "os": ["linux"], "cpu": ["x64"], "libc": ["glibc"]},
     "linux-arm64-gnu": {"pkg": "neuralos-linux-arm64-gnu", "tag": "manylinux2014_aarch64",
                         "lib": "libneedle3.so", "os": ["linux"], "cpu": ["arm64"], "libc": ["glibc"]},
-    "win32-x64": {"pkg": "neuralos-win32-x64", "tag": "win_amd64",
+    # NOTE: npm's spam heuristics block the name "neuralos-win32-x64" as a
+    # look-alike of "neuralos" (403, name-level, not metadata). The Windows
+    # payload therefore ships as "neuralos-engine-windows-x64"; engine.js maps
+    # the win32-x64 key onto it.
+    "win32-x64": {"pkg": "neuralos-engine-windows-x64", "tag": "win_amd64",
                   "lib": "libneedle3.dll", "os": ["win32"], "cpu": ["x64"]},
 }
 
@@ -97,15 +101,33 @@ def stage_platform(target: str, version: str, cache: Path, out: Path) -> Path:
     manifest = {
         "name": spec["pkg"],
         "version": version,
-        "description": f"neuralOS engine (libneedle3) + weights for {target}",
+        "description": (
+            f"neuralOS engine (libneedle3) and base weights (needle3.cact) for "
+            f"{target} — the platform payload for the neuralos package. Install "
+            f"neuralos instead of this package directly."
+        ),
         "os": spec["os"],
         "cpu": spec["cpu"],
         **({"libc": spec["libc"]} if "libc" in spec else {}),
-        "files": ["bin"],
+        "files": ["bin", "README.md"],
         "license": "Apache-2.0",
+        "homepage": "https://neuralos.ng",
+        "author": "Neural AI (Hyperspace Technologies)",
+        "keywords": ["neuralos", "needle", "on-device", "offline", "tool-calling",
+                     "embeddings", target],
         "repository": {"type": "git", "url": "git+https://github.com/DrOlu/neuralOS.git"},
+        "publishConfig": {"access": "public"},
     }
     (pkg_dir / "package.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    (pkg_dir / "README.md").write_text(
+        f"# {spec['pkg']}\n\n"
+        f"Platform payload for **neuralos** — the {target} build of the neuralOS\n"
+        f"engine (`{spec['lib']}`) and the base weights (`{WEIGHTS_NAME}`, ~35 MB).\n\n"
+        "This package is installed automatically as an optional dependency of\n"
+        "`neuralos` on matching platforms; do not install it directly.\n\n"
+        "```bash\nnpm install neuralos\n```\n\n"
+        "Docs: https://neuralos.ng · Source: https://github.com/DrOlu/neuralOS\n"
+        "License: Apache-2.0\n")
     return pkg_dir
 
 

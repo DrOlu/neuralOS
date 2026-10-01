@@ -17,10 +17,25 @@
  *
  *   const agent = new Needle({ tools: [getWeather] });
  *   console.log(agent.run("What's the weather in Lagos?"));
+ *
+ * Structured extraction (Python parity):
+ *
+ *   const { extract, Field } = require('neuralos');
+ *   const invoice = extract('Invoice INV-7, 12 May 2024, total 49.62', {
+ *     type: 'object',
+ *     properties: {
+ *       invoice_no: Field({ type: 'string' }),
+ *       issue_date: Field({ type: 'string', format: 'date' }),
+ *       total:      Field({ type: 'number', ge: 0 }),
+ *     },
+ *     required: ['invoice_no', 'total'],
+ *   });
  */
 
 const engineLoader = require('./engine');
-const { normalizeTools, tool } = require('./tools');
+const { normalizeTools, tool, Field } = require('./tools');
+const { ExtractionValidationError, sourceYears, groundedNumberPaths,
+        ungroundedPaths, annotateUngrounded, validateExtraction } = require('./validate');
 
 const UNRESET_TURNS = 4;
 
@@ -52,6 +67,7 @@ class Needle {
     this.systemText = withDateFact(system, autoDate);
     this.toolsJson = JSON.stringify(this._schemas);
     this._stateless = !!stateless;
+    this._seenYears = new Set();
     this._turns = 0;
     this._bufferSize = bufferSize;
     this._bind();
@@ -76,7 +92,7 @@ class Needle {
     return this._complete(text, maxNewTokens);
   }
 
-  _complete(text, maxNewTokens, parse = true) {
+  _complete(text, maxNewTokens, parse = true, annotate = true) {
     this._bind();
     const e = engineLoader.engine();
     const buffer = e.allocBuffer(this._bufferSize);
@@ -93,11 +109,15 @@ class Needle {
     } catch (err) {
       throw new Error(`neuralOS: engine returned an unparseable envelope (${err.message})`);
     }
+    for (const year of sourceYears(text || '')) this._seenYears.add(year);
+    if (annotate) {
+      annotateUngrounded(response, this._schemas, this._seenYears, this.systemText, text);
+    }
     return response;
   }
 
   /** Execute tool calls until the model responds. Mirrors Python's run(). */
-  run(query = '', { maxSteps = 8, maxNewTokens = 512 } = {}) {
+  run(query = '', { maxSteps = 8, maxNewTokens = 512, strict = true } = {}) {
     if (this._stateless) this.reset();
     this._countQuery();
     let response = this._complete(query, maxNewTokens);
@@ -106,8 +126,18 @@ class Needle {
       const calls = response.function_calls || [];
       if (response.type !== 'call' || !calls.length) break;
       const results = [];
+      const ungrounded = ungroundedPaths(response);
       for (const call of calls) {
         const name = String(call.name);
+        let fabricated = [...(ungrounded.get(name) || [])].sort();
+        if (strict && fabricated.length) {
+          const grounded = groundedNumberPaths(call.arguments || {}, query, this.systemText);
+          fabricated = fabricated.filter((path) => !grounded.has(path));
+        }
+        if (strict && fabricated.length) {
+          results.push({ error: 'ungrounded ' + fabricated.join(', ') });
+          continue;
+        }
         const fn = this._functions.get(name);
         if (!fn) {
           results.push({ error: 'unknown tool: ' + name });
@@ -120,7 +150,7 @@ class Needle {
         }
       }
       executed.push(...results);
-      response = this._complete(JSON.stringify(results), maxNewTokens, false);
+      response = this._complete(JSON.stringify(results), maxNewTokens, false, false);
       try { response = JSON.parse(response); } catch (_) { /* handled below */ }
       if (typeof response !== 'object' || response === null) {
         throw new Error('neuralOS: engine returned an unparseable envelope');
@@ -141,16 +171,56 @@ class Needle {
     return e.decodeFloats(out, dim);
   }
 
+  /** One-shot structured extraction against this agent's system prompt. */
+  extract(text, schema, { maxNewTokens = 512, strict = true } = {}) {
+    return extract(text, schema, {
+      system: this.systemText, maxNewTokens, strict, autoDate: false,
+    });
+  }
+
   reset() {
     this._bind();
     engineLoader.engine().reset();
     this._turns = 0;
+    this._seenYears = new Set();
   }
+
+  close() {
+    this._closed = true;
+  }
+}
+
+/**
+ * One-shot structured extraction — Python-parity semantics:
+ * the record is the only tool, the first call is the answer, and with
+ * strict=true (default) ungrounded values raise ExtractionValidationError
+ * instead of being returned silently.
+ */
+function extract(text, schema, { system = '', maxNewTokens = 512, strict = true,
+                                  autoDate = true } = {}) {
+  const agent = new Needle({ tools: [schema], system, autoDate });
+  let response;
+  try {
+    response = agent._complete(text, maxNewTokens);
+  } finally {
+    agent.close();
+  }
+  const calls = (response.function_calls && response.function_calls.length)
+    ? response.function_calls
+    : (response.suppressed_calls || []);
+  if (!calls.length) return null;
+  const arguments_ = calls[0].arguments || {};
+  if (strict) validateExtraction(text, schema, arguments_, response, agent.systemText);
+  return arguments_;
 }
 
 module.exports = {
   Needle,
   tool,
+  Field,
+  extract,
+  ExtractionValidationError,
+  validate: require('./validate'),
   version: require('./package.json').version,
   platformKey: engineLoader.platformKey,
   engineInfo: () => {

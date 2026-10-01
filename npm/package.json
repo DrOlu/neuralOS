@@ -1,7 +1,7 @@
 {
   "name": "neuralos",
-  "version": "3.9.6",
-  "description": "neuralOS - automation foundation model for tiny devices: offline tool-calling + embeddings engine for Node.js, weights bundled",
+  "version": "3.10.1",
+  "description": "neuralOS - automation foundation model for tiny devices: offline tool-calling, structured extraction and embeddings for Node.js, weights bundled",
   "main": "index.js",
   "bin": {
     "neuralos": "cli.js"
@@ -9,6 +9,7 @@
   "files": [
     "index.js",
     "engine.js",
+    "validate.js",
     "tools.js",
     "cli.js",
     "test.js",
@@ -40,10 +41,10 @@
     "koffi": "^2.9.0"
   },
   "optionalDependencies": {
-    "neuralos-darwin-arm64": "3.9.6",
-    "neuralos-darwin-x64": "3.9.6",
-    "neuralos-linux-x64-gnu": "3.9.6",
-    "neuralos-linux-arm64-gnu": "3.9.6",
-    "neuralos-win32-x64": "3.9.6"
+    "neuralos-darwin-arm64": "3.10.1",
+    "neuralos-darwin-x64": "3.10.1",
+    "neuralos-linux-x64-gnu": "3.10.1",
+    "neuralos-linux-arm64-gnu": "3.10.1",
+    "neuralos-engine-windows-x64": "3.10.1"
   }
 }

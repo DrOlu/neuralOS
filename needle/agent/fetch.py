@@ -8,9 +8,13 @@ ENGINE_REPOS = {
     2: "Cactus-Compute/needle2",
     3: "Cactus-Compute/needle3",
 }
+# The engine's release line is INDEPENDENT of the neuralOS product version
+# (pyproject/npm). Bump a generation only when upstream publishes the matching
+# artifacts — 3.0.3 was never published, so generation 3 resolves to 3.0.2.
+# The published wheels BUNDLE this engine, so installed users never fetch.
 ENGINE_VERSIONS = {
     2: "2.0.4",
-    3: "3.0.3",
+    3: "3.0.2",
 }
 
 BASE_WEIGHTS = {

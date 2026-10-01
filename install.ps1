@@ -3,7 +3,7 @@
 #   irm https://raw.githubusercontent.com/DrOlu/neuralOS/main/install.ps1 | iex
 #
 # Environment overrides (set BEFORE the one-liner):
-#   $env:NEURALOS_VERSION = "3.0.3"   # default: latest on PyPI
+#   $env:NEURALOS_VERSION = "3.10.1"   # default: latest on PyPI
 #   $env:NEURALOS_PREFIX  = "C:\neuralos"  # default: $env:USERPROFILE\.neuralos
 #
 # Creates a virtualenv at $Prefix\venv, installs the neuralos wheel for this

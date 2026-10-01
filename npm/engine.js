@@ -22,7 +22,9 @@ const PLATFORM_PACKAGES = {
   'darwin-x64': { pkg: 'neuralos-darwin-x64', lib: 'libneedle3.dylib' },
   'linux-x64-gnu': { pkg: 'neuralos-linux-x64-gnu', lib: 'libneedle3.so' },
   'linux-arm64-gnu': { pkg: 'neuralos-linux-arm64-gnu', lib: 'libneedle3.so' },
-  'win32-x64': { pkg: 'neuralos-win32-x64', lib: 'libneedle3.dll' },
+  // npm blocks "neuralos-win32-x64" as a look-alike name (403 spam
+  // detection), so the Windows payload ships as this package instead.
+  'win32-x64': { pkg: 'neuralos-engine-windows-x64', lib: 'libneedle3.dll' },
 };
 
 function platformKey() {

@@ -3,19 +3,23 @@
 
 const fs = require('fs');
 const path = require('path');
-const { Needle } = require('./index');
+const { Needle, extract, ExtractionValidationError } = require('./index');
 
 function usage(code = 0) {
   const text = `neuralos ${require('./package.json').version} — offline tool-calling + embeddings engine
 
 Usage:
-  neuralos run   --tools <tools.json> [--impl <impl.js>] [--system <text>]
-                 [--query <text>] [--max-steps <n>] [--max-new-tokens <n>]
-  neuralos embed --text <text>
+  neuralos run     --tools <tools.json> [--impl <impl.js>] [--system <text>]
+                   [--query <text>] [--max-steps <n>] [--max-new-tokens <n>]
+  neuralos extract --schema <schema.json> --text <text> [--system <text>]
+                   [--max-new-tokens <n>] [--no-strict]
+  neuralos embed   --text <text>
   neuralos info
 
-tools.json: array of { name, description, parameters }
-impl.js:    optional module exporting { toolName: (args) => result } functions
+tools.json:  array of { name, description, parameters }
+impl.js:     optional module exporting { toolName: (args) => result } functions
+schema.json: a JSON schema object (the record is the only tool). Prints the
+             extracted record, or exits 1 with the grounding failure.
 `;
   process.stdout.write(text);
   process.exit(code);
@@ -36,6 +40,27 @@ try {
     const info = require('./index').engineInfo();
     console.log(JSON.stringify(info, null, 2));
     process.exit(0);
+  }
+
+  if (command === 'extract') {
+    const schemaPath = argValue('--schema', argv);
+    const text = argValue('--text', argv);
+    if (!schemaPath || !text) usage(1);
+    const schema = JSON.parse(fs.readFileSync(path.resolve(schemaPath), 'utf8'));
+    const system = argValue('--system', argv) || '';
+    const maxNewTokens = Number(argValue('--max-new-tokens', argv) || 512);
+    const strict = !argv.includes('--no-strict');
+    try {
+      const record = extract(text, schema, { system, maxNewTokens, strict });
+      process.stdout.write(JSON.stringify(record, null, 2) + '\n');
+      process.exit(0);
+    } catch (err) {
+      if (err instanceof ExtractionValidationError) {
+        process.stderr.write(`neuralos: ${err.message}\n`);
+        process.exit(1);
+      }
+      throw err;
+    }
   }
 
   if (command === 'embed') {
