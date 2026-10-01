@@ -37,7 +37,11 @@ jobs:
           version=$(python3 -c "from needle.agent import fetch; print(fetch.engine_version($generation))")
           echo "generation=$generation" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "image=ghcr.io/${{ github.repository_owner }}/needle${generation}-component" >> "$GITHUB_OUTPUT"
+          # GHCR requires a lowercase repository path; github.repository_owner
+          # preserves the owner's capitalisation (DrOlu), which oras rejects with
+          # 'invalid repository'. Lowercase it before building the reference.
+          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "image=ghcr.io/${owner}/needle${generation}-component" >> "$GITHUB_OUTPUT"
       - uses: oras-project/setup-oras@v1
       - uses: sigstore/cosign-installer@v3
       - run: echo "${{ secrets.GITHUB_TOKEN }}" | oras login ghcr.io --username "${{ github.actor }}" --password-stdin
