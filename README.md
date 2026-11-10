@@ -56,6 +56,8 @@ npm install neuralos       # Node.js — same version number, same API surface
 
 Try it in the browser at [cactuscompute.com/needle](https://cactuscompute.com/needle); the weights and every platform engine are on [Hugging Face](https://huggingface.co/Cactus-Compute/needle3).
 
+**Full documentation lives in [docs/](docs/README.md)** — install, the Python API (`Needle`, `@tool`, `Field`, `extract`), the `neuralos`/`needle` CLI, fine-tuning & build, the model & engine matrix, and agent-loop integration patterns.
+
 Decorate a function: the signature gives the argument types, the docstring is the tool description, and `run()` completes the loop, executing your function and returning its results.
 
 ```python
