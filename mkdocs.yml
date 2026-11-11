@@ -1,0 +1,60 @@
+docs_dir: docs
+site_name: neuralOS
+site_description: >-
+  A 121M-parameter tool-calling language model that runs entirely offline on
+  CPU — install with one pip/npm line and give any device, agent or edge box
+  function calling, structured extraction and text embeddings with no cloud
+  and no API key.
+site_url: https://drolu.github.io/neuralOS/
+repo_url: https://github.com/DrOlu/neuralOS
+repo_name: DrOlu/neuralOS
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: deep purple
+      accent: custom
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: deep purple
+      accent: custom
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - search.suggest
+    - search.highlight
+    - navigation.tabs
+    - navigation.sections
+    - content.code.copy
+    - content.code.annotate
+
+nav:
+  - Home: index.md
+  - Install: install.md
+  - Python API: python-api.md
+  - CLI: cli.md
+  - Fine-Tuning: finetuning.md
+  - The Model: model.md
+  - Agent Loop: agent-loop.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.tabbed
+  - pymdownx.details
+  - tables
+  - toc:
+      permalink: true
+
+extra_css:
+  - stylesheets/brand.css
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/DrOlu/neuralOS

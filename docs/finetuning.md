@@ -60,7 +60,7 @@ Optionally `--upload` pushes the artifact to hosted storage and prints a key for
 neuralos platform test --tools tools.json --examples eval.jsonl --suffix mymodel
 ```
 
-or locally: point `Needle(weights="mymodel.cact")` at your eval set and assert on tool picks + extraction F1. Exact-match accuracy on full test splits is the headline metric (benchmarks chart in the [README](../README.md)).
+or locally: point `Needle(weights="mymodel.cact")` at your eval set and assert on tool picks + extraction F1. Exact-match accuracy on full test splits is the headline metric (benchmarks chart in the [README](https://github.com/DrOlu/neuralOS#readme)).
 
 ## 6. Ship
 

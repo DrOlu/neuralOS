@@ -1,0 +1,21 @@
+/* Accent + header bar — neuralOS carries the neuralos.ng NEON lime, matching
+   the neuralosd docs site so the product family reads as one. Header bar:
+   neon #a0e030 with near-black text for contrast; the rest of the theme
+   stays Material default (deep purple family untouched elsewhere). */
+
+:root > * {
+  --md-accent-fg-color: #4a9018;
+  --md-typeset-a-color: #4a9018;
+  /* the header bar */
+  --md-primary-fg-color: #a0e030;      /* NEON lime */
+  --md-primary-bg-color: #061a0a;      /* near-black text on the bar */
+  --md-primary-fg-color--light: #a0e030;
+  --md-primary-fg-color--dark: #a0e030;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-accent-fg-color: #a0e030;
+  --md-typeset-a-color: #a0e030;
+  --md-primary-fg-color: #a0e030;
+  --md-primary-bg-color: #061a0a;
+}
