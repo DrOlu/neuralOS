@@ -1,6 +1,38 @@
-# neuralOS Documentation
+<div class="raft-hero" markdown="0">
+<p class="raft-eyebrow">neuralOS &middot; Needle 3</p>
+<h1>Tool calls, extraction and embeddings &mdash; on the device.</h1>
+<p class="raft-lede">A foundation model for mobiles, wearables, robots, smart home, automotive
+and microcontrollers. The whole model is a single 8&ndash;29&nbsp;MB binary built on the
+Simple Attention Network &mdash; fully offline, no API key, no cloud.</p>
+<div class="raft-actions">
+<a class="raft-btn primary" href="install/">Install</a>
+<a class="raft-btn" href="python-api/">Python API</a>
+<a class="raft-btn" href="https://github.com/DrOlu/neuralOS">GitHub</a>
+</div>
+<div class="raft-badges">
+<span class="raft-badge">8&ndash;29 MB</span>
+<span class="raft-badge">Offline</span>
+<span class="raft-badge">Python + npm</span>
+<span class="raft-badge">macOS &middot; Linux &middot; Windows</span>
+</div>
+</div>
 
-**neuralOS** (the `neuralos` package, engine codename **Needle 3**) is a foundation model for mobiles, wearables, robots, smart home, automotive and microcontrollers. The whole model is a single **8–29 MB binary** built on the Simple Attention Network. It trades general chat capacity to beat models 10× its size on **mobile tool calls** and match 2–3× bigger models on **extraction** — and it also returns **text embeddings**, all fully **offline**.
+<div class="raft-grid">
+<div class="raft-card"><div class="swatch yellow">TOOLS</div><div class="body">
+<h3>Function calling</h3>
+<p>Give it your function signatures; it picks the right calls and fills every argument. No match means an empty list, not a guess.</p>
+</div></div>
+<div class="raft-card"><div class="swatch lavender">EXTRACT</div><div class="body">
+<h3>Typed structured output</h3>
+<p>Declare a shape and get typed fields back. The decode grammar guarantees the output parses, with a calibrated confidence score.</p>
+</div></div>
+<div class="raft-card"><div class="swatch orange">EMBED</div><div class="body">
+<h3>Local embeddings</h3>
+<p>The same model returns vectors for sentences, so search, matching and routing happen on the device.</p>
+</div></div>
+</div>
+
+<div class="raft-strip">A small model that fits &mdash; and answers where the data lives.</div>
 
 | I want to… | Read |
 |---|---|
