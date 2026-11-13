@@ -1,6 +1,6 @@
 <div class="raft-hero" markdown="0">
 <p class="raft-eyebrow">neuralOS &middot; Needle 3</p>
-<h1>Tool calls, extraction and embeddings &mdash; on the device.</h1>
+<h1>Tool calls, extraction<br>and embeddings &mdash;<br>on the device.</h1>
 <p class="raft-lede">A foundation model for mobiles, wearables, robots, smart home, automotive
 and microcontrollers. The whole model is a single 8&ndash;29&nbsp;MB binary built on the
 Simple Attention Network &mdash; fully offline, no API key, no cloud.</p>
